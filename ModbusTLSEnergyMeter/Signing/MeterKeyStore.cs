@@ -433,7 +433,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                         if (!File.Exists(metaPath) || !File.Exists(privatePath))
                             continue;
 
-                        var meta         = JObject.Parse(File.ReadAllText(metaPath));
+                        var meta         = MeterJSON.ReadFile(metaPath);
 
                         var id           = meta["id"]?.Value<String>();
                         var algorithm    = meta["algorithm"]?.Value<String>();
@@ -445,7 +445,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                         var key = new MeterKey(
                                       id,
                                       algorithm,
-                                      Moment(meta["createdAt"]),
+                                      MeterJSON.Moment(meta["createdAt"]),
                                       Convert.FromHexString(publicKey),
                                       Convert.FromHexString(File.ReadAllText(privatePath).Trim()),
                                       meta["note"]?.Type == JTokenType.String ? meta["note"]!.Value<String>() : null

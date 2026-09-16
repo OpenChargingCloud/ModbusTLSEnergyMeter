@@ -75,6 +75,61 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
         #endregion
 
+        #region (internal) StoredJSON() / TryParse(JSON, out Session)
+
+        /// <summary>
+        /// The session as it is kept on disk while it runs.
+        /// </summary>
+        /// <remarks>
+        /// More than <see cref="ToJSON"/> gives out: the identification type
+        /// goes in as well, because the document written at the end has to say
+        /// how the person was identified and a restart must not lose that.
+        /// </remarks>
+        internal JObject StoredJSON()
+
+            => new (
+                   new JProperty("id",                  Id),
+                   new JProperty("startedAt",           StartedAt.UtcDateTime.ToString("o")),
+                   new JProperty("startValue",          StartValue),
+                   new JProperty("keyId",               KeyId),
+                   Identification is not null
+                       ? new JProperty("identification",      Identification)
+                       : new JProperty("identification",      JValue.CreateNull()),
+                   IdentificationType is not null
+                       ? new JProperty("identificationType",  IdentificationType)
+                       : new JProperty("identificationType",  JValue.CreateNull())
+               );
+
+        /// <summary>
+        /// A session read back from disk, or null when the file says nothing
+        /// usable.
+        /// </summary>
+        internal static ChargingSession? TryParse(JObject JSON)
+        {
+
+            var id          = JSON["id"]?.        Value<String>();
+            var keyId       = JSON["keyId"]?.     Value<String>();
+            var startValue  = JSON["startValue"]?.Value<Decimal>();
+
+            if (id is null || keyId is null || startValue is null)
+                return null;
+
+            if (!MeterJSON.TryReadMoment(JSON["startedAt"], out var startedAt))
+                return null;
+
+            return new ChargingSession(
+                       id,
+                       startedAt,
+                       startValue.Value,
+                       keyId,
+                       JSON["identification"]?.    Type == JTokenType.String ? JSON["identification"]!.    Value<String>() : null,
+                       JSON["identificationType"]?.Type == JTokenType.String ? JSON["identificationType"]!.Value<String>() : null
+                   );
+
+        }
+
+        #endregion
+
         #region ToJSON()
 
         public JObject ToJSON()
@@ -117,6 +172,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
         private readonly Lock    countersLock = new();
         private readonly String  countersPath;
+        private readonly String  sessionPath;
 
         private UInt64           transactions;
         private UInt64           fiscals;
@@ -150,6 +206,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
             this.Path          = System.IO.Path.GetFullPath(Path);
             this.TimeProvider  = TimeProvider ?? System.TimeProvider.System;
             this.countersPath  = System.IO.Path.Combine(this.Path, "counters.json");
+            this.sessionPath   = System.IO.Path.Combine(this.Path, "session.json");
 
             Directory.CreateDirectory(this.Path);
 
@@ -158,7 +215,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
                 if (File.Exists(countersPath))
                 {
-                    var json      = JObject.Parse(File.ReadAllText(countersPath));
+                    var json      = MeterJSON.ReadFile(countersPath);
                     transactions  = json["transactions"]?.Value<UInt64>() ?? 0;
                     fiscals       = json["fiscals"]?.     Value<UInt64>() ?? 0;
                 }
@@ -169,6 +226,24 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                 // Unreadable counters start again from zero rather than stopping
                 // the meter. The gap that leaves is exactly what a gap in an
                 // OCMF pagination counter is for.
+            }
+
+            // A session that was running when this meter last stopped. It is
+            // still running: nothing about a charging session ends because the
+            // software measuring it was restarted, and a car left plugged in
+            // over a restart is the ordinary case rather than the strange one.
+            try
+            {
+
+                if (File.Exists(sessionPath))
+                    Current = ChargingSession.TryParse(MeterJSON.ReadFile(sessionPath));
+
+            }
+            catch
+            {
+                // An unreadable session file leaves no session running, which is
+                // the safe direction: nothing gets signed on a start reading
+                // nobody can vouch for.
             }
 
         }
@@ -246,6 +321,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                               IdentificationType
                           );
 
+                WriteSession();
+
                 Session = Current;
                 Error   = null;
                 return true;
@@ -273,9 +350,53 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
                 Session  = Current;
                 Current  = null;
+
+                WriteSession();
+
                 Error    = null;
                 return true;
 
+            }
+
+        }
+
+        #endregion
+
+        #region (private) WriteSession()
+
+        /// <summary>
+        /// Write down the session that is running, or take the file away when
+        /// none is.
+        /// </summary>
+        /// <remarks>
+        /// Written beside and moved into place, so that a process dying
+        /// mid-write leaves the previous file rather than half of a new one -
+        /// half a session file is a session nobody can stop.
+        /// </remarks>
+        private void WriteSession()
+        {
+
+            try
+            {
+
+                if (Current is null)
+                {
+                    if (File.Exists(sessionPath))
+                        File.Delete(sessionPath);
+                    return;
+                }
+
+                var temporary = sessionPath + ".new";
+
+                File.WriteAllText(temporary, Current.StoredJSON().ToString());
+                File.Move(temporary, sessionPath, overwrite: true);
+
+            }
+            catch
+            {
+                // A session that could not be written down is one a restart
+                // would lose. Worth nothing stopping for, and the meter goes on
+                // measuring it either way.
             }
 
         }

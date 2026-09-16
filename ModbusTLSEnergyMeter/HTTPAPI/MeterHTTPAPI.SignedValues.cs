@@ -209,6 +209,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, problem));
             }
 
+            // The session's start reading is now on disk; the counter it was
+            // taken from goes down beside it, so that a crash in between cannot
+            // leave a session starting at a reading this meter no longer stands
+            // at.
+            meter.SaveTheEnergyCounters();
+
             meter.Log.Notice(
                 $"'{user.Id}' started the charging session '{session.Id}' at {session.StartValue} kWh, " +
                 $"to be signed with '{key.Id}'.",
@@ -259,6 +265,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryReadEnergy(out var importedWh, out var unreadable))
                 return Task.FromResult(unreadable);
 
+            // Looked at before the session is taken away, so that a refusal
+            // leaves it running rather than losing it.
+            if (meter.Sessions.Current is ChargingSession open &&
+                importedWh / 1000m < open.StartValue)
+            {
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                                 $"This session started at {open.StartValue} kWh and the meter now stands at " +
+                                                 $"{importedWh / 1000m} kWh, so stopping it would report less energy than none. " +
+                                                  "The counter has gone backwards - cleared, or lost further than the last time " +
+                                                  "it was written down. The session is still running and can be stopped once the " +
+                                                  "counter passes where it began."));
+            }
+
             if (!meter.Sessions.TryStop(out var session, out var problem))
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, problem));
 
@@ -290,6 +309,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                        Reading(now,               stopValue,          "E")
                                    ]
                                );
+
+                meter.SaveTheEnergyCounters();
 
                 meter.Log.Notice(
                     $"'{user.Id}' stopped the charging session '{session.Id}': " +

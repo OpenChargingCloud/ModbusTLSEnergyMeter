@@ -452,6 +452,164 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #endregion
 
 
+
+        #region AnOpenSession_SurvivesARestart()
+
+        /// <summary>
+        /// A car left plugged in while the software is restarted is the
+        /// ordinary case, not the strange one.
+        /// </summary>
+        /// <remarks>
+        /// Everything the document at the end needs has to come back with it:
+        /// when it began, what the meter stood at, which key it is signed with,
+        /// and who was identified - a session that came back without the last
+        /// of those would produce a document quietly missing the person it was
+        /// for.
+        /// </remarks>
+        [Test]
+        public void AnOpenSession_SurvivesARestart()
+        {
+
+            var path    = Path.Combine(workingDirectory!, "sessions");
+
+            var before  = new ChargingSessions(path);
+
+            Assert.That(before.TryStart(12.5m, "key-1", "DEADBEEF01", "ISO14443",
+                                        out var started, out _), Is.True);
+
+            // The same store again, as a restart opens it.
+            var after   = new ChargingSessions(path);
+            var resumed = after.Current;
+
+            Assert.That(resumed, Is.Not.Null, "the session should still be running");
+
+            Assert.Multiple(() => {
+                Assert.That(resumed!.Id,                  Is.EqualTo(started!.Id));
+                Assert.That(resumed.StartedAt,            Is.EqualTo(started.StartedAt));
+                Assert.That(resumed.StartValue,           Is.EqualTo(12.5m));
+                Assert.That(resumed.KeyId,                Is.EqualTo("key-1"));
+                Assert.That(resumed.Identification,       Is.EqualTo("DEADBEEF01"));
+                Assert.That(resumed.IdentificationType,   Is.EqualTo("ISO14443"));
+            });
+
+            // And it can still be stopped, which is the whole point.
+            Assert.That(after.TryStop(out var stopped, out _), Is.True);
+            Assert.That(stopped!.Id,                           Is.EqualTo(started!.Id));
+
+        }
+
+        #endregion
+
+        #region AStoppedSession_DoesNotComeBack()
+
+        /// <summary>
+        /// A session that was stopped is over. Coming back after a restart
+        /// would let it be stopped a second time, into a second document for
+        /// one charging session.
+        /// </summary>
+        [Test]
+        public void AStoppedSession_DoesNotComeBack()
+        {
+
+            var path   = Path.Combine(workingDirectory!, "sessions");
+
+            var before = new ChargingSessions(path);
+
+            before.TryStart(1m, "key-1", null, null, out _, out _);
+            before.TryStop(out _, out _);
+
+            var after  = new ChargingSessions(path);
+
+            Assert.Multiple(() => {
+                Assert.That(after.Current,                        Is.Null);
+                Assert.That(after.TryStop(out _, out var problem), Is.False);
+                Assert.That(problem,                               Does.Contain("nothing to stop"));
+            });
+
+        }
+
+        #endregion
+
+        #region ThePaginationCounters_CarryOnAcrossARestart()
+
+        /// <summary>
+        /// OCMF numbers every document a meter signs so that a gap in the
+        /// numbering is visible. A restart that set the count back to one would
+        /// make a hundred documents share ten numbers.
+        /// </summary>
+        [Test]
+        public void ThePaginationCounters_CarryOnAcrossARestart()
+        {
+
+            var path   = Path.Combine(workingDirectory!, "sessions");
+
+            var before = new ChargingSessions(path);
+
+            Assert.That(before.NextTransaction(), Is.EqualTo(1));
+            Assert.That(before.NextTransaction(), Is.EqualTo(2));
+            Assert.That(before.NextFiscal(),      Is.EqualTo(1));
+
+            var after  = new ChargingSessions(path);
+
+            Assert.Multiple(() => {
+
+                Assert.That(after.NextTransaction(), Is.EqualTo(3));
+
+                // Two sequences, and a gap in one is not a gap in the other.
+                Assert.That(after.NextFiscal(),      Is.EqualTo(2));
+
+            });
+
+        }
+
+        #endregion
+
+
+        #region ATimestampSurvivesBeingWrittenDownAndReadBack()
+
+        /// <summary>
+        /// The instant that goes into one of this meter's files is the instant
+        /// that comes out of it.
+        /// </summary>
+        /// <remarks>
+        /// Newtonsoft looks at every string while it parses and turns the ones
+        /// that look like a timestamp into a local DateTime. What comes back out
+        /// of such a token has lost its fraction of a second and is wrong by the
+        /// machine's offset from UTC - which is invisible in a field nothing
+        /// computes with, and moved a charging session two hours into the past
+        /// the first time one was read back after a restart.
+        ///
+        /// Pinned with a fraction and on a summer date, because on a machine at
+        /// UTC in January the broken version passes.
+        /// </remarks>
+        [Test]
+        public void ATimestampSurvivesBeingWrittenDownAndReadBack()
+        {
+
+            var moment = new DateTimeOffset(2026, 7, 14, 12, 29, 32, 243, TimeSpan.Zero);
+
+            var json   = MeterJSON.Parse(
+                             new JObject(
+                                 new JProperty("when", moment.UtcDateTime.ToString("o"))
+                             ).ToString()
+                         );
+
+            Assert.Multiple(() => {
+
+                Assert.That(MeterJSON.Moment(json["when"]),  Is.EqualTo(moment));
+
+                // And the unguarded way, so the test says what it is guarding
+                // against rather than only that it is guarded.
+                Assert.That(Newtonsoft.Json.Linq.JObject.Parse(json.ToString())["when"]!.Type,
+                            Is.EqualTo(JTokenType.Date),
+                            "Newtonsoft parses this into a DateTime unless it is told not to");
+
+            });
+
+        }
+
+        #endregion
+
         #region (private) Helpers
 
         /// <summary>

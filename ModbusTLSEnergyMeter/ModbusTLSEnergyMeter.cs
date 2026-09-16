@@ -117,6 +117,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private readonly  MeterKeyStore                   signingKeys;
         private readonly  ChargingSessions                sessions;
         private           ITimer?                         certificateTimer;
+        private           ITimer?                         stateTimer;
 
         private readonly  DNSClient                       dnsClient;
         private           NTSClient                       ntsClient;
@@ -802,6 +803,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             StartWatchingTheCertificates();
             AnnounceTheSigningKeys();
 
+            // Before the first reading is taken and before any session is
+            // resumed: both of those are about where this meter stands, and it
+            // does not stand at zero just because the process is new.
+            RestoreTheEnergyCounters();
+            StartSavingTheEnergyCounters();
+
+            ResumeTheChargingSession();
+
             runTask = frontend.RunAsync(cts.Token);
 
             if (runTask.IsFaulted)
@@ -831,6 +840,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             certificateTimer?.Dispose();
             certificateTimer = null;
+
+            stateTimer?.Dispose();
+            stateTimer = null;
+
+            // Once more on the way out, so an orderly stop loses nothing at all.
+            SaveTheEnergyCounters();
 
             await cts.CancelAsync();
 

@@ -573,6 +573,37 @@ second while the first runs is a 409 naming the one that is open, and the key
 the session started with is the key it is signed with at the end - a document
 whose two readings were signed by different keys is not one document.
 
+
+### Across a restart
+
+A car left plugged in while the software is restarted is the ordinary case, not
+the strange one, so a session that was running is still running when the meter
+comes back:
+
+```
+[info   meter]    The energy counters came back where they were left: 5 imported, 0 exported (scale factor 0).
+[notice sessions] The charging session '20260916-123213-dbc394' was running when this meter last
+                  stopped and still is: started 2026-09-16 12:32:13Z at 0 kWh.
+```
+
+Two things have to survive for that to mean anything, and the second is the one
+that is easy to miss. The session itself is kept in `<data>/sessions/session.json`
+while it runs and taken away when it stops - a stopped session that came back
+could be stopped a second time, into a second document for one charging session.
+
+And the meter has to still be standing where it was. A real energy meter's
+register is monotonic and survives losing power; most of what makes it a meter
+rather than a sensor is that it does. This simulation held its counters in
+memory, so every restart put them back to zero - invisible until something spans
+a restart, and then a charging session that used a negative amount of energy. The
+counters now live in `<data>/meter-state.json` and go back into the registers
+before the first reading is taken.
+
+Where that still fails, it says so rather than signing nonsense: if the counter
+has gone backwards past where a session began - cleared, or lost further than the
+last write - stopping it is refused and the session stays open until the counter
+passes its start reading again.
+
 ### What the timestamp admits
 
 Every OCMF reading carries one letter saying how far the clock behind it can be
@@ -728,10 +759,11 @@ words.
 
 ## What it does not do yet
 
-* **A charging session does not survive a restart.** The reading it started at
-  is held in memory, so a meter that comes back up has no session running and
-  the one that was open cannot be signed. The counters its documents are
-  numbered with are on disk; the session itself is not.
+* **A hard stop loses up to ten seconds of energy.** The counters are written
+  down every ten seconds, at both ends of a charging session, and on an orderly
+  stop; a process that is killed comes back where the last write left it. The
+  loss is always downwards - a counter that came back slightly high would be a
+  meter billing for energy nobody used.
 * **A certificate on an Edwards curve or on ML-DSA is never shown by a listener
   of this meter.** The request is made and the certificate is kept, but .NET's
   SslStream authenticates a server with RSA or ECDSA, so such an entry stays out

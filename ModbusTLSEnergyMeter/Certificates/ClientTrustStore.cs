@@ -407,7 +407,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                 try
                 {
 
-                    var json    = JObject.Parse(File.ReadAllText(metaFile));
+                    var json    = MeterJSON.ReadFile(metaFile);
                     var pemFile = System.IO.Path.Combine(Path, $"{id}.pem");
 
                     if (!File.Exists(pemFile))

@@ -236,17 +236,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         #region (internal static) Moment(Token)
 
         /// <summary>
-        /// A moment out of JSON, however the reader happened to type it.
+        /// A timestamp out of JSON, read from its text as written.
         /// </summary>
+        /// <remarks>
+        /// One line now, because the reason it exists moved somewhere every
+        /// store can use it. See <see cref="MeterJSON"/> for what Newtonsoft
+        /// does to a timestamp that is left to it.
+        /// </remarks>
         internal static DateTimeOffset Moment(JToken? Token)
 
-            => Token is null
-                   ? DateTimeOffset.MinValue
-                   : DateTimeOffset.TryParse(Token.ToString(), null,
-                                             System.Globalization.DateTimeStyles.RoundtripKind,
-                                             out var moment)
-                         ? moment
-                         : DateTimeOffset.MinValue;
+            => MeterJSON.Moment(Token);
 
         #endregion
 

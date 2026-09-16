@@ -872,7 +872,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                 try
                 {
 
-                    if (!CertificateEntry.TryParseMetadata(JObject.Parse(File.ReadAllText(metaFile)), out var entry) ||
+                    if (!CertificateEntry.TryParseMetadata(MeterJSON.ReadFile(metaFile), out var entry) ||
                         entry is null)
                         continue;
 
