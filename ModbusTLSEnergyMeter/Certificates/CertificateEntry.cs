@@ -128,11 +128,26 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// </summary>
         public String StateAt(DateTimeOffset Now)
 
-            => Certificate is null              ? "awaiting a certificate"
-             : Now <  Certificate.NotBefore     ? "not valid yet"
-             : Now >  Certificate.NotAfter      ? "expired"
-             : !Certificate.HasPrivateKey       ? "without its key"
-             :                                    "valid";
+            => Certificate is null                     ? "awaiting a certificate"
+             : Now <  Certificate.NotBefore            ? "not valid yet"
+             : Now >  Certificate.NotAfter             ? "expired"
+
+             // The key is here and this certificate is fine; what cannot happen
+             // is a listener showing it, because the TLS stack does not
+             // authenticate a server with this kind of key. Said apart from
+             // "without its key", which is the different and worse case of a
+             // key that has actually gone missing.
+             : !CertificateStore.ServedByTLS(KeyType)  ? "not for a listener"
+
+             : !Certificate.HasPrivateKey              ? "without its key"
+             :                                           "valid";
+
+        /// <summary>
+        /// Whether a TLS listener of this meter could ever show this one.
+        /// </summary>
+        public Boolean ServedByTLS
+
+            => CertificateStore.ServedByTLS(KeyType);
 
         #endregion
 
@@ -177,6 +192,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                    new JProperty("keyType",        KeyType),
                    new JProperty("note",           Note),
                    new JProperty("hasRequest",     RequestPEM is not null),
+                   new JProperty("servedByTLS",    ServedByTLS),
                    new JProperty("state",          StateAt(Now)),
 
                    // JValue.CreateNull() rather than a bare null: a literal

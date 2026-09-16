@@ -373,6 +373,30 @@ PUT  /api/v1/certificates/servers/web/<id>              {"pem": "-----BEGIN CERT
 
 or the same three steps as three controls on the page.
 
+### On which key
+
+A request can be made on any of these:
+
+| | |
+|---|---|
+| `ec256`, `ec384`, `ec521` | ECDSA on P-256, P-384 and P-521. `ec521` is secp521r1 - there is no secp521r2 |
+| `rsa2048`, `rsa3072`, `rsa4096` | RSA |
+| `ed25519`, `ed448` | Edwards curves |
+| `mldsa44`, `mldsa65`, `mldsa87` | ML-DSA, FIPS 204 |
+
+The first two families are what a listener of this meter can show. The other two
+are built with BouncyCastle, because .NET's `CertificateRequest` takes no
+Edwards curve at all and reaches ML-DSA only through an API it marks
+experimental - "may change or be removed in future updates" - while BouncyCastle
+has one stable interface for all of them, arrives with ChargyCore already, and
+is what the signing keys are made with.
+
+What comes back on one of those keys is kept and never shown: .NET's SslStream
+authenticates a server with RSA or ECDSA. The store does not need a special rule
+for it - it hands out a certificate only when the private key is attached to it,
+and for these there is nothing to attach it to - and the entry says "not for a
+listener" rather than leaving somebody to wonder why nothing happened.
+
 ### Which one is shown
 
 Of the certificates that are valid at this moment, the one whose validity began
@@ -708,15 +732,13 @@ words.
   is held in memory, so a meter that comes back up has no session running and
   the one that was open cannot be signed. The counters its documents are
   numbered with are on disk; the session itself is not.
-* **A certificate can be asked for on an elliptic curve or on RSA, and on
-  nothing else.** Ed25519, Ed448 and ML-DSA are the algorithms worth wanting for
-  a signature meant to outlive the device, and this meter signs readings with
-  all of them - but a certificate here is shown to a peer during a TLS
-  handshake, and .NET's SslStream authenticates a server with RSA or ECDSA. A
-  certificate over an Edwards curve or a lattice would be a perfectly good
-  certificate that neither listener could ever present. So the modern algorithms
-  are on the signing keys and the interoperable ones are on the certificates,
-  which is the honest split rather than the tidy one.
+* **A certificate on an Edwards curve or on ML-DSA is never shown by a listener
+  of this meter.** The request is made and the certificate is kept, but .NET's
+  SslStream authenticates a server with RSA or ECDSA, so such an entry stays out
+  of the way rather than failing a handshake: its private key is never attached
+  to it, which is the same thing that keeps an expired one out. Every answer
+  that carries an entry says `servedByTLS`, the page groups the choice under
+  "For a certificate used elsewhere", and the entry reads "not for a listener".
 * **An Alfen record is verified here as far as anything outside ChargyCore can
   verify it.** It parses, every field comes back as it went in, the buffer its
   verifier would rebuild is byte for byte the one that was signed, and the

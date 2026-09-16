@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -84,27 +85,42 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// family last.
         /// </summary>
         /// <remarks>
-        /// Elliptic curve and RSA, and deliberately nothing else. Ed25519,
-        /// Ed448 and ML-DSA are the algorithms worth wanting for a signature
-        /// that has to outlive the device, and this meter does use all of them -
-        /// for the keys it signs readings with, where nothing but this meter and
-        /// whoever checks the reading has to agree.
+        /// Two families, and they are not interchangeable.
         ///
-        /// A certificate here is different: it is shown to a peer during a TLS
-        /// handshake, and what may be shown is decided by the TLS stack, not by
-        /// this store. .NET's SslStream authenticates a server with RSA or
-        /// ECDSA. A certificate over an Edwards curve or a lattice would be a
-        /// perfectly good certificate that neither listener could ever present,
-        /// and offering to ask a CA for one would be offering somebody a trip to
-        /// their certificate authority for nothing.
+        /// Elliptic curve and RSA are what a TLS listener of this meter can
+        /// actually show: .NET's SslStream authenticates a server with those and
+        /// with nothing else. Ed25519, Ed448 and ML-DSA produce a perfectly good
+        /// certificate that neither listener will ever present - the store never
+        /// hands one out, because its private key is never attached to it - and
+        /// they are here because a request is worth making for a certificate
+        /// that will be used somewhere else, or to give a piece of PKI software
+        /// something to chew on.
         ///
-        /// So the modern algorithms live on the signing keys, the interoperable
-        /// ones live here, and the split is the honest one rather than the tidy
-        /// one.
+        /// <see cref="ServedByTLS"/> is which is which, and every answer that
+        /// carries an entry says so.
         /// </remarks>
         public static IEnumerable<String> KeyTypes
 
+            => [ .. TLSKeyTypes, .. BouncyCastleRequests.KeyTypes ];
+
+        /// <summary>
+        /// The key types a certificate from this store can be shown with.
+        /// </summary>
+        public static IEnumerable<String> TLSKeyTypes
+
             => [ "ec256", "ec384", "ec521", "rsa2048", "rsa3072", "rsa4096" ];
+
+        /// <summary>
+        /// Whether a TLS listener of this meter could ever present a certificate
+        /// over this kind of key.
+        /// </summary>
+        /// <remarks>
+        /// Said out loud rather than left to be discovered as a certificate that
+        /// is uploaded, accepted, and then never used by anything.
+        /// </remarks>
+        public static Boolean ServedByTLS(String? KeyType)
+
+            => KeyType is not null && !BouncyCastleRequests.Handles(KeyType);
 
         /// <summary>
         /// The curve and the digest that belongs with it.
@@ -445,6 +461,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                 keyPEM     = key.ExportPkcs8PrivateKeyPem();
             }
 
+            else if (BouncyCastleRequests.Handles(KeyType))
+            {
+                // The ones .NET will not build: an Edwards curve, or a lattice
+                // behind an API it calls experimental.
+                (requestPEM, keyPEM) = BouncyCastleRequests.Create(Subject, dnsNames, ipAddresses, KeyType);
+            }
+
             else
                 throw new ArgumentException(
                           $"'{KeyType}' is not a key type this meter can ask for. " +
@@ -711,18 +734,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             foreach (var candidate in uploaded)
             {
 
-                try
+                if (TryPairWithKey(candidate, entry.KeyType, keyPEM, out withKey))
                 {
-                    withKey = IsRSA(entry.KeyType)
-                                  ? candidate.CopyWithPrivateKey(RSAFrom(keyPEM))
-                                  : candidate.CopyWithPrivateKey(ECDsaFrom(keyPEM));
-                    leaf    = candidate;
+                    leaf = candidate;
                     break;
-                }
-                catch
-                {
-                    // Not this one - an intermediate, or a certificate for a
-                    // different key altogether.
                 }
 
             }
@@ -890,17 +905,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
 
                         foreach (var candidate in uploaded)
                         {
-                            try
+                            if (TryPairWithKey(candidate, entry.KeyType, keyPEM, out var paired))
                             {
-                                using var withKey = IsRSA(entry.KeyType)
-                                                        ? candidate.CopyWithPrivateKey(RSAFrom(keyPEM))
-                                                        : candidate.CopyWithPrivateKey(ECDsaFrom(keyPEM));
-                                entry.Certificate = Usable(withKey);
+                                entry.Certificate = paired;
                                 entry.Chain       = [entry.Certificate, .. uploaded.Cast<X509Certificate2>().Where(certificate => certificate.Thumbprint != candidate.Thumbprint)];
                                 break;
                             }
-                            catch
-                            { }
                         }
 
                     }
@@ -913,6 +923,69 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                     LastError = $"The {Purpose} certificate '{id}' could not be read: {e.Message}";
                 }
 
+            }
+
+        }
+
+        #endregion
+
+        #region (private static) TryPairWithKey(Candidate, KeyType, KeyPEM, out Paired)
+
+        /// <summary>
+        /// Whether this certificate is the one our key asked for, and the form
+        /// of it this store keeps.
+        /// </summary>
+        /// <remarks>
+        /// Two ways of asking the same question, because .NET only knows one of
+        /// them. For RSA and ECDSA the private key is attached to the
+        /// certificate, which both proves the match and produces the thing a
+        /// listener is handed.
+        ///
+        /// For an Edwards curve or a lattice there is nothing to attach it to:
+        /// .NET has no CopyWithPrivateKey for those and its TLS stack could not
+        /// use the result. So the match is made where it really lives - the
+        /// public key is in the certificate and in our key, and two
+        /// SubjectPublicKeyInfos being equal is the same proof - and what comes
+        /// back is the bare certificate. Without a private key on it,
+        /// <see cref="CertificateEntry.IsValidAt"/> is false and no listener is
+        /// ever handed it, which is exactly right: it could not show it.
+        /// </remarks>
+        private static Boolean TryPairWithKey(X509Certificate2                        Candidate,
+                                              String                                  KeyType,
+                                              String                                  KeyPEM,
+                                              [NotNullWhen(true)] out X509Certificate2?  Paired)
+        {
+
+            Paired = null;
+
+            try
+            {
+
+                if (BouncyCastleRequests.Handles(KeyType))
+                {
+
+                    if (!Candidate.PublicKey.ExportSubjectPublicKeyInfo().
+                             SequenceEqual(BouncyCastleRequests.PublicKeyOf(KeyPEM)))
+                        return false;
+
+                    Paired = Candidate;
+                    return true;
+
+                }
+
+                using var withKey = IsRSA(KeyType)
+                                        ? Candidate.CopyWithPrivateKey(RSAFrom(KeyPEM))
+                                        : Candidate.CopyWithPrivateKey(ECDsaFrom(KeyPEM));
+
+                Paired = Usable(withKey);
+                return true;
+
+            }
+            catch
+            {
+                // Not this one - an intermediate, or a certificate for a
+                // different key altogether.
+                return false;
             }
 
         }

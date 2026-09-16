@@ -415,7 +415,16 @@ export interface CertificateEntry {
     keyType:      string;
     note:         string | null;
     hasRequest:   boolean;
-    /** "valid", "not valid yet", "expired", "awaiting a certificate", ... */
+    /**
+     * Whether a TLS listener of this meter could ever show this one.
+     *
+     * False for the Edwards curves and for ML-DSA: .NET's SslStream
+     * authenticates a server with RSA or ECDSA, so a certificate over one of
+     * those is a perfectly good certificate for use somewhere else and is never
+     * handed to a listener here.
+     */
+    servedByTLS:  boolean;
+    /** "valid", "not for a listener", "not valid yet", "expired", ... */
     state:        string;
     certificate:  CertificateInfo | null;
 }
@@ -436,7 +445,17 @@ export interface CertificateRequestBody {
     subject:      string;
     dnsNames?:    string[];
     ipAddresses?: string[];
-    keyType?:     'ec256' | 'rsa3072';
+    /**
+     * What kind of key to make.
+     *
+     * The elliptic curve and RSA ones a listener can show; the Edwards curves
+     * and ML-DSA it cannot, and asking for one of those is asking for a
+     * certificate to use elsewhere.
+     */
+    keyType?:     'ec256'    | 'ec384'   | 'ec521'
+                | 'rsa2048'  | 'rsa3072' | 'rsa4096'
+                | 'ed25519'  | 'ed448'
+                | 'mldsa44'  | 'mldsa65' | 'mldsa87';
     note?:        string;
 }
 
