@@ -652,6 +652,21 @@ survive being printed on a receipt and typed back in by hand. The data set is 82
 bytes, little endian throughout, with no separators: the layout is the
 specification.
 
+**Checked by the reader, not by the writer.** A test here builds a record, and
+then ChargyCore parses it back: every field comes back as it went in, the buffer
+its verifier rebuilds is byte for byte the one that was signed, the signature
+checks out over that buffer with ChargyCore's own curve and suite, and finally
+`AlfenCrypt01.VerifyMeasurement` says `ValidSignature` about it. Five links, and
+the last one is the one that counts: the four before it are this project
+agreeing with itself.
+
+That last link was missing for a while, and not because anything written here
+failed it. `VerifyMeasurement` reaches from a reading to its measurement and
+from there to the charging session, and ChargyCore's own constructors left both
+of those null for anything they were handed - so it answered "Not an Alfen
+measurement!", and one level up it rebuilt a buffer eight bytes different and
+called a good record a forgery. Fixed there rather than worked around here.
+
 What this is not, and the answer says so: an Alfen adapter. The format has
 fields for one - an adapter identification, its firmware version and that
 firmware's checksum - and this fills them from the meter's own serial number and
@@ -780,15 +795,6 @@ words.
   ones those are is found out rather than assumed - see above - and .NET cannot
   hold an Ed448 or an ML-DSA private key at all, which is its own reason. Such
   an entry reads "not for a listener".
-* **An Alfen record is verified here as far as anything outside ChargyCore can
-  verify it.** It parses, every field comes back as it went in, the buffer its
-  verifier would rebuild is byte for byte the one that was signed, and the
-  signature checks out over that buffer with ChargyCore's own curve and suite.
-  The last hop through `AlfenCrypt01.VerifyMeasurement` is not asserted, because
-  it needs the back-reference from a reading to its measurement and the Alfen
-  parse path leaves that null - it answers "Not an Alfen measurement!" for every
-  freshly parsed record, whoever wrote it, and the property is internal to
-  ChargyCore.
 * **The pagination counters restart at zero if their file cannot be read.** OCMF
   numbers every document a meter signs so that a gap is visible; a meter that
   lost the file leaves exactly such a gap, which is the intended behaviour and
