@@ -28,6 +28,33 @@ export function numberField(form: HTMLFormElement, name: string): number {
 }
 
 
+/**
+ * Put text on the clipboard, and say what happened in words a person can act
+ * on.
+ *
+ * The clipboard is only there on a secure origin, and a meter reached at a LAN
+ * address over plain HTTP is not one. Saying so beats a button that silently
+ * does nothing - which is why this returns a message rather than a boolean.
+ */
+export async function copyText(Text: string, Fallback?: HTMLInputElement | HTMLTextAreaElement): Promise<string> {
+
+    try {
+        await navigator.clipboard.writeText(Text);
+        return 'Copied.';
+    }
+    catch {
+
+        Fallback?.select();
+
+        return Fallback
+                   ? 'Selected - copy it with Ctrl+C.'
+                   : 'This browser will not let the page copy; select the text and copy it.';
+
+    }
+
+}
+
+
 // Numbers
 
 /**

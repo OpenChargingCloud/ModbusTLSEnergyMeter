@@ -42,8 +42,17 @@ export const menu: MenuEntry[] = [
             { path: '/configuration/nts',                      label: 'NTS client',             icon: 'fa-clock'                     },
             { path: '/configuration/certificates/modbus',      label: 'Modbus/TLS certificate', icon: 'fa-plug-circle-bolt'          },
             { path: '/configuration/certificates/web',         label: 'Web certificate',        icon: 'fa-globe'                     },
-            { path: '/configuration/certificates/clients',     label: 'Client trust',           icon: 'fa-user-shield'               }
+            { path: '/configuration/certificates/clients',     label: 'Client trust',           icon: 'fa-user-shield'               },
+            { path: '/configuration/keys',                     label: 'Signing keys',           icon: 'fa-key'                       }
         ]
+    },
+    {
+        // Beside the meter rather than under configuration: a charging session
+        // is something this meter does, not something about how it is set up.
+        path:   '/sessions',
+        label:  'Sessions',
+        icon:   'fa-file-signature',
+        needs:  'ReadMeter'
     },
     {
         path:   '/logs',

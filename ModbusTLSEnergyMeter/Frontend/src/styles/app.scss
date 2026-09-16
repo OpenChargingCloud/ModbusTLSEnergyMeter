@@ -1070,3 +1070,67 @@ table.numbers {
     font-weight:  600;
     color:        $color-muted;
 }
+
+
+// Signing keys and charging sessions.
+
+.keys {
+    display:                grid;
+    grid-template-columns:  repeat(auto-fill, minmax(26rem, 1fr));
+    gap:                    1rem;
+    align-items:            start;
+    margin-bottom:          1rem;
+}
+
+.signing-key {
+
+    // The one this meter signs with. A store with four keys in it is only
+    // readable if that one is obvious at a glance.
+    &.in-use {
+        border-color:  $color-accent;
+        box-shadow:    inset 3px 0 0 $color-accent;
+    }
+
+    h2 {
+        gap:        0.5rem;
+        flex-wrap:  wrap;
+    }
+
+    textarea.mono {
+        font-size: 0.72rem;
+    }
+
+}
+
+// A session that is running: worth seeing from the doorway, because whether
+// one is open decides what every button on the page does.
+.card.running {
+    border-color:  $color-ok;
+    box-shadow:    inset 3px 0 0 $color-ok;
+}
+
+// A document the meter has just signed and will not hand out again.
+.signed {
+
+    border-color:  $color-warn;
+    background:    $color-warn-bg;
+
+    textarea.mono {
+        font-size:   0.72rem;
+        background:  $color-surface;
+    }
+
+}
+
+// A label above its field rather than beside it, for the fields that are too
+// wide to sit next to their name.
+label.stacked {
+
+    display:         flex;
+    flex-direction:  column;
+    gap:             0.3rem;
+    margin-top:      0.8rem;
+    font-size:       0.85rem;
+    color:           $color-muted;
+
+}

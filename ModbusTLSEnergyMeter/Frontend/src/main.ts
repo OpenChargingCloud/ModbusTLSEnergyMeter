@@ -15,6 +15,8 @@ import { dnsPage }           from './pages/dns';
 import { ntsPage }           from './pages/nts';
 import { modbusCertificatesPage, webCertificatesPage } from './pages/serverCertificates';
 import { clientTrustPage }   from './pages/clientTrust';
+import { signingKeysPage }   from './pages/signingKeys';
+import { sessionsPage }      from './pages/sessions';
 import { accountsPage }      from './pages/accounts';
 import { logsPage }          from './pages/logs';
 import { loginPage }         from './pages/login';
@@ -44,6 +46,8 @@ const router = new Router({
         { path: '/configuration/certificates/web',     page: webCertificatesPage,     guard: auth.requireSignIn },
         { path: '/configuration/certificates/clients', page: clientTrustPage,         guard: auth.requireSignIn },
         { path: '/configuration/accounts',             page: accountsPage,            guard: auth.requireSignIn },
+        { path: '/sessions',                   page: sessionsPage,      guard: auth.requireSignIn },
+        { path: '/configuration/keys',         page: signingKeysPage,   guard: auth.requireSignIn },
         { path: '/logs',                       page: logsPage,          guard: auth.requireSignIn },
         { path: '/login',                      page: loginPage }
     ],

@@ -109,6 +109,99 @@ export interface NewAccount {
     password?:  string;
 }
 
+/** One key this meter puts its name to a reading with. */
+export interface SigningKey {
+    id:           string;
+    /** The signature suite, e.g. "ECDSA-P256", "Ed448" or "ML-DSA-65". */
+    algorithm:    string;
+    createdAt:    string;
+    /** The public half, uppercase hexadecimal. */
+    publicKey:    string;
+    /** Eight bytes of its SHA-256, so two keys can be told apart by eye. */
+    fingerprint:  string;
+    /** Whether this is the key the meter signs with when nobody names one. */
+    isDefault:    boolean;
+    note:         string | null;
+}
+
+/** The signing keys of this meter, and what a new one may be. */
+export interface SigningKeys {
+    keys:            SigningKey[];
+    /** Every algorithm a key can be made for. */
+    algorithms:      string[];
+    /** Those of them an OCMF document can say it was signed with. */
+    ocmfAlgorithms:  string[];
+    /** The one the Alfen format takes, and takes no other. */
+    alfenAlgorithm:  string;
+    error:           string | null;
+}
+
+/**
+ * A public key as an answer hands it out.
+ *
+ * Not one shape: an OCMF reader hands an ECDSA key to a DER parser and expects
+ * a SubjectPublicKeyInfo, and hands an Ed25519 or ML-DSA key straight to the
+ * signature suite and expects the raw key. `format` says which this is.
+ */
+export interface PublicKeyOut {
+    keyId:          string;
+    algorithm:      string;
+    fingerprint:    string;
+    publicKey:      string;
+    encoding:       string;
+    format:         string;
+    rawPublicKey:   string;
+    ocmfAlgorithm:  string | null;
+}
+
+/** What comes back for one signed reading. */
+export interface SignedMeterValue {
+    format:     string;
+    timestamp:  string;
+    ocmf?:      string;
+    alfen?:     string;
+    note?:      string;
+    publicKey:  PublicKeyOut;
+}
+
+/** The charging session this meter is measuring. */
+export interface ChargingSession {
+    sessionId:       string;
+    startedAt:       string;
+    startValue:      number;
+    unit:            string;
+    keyId:           string;
+    identification:  string | null;
+}
+
+/** Whether one is running, and which. */
+export interface SessionState {
+    running:  boolean;
+    session:  ChargingSession | null;
+}
+
+/** What starting a session answers with. */
+export interface SessionStarted {
+    timestamp:   string;
+    sessionId:   string;
+    startValue:  number;
+    unit:        string;
+    publicKey:   PublicKeyOut;
+}
+
+/** What stopping it answers with: the whole session as one signed document. */
+export interface SessionStopped {
+    timestamp:   string;
+    sessionId:   string;
+    startValue:  number;
+    stopValue:   number;
+    energy_kWh:  number;
+    unit:        string;
+    ocmf:        string;
+    publicKey:   PublicKeyOut;
+}
+
+
 /** Who is signed in to the web interface. */
 export interface Me {
     userId:       string;
@@ -572,6 +665,46 @@ export const api = {
         /** A new password for somebody who has lost theirs; not for your own account. */
         resetPassword:  (userId: string)               => meterAPI<AccountWithPassword>('PUT',   `/accounts/${encodeURIComponent(userId)}/password`, {}),
         remove:         (userId: string)               => meterAPI<AccountRemoved>     ('DELETE', `/accounts/${encodeURIComponent(userId)}`)
+    },
+
+    /**
+     * The keys this meter signs readings with.
+     *
+     * Not the TLS certificates and not kept with them: a TLS key says "this
+     * listener is this host" for the length of a connection, and these say
+     * "this meter measured this" and have to go on meaning it for years.
+     */
+    keys: {
+        list:        ()                                     => meterAPI<SigningKeys>('GET',    '/keys'),
+        create:      (algorithm: string, note?: string)     => meterAPI<PublicKeyOut>('POST',  '/keys', { algorithm, note }),
+        /** Sign with this one from now on; changes nothing about what was signed before. */
+        setDefault:  (id: string)                           => meterAPI<SigningKeys>('PUT',   `/keys/${encodeURIComponent(id)}/default`),
+        remove:      (id: string)                           => meterAPI<SigningKeys>('DELETE', `/keys/${encodeURIComponent(id)}`)
+    },
+
+    /** Readings this meter has put its name to, and the sessions they belong to. */
+    signing: {
+
+        /** One reading that belongs to no charging session. */
+        value:  (format: 'ocmf' | 'alfen', key?: string) => {
+
+            const query = new URLSearchParams({ format });
+
+            if (key)
+                query.set('key', key);
+
+            return meterAPI<SignedMeterValue>('GET', `/signedMeterValues?${query}`);
+
+        },
+
+        session:  ()  => meterAPI<SessionState>('GET', '/sessions'),
+
+        start:    (identification?: string, identificationType?: string) =>
+                      meterAPI<SessionStarted>('POST', '/sessions/start', { identification, identificationType }),
+
+        /** Answers with one OCMF document holding both readings. */
+        stop:     ()  => meterAPI<SessionStopped>('POST', '/sessions/stop', {})
+
     },
 
     /** Which CAs a Modbus/TLS client certificate may chain to. */

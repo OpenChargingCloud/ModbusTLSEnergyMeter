@@ -318,7 +318,8 @@ and `-p:SkipFrontendBuild=true` leaves it alone.
 
 Pages: the meter and what it is measuring, the DNS client, the NTS client with
 the state of the clock, a page each for the two certificate stores and one for
-the accepted client CAs, the accounts, and the log. The DNS and NTS pages are
+the accepted client CAs, the signing keys, the charging sessions, the accounts,
+and the log. The DNS and NTS pages are
 forms - name servers can be added and removed, timeouts and ports changed, and
 the time authority named - and each save writes the configuration file before
 the change takes effect. Accounts is the one page everybody signed in can reach,
@@ -550,6 +551,21 @@ and `I` otherwise. Claiming a synchronised clock it does not have would be lying
 about the one field of a reading that cannot be checked afterwards - see
 [Name resolution and the time](#name-resolution-and-the-time).
 
+
+### Where they are on the page
+
+Sessions sits beside the Meter rather than under Configuration: a charging
+session is something this meter does, not something about how it is set up. It
+shows whether one is running, starts and stops it, and signs a single reading on
+demand. The signing keys sit under Configuration next to the certificates, which
+is where somebody looking for "what this meter proves itself with" will look for
+them even though they are not certificates.
+
+Two things are handed over on that page and never again: the public key when a
+session starts, and the document when it stops. Both come with a copy button,
+because a document that is not written down when it is shown is gone - which is
+the same rule the meter itself works by.
+
 ### Alfen
 
 `format=alfen` writes the format of an Alfen charging station:
@@ -682,8 +698,10 @@ words.
 
 ## What it does not do yet
 
-* **No web page for the signing keys, the sessions or the signed values.** All
-  of it is the JSON API only. The certificate pages have no sibling yet.
+* **A charging session does not survive a restart.** The reading it started at
+  is held in memory, so a meter that comes back up has no session running and
+  the one that was open cannot be signed. The counters its documents are
+  numbered with are on disk; the session itself is not.
 * **A certificate can be asked for on an elliptic curve or on RSA, and on
   nothing else.** Ed25519, Ed448 and ML-DSA are the algorithms worth wanting for
   a signature meant to outlive the device, and this meter signs readings with
