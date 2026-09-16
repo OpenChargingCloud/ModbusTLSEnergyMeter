@@ -17,7 +17,11 @@
 
 #region Usings
 
+using System.Runtime.InteropServices;
+
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
+
+using MeterLogLevel = cloud.charging.open.EnergyMeters.ModbusTLS.Logging.LogLevel;
 
 #endregion
 
@@ -89,6 +93,25 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 if (store.Next?.Certificate is not null)
                     Log.Info(
                         $"A newer {store.Purpose} certificate takes over on {store.Next.Certificate.NotBefore:yyyy-MM-dd HH:mm}.",
+                        "certificates", store.Purpose
+                    );
+
+                // Said out loud rather than left to be discovered as a
+                // handshake that fails for no visible reason: the chain is
+                // handed to the TLS stack either way, and on Windows the TLS
+                // stack does not send it.
+                var chain = store.ChainFor(null);
+
+                if (chain is not null && chain.HasIntermediates)
+                    Log.Log(
+                        RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                            ? MeterLogLevel.Warning
+                            : MeterLogLevel.Info,
+                        RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                            ? $"The {store.Purpose} certificate came with {chain.Intermediates.Count} intermediate(s), and Windows will not put them on the wire: " +
+                               "SChannel builds the chain it sends from this machine's certificate stores and ignores what a program hands it. " +
+                               "Install them in the local computer's intermediate CA store, or run this meter on Linux, where they are sent."
+                            : $"The {store.Purpose} listener sends {chain.Intermediates.Count} intermediate(s) with its certificate.",
                         "certificates", store.Purpose
                     );
 

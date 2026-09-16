@@ -132,6 +132,31 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         }
 
+        /// <summary>
+        /// A CA signed by another CA, so that a certificate signed by it needs
+        /// an intermediate to be reachable from the root.
+        /// </summary>
+        private static (ECDsa Key, X509Certificate2 Certificate) NewIntermediate(ECDsa             RootKey,
+                                                                                 X509Certificate2  RootCertificate,
+                                                                                 String            Name = "CN=Test Issuing CA")
+        {
+
+            var key      = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var request  = new CertificateRequest(Name, key, HashAlgorithmName.SHA256);
+
+            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, true, 0, true));
+            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+
+            return (key, request.Create(
+                             RootCertificate.SubjectName,
+                             X509SignatureGenerator.CreateForECDsa(RootKey),
+                             DateTimeOffset.UtcNow.AddYears(-1),
+                             DateTimeOffset.UtcNow.AddYears(5),
+                             RandomNumberGenerator.GetBytes(16)
+                         ));
+
+        }
+
         private static CertificateStore NewStore(TimeProvider Clock, String Path)
             => new (Path, "modbus", Clock);
 
@@ -455,6 +480,102 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(second?.Id,        Is.EqualTo(first?.Id), "every restart adopts the same file; the store must not fill up with copies");
                 Assert.That(store.Entries.Count(), Is.EqualTo(1));
                 Assert.That(store.Current?.Id, Is.EqualTo(first?.Id));
+            });
+
+        }
+
+        #endregion
+
+        #region TheIntermediatesAreKeptAndHandedOut()
+
+        /// <summary>
+        /// What goes on the wire is the certificate and the intermediates that
+        /// lead to it. Without them a client that does not already hold them
+        /// cannot build a path to its trust anchor, and all it can report is a
+        /// handshake failure with nothing in it about why.
+        /// </summary>
+        [Test]
+        public void TheIntermediatesAreKeptAndHandedOut()
+        {
+
+            var now                       = DateTimeOffset.Parse("2026-09-16T10:00:00Z");
+            var clock                     = new MovableClock(now);
+            var store                     = NewStore(clock, storePath);
+            var (rootKey, rootCert)       = NewCA("CN=Test Root CA");
+            var (issuingKey, issuingCert) = NewIntermediate(rootKey, rootCert);
+
+            var entry = store.CreateRequest("CN=meter7.lan", ["meter7.lan"]);
+
+            // What a CA hands back: the certificate, and the intermediate that
+            // signed it, in one file.
+            var leafPEM = Sign(entry.RequestPEM!, issuingKey, issuingCert, now.AddDays(-1), now.AddDays(90));
+            var bundle  = leafPEM + "\u000A" + PemEncoding.WriteString("CERTIFICATE", issuingCert.RawData);
+
+            Assert.That(store.TryImportCertificate(entry.Id, bundle, out var error), Is.True, error);
+
+            var chain = store.ChainFor(null);
+
+            Assert.Multiple(() => {
+
+                Assert.That(chain,                                  Is.Not.Null);
+                Assert.That(chain!.Certificate.Subject,             Is.EqualTo("CN=meter7.lan"));
+                Assert.That(chain.HasIntermediates,                 Is.True, "the intermediate came with the certificate and has to go back out with it");
+                Assert.That(chain.Intermediates,                    Has.Count.EqualTo(1));
+                Assert.That(chain.Intermediates[0].Subject,         Is.EqualTo("CN=Test Issuing CA"));
+
+                // The leaf is not repeated among the intermediates, and a root
+                // is not sent at all: bytes on the wire that change nothing.
+                Assert.That(chain.Intermediates.Cast<X509Certificate2>().Select(certificate => certificate.Thumbprint),
+                            Does.Not.Contain(chain.Certificate.Thumbprint));
+
+            });
+
+            // And a store whose certificate came without intermediates says so,
+            // rather than pretending to have some.
+            var plain      = store.CreateRequest("CN=plain.lan");
+            Assert.That(store.TryImportCertificate(plain.Id, Sign(plain.RequestPEM!, issuingKey, issuingCert, now, now.AddDays(90)), out error), Is.True, error);
+
+            var plainChain = store.ChainFor(null);
+
+            Assert.Multiple(() => {
+                Assert.That(plainChain!.Certificate.Subject, Is.EqualTo("CN=plain.lan"));
+                Assert.That(plainChain.HasIntermediates,     Is.False);
+
+                // Two different chains must not share a cached TLS context.
+                Assert.That(plainChain.CacheKey,             Is.Not.EqualTo(chain!.CacheKey));
+            });
+
+        }
+
+        #endregion
+
+        #region TheIntermediatesSurviveARestart()
+
+        [Test]
+        public void TheIntermediatesSurviveARestart()
+        {
+
+            var now                       = DateTimeOffset.Parse("2026-09-16T10:00:00Z");
+            var clock                     = new MovableClock(now);
+            var (rootKey, rootCert)       = NewCA("CN=Test Root CA");
+            var (issuingKey, issuingCert) = NewIntermediate(rootKey, rootCert);
+
+            {
+                var store = NewStore(clock, storePath);
+                var entry = store.CreateRequest("CN=meter7.lan");
+                var bundle = Sign(entry.RequestPEM!, issuingKey, issuingCert, now.AddDays(-1), now.AddDays(90)) +
+                             "\u000A" + PemEncoding.WriteString("CERTIFICATE", issuingCert.RawData);
+                Assert.That(store.TryImportCertificate(entry.Id, bundle, out var error), Is.True, error);
+            }
+
+            var reopened = NewStore(clock, storePath);
+            var chain    = reopened.ChainFor(null);
+
+            Assert.Multiple(() => {
+                Assert.That(reopened.LastError,      Is.Null);
+                Assert.That(chain,                   Is.Not.Null);
+                Assert.That(chain!.HasIntermediates, Is.True, "a restarted meter that forgot the intermediates would start failing handshakes it used to pass");
+                Assert.That(chain.Intermediates[0].Subject, Is.EqualTo("CN=Test Issuing CA"));
             });
 
         }

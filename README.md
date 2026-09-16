@@ -349,11 +349,29 @@ meter that accepts none refuses every Modbus/TLS client.
 This is only about Modbus/TLS. The web interface authenticates nobody by
 certificate; there a person signs in with an account.
 
-**What is not done yet**: only the leaf is sent, not the intermediates that came
-with it. Against a peer that has the issuing CA - which is the whole mbaps model
-- that is right; against a browser and a certificate that needs a chain, the
-intermediates would have to be sent too, and `SslStreamCertificateContext` is
-where that goes.
+### The intermediates
+
+A certificate signed by an issuing CA under a root is no use on its own: a peer
+that holds only the root cannot build a path to it. So whatever came in the PEM
+alongside the certificate is kept and sent with it - both listeners build an
+`SslStreamCertificateContext` from the leaf and those intermediates, once per
+distinct chain and with `offline: true`, so that building it never reaches for
+the network. A server that pauses a handshake to fetch something is a server
+somebody can hold still by not answering.
+
+A root that turns up in the file is dropped rather than sent: bytes on the wire
+that change nothing. So is the leaf, if it appears twice.
+
+**This works on Linux and not on Windows**, and the difference is not in this
+code. On Linux the intermediates go out as given - measured, not assumed: the
+same certificate that arrives alone from a meter on Windows arrives with its
+issuing CA from one on Linux, as `openssl s_client -showcerts` counts them.
+Windows builds the chain it sends inside SChannel, from that machine's own
+certificate stores, and ignores what a program hands it; the intermediates have
+to be installed in the local computer's intermediate CA store instead. A meter
+started on Windows with intermediates in its store says so in its log at
+startup, rather than leaving it to be discovered as a handshake that fails for
+no visible reason.
 
 
 ## The log

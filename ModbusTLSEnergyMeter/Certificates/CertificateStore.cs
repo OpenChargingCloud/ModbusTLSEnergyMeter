@@ -17,12 +17,15 @@
 
 #region Usings
 
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
 using Newtonsoft.Json.Linq;
+
+using org.GraphDefined.Vanaheimr.Hermod;
+
+using NetIPAddress = System.Net.IPAddress;
 
 #endregion
 
@@ -68,8 +71,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         private readonly Dictionary<String, CertificateEntry>  entries = [];
         private readonly Lock                                  cacheLock = new();
 
-        private CertificateEntry?  current;
-        private DateTimeOffset     currentValidUntil = DateTimeOffset.MinValue;
+        private CertificateEntry?       current;
+        private ServerCertificateChain?  currentChain;
+        private DateTimeOffset           currentValidUntil = DateTimeOffset.MinValue;
 
         #endregion
 
@@ -272,6 +276,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                           ThenByDescending (entry => entry.Id).
                           FirstOrDefault();
 
+            // Built here rather than per handshake: what goes on the wire is
+            // the certificate and the intermediates that came with it, and
+            // ServerCertificateChain drops the leaf and a self-signed root
+            // from that list by itself - a root sent along is bytes that
+            // change nothing.
+            currentChain = current?.Certificate is not null
+                               ? new ServerCertificateChain(current.Certificate, current.Chain)
+                               : null;
+
             // Only cache until the soonest moment the answer could change:
             // when this one runs out, or when a newer one begins.
             var nextChange = new List<DateTimeOffset>();
@@ -292,14 +305,44 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         }
 
         /// <summary>
-        /// The certificate to show a peer. What the TLS listeners are handed.
+        /// The certificate to show a peer, together with the intermediates
+        /// that lead to it. What the TLS listeners are handed.
         /// </summary>
         /// <remarks>
+        /// The intermediates matter: a client that does not already hold them
+        /// cannot build a path from this certificate to its trust anchor, and
+        /// what it reports is a handshake failure with nothing in it about
+        /// why. A peer that pinned the issuing CA - the whole mbaps
+        /// arrangement - would not have needed them, and a browser almost
+        /// always does.
+        ///
         /// The server name a client sent is not used to pick: this meter is one
         /// device with one identity per listener, and answering different names
         /// with different certificates is a thing for a host that serves more
         /// than one.
         /// </remarks>
+        public ServerCertificateChain? ChainFor(String? ServerName)
+        {
+
+            // Through Current, so that the validity window is re-checked and
+            // the chain below is rebuilt whenever the answer changes.
+            var now = TimeProvider.GetUtcNow();
+
+            lock (cacheLock)
+            {
+
+                if (current is null || !current.IsValidAt(now) || now >= currentValidUntil)
+                    Recompute(now);
+
+                return currentChain;
+
+            }
+
+        }
+
+        /// <summary>
+        /// The certificate this store would hand out now, without its chain.
+        /// </summary>
         public X509Certificate2? SelectFor(String? ServerName)
             => Current?.Certificate;
 
@@ -386,7 +429,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
 
             foreach (var address in IPAddresses)
             {
-                if (IPAddress.TryParse(address, out var parsed))
+                if (NetIPAddress.TryParse(address, out var parsed))
                 {
                     subjectAlternativeNames.AddIpAddress(parsed);
                     any = true;
@@ -453,7 +496,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             }
 
             foreach (var address in entry.IPAddresses)
-                if (IPAddress.TryParse(address, out var parsed))
+                if (NetIPAddress.TryParse(address, out var parsed))
                 {
                     alternativeNames.AddIpAddress(parsed);
                     any = true;

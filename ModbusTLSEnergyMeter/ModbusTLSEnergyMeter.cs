@@ -624,7 +624,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                              IdleTimeout:        IdleTimeout      ?? DefaultIdleTimeout,
                                              WriteTimeout:       WriteTimeout     ?? DefaultWriteTimeout,
 
-                                             ServerCertificateSelector:  serverName => modbusCertificates.SelectFor(serverName)
+                                             ServerCertificateSelector:  serverName => modbusCertificates.ChainFor(serverName)
                                                                                            ?? throw new InvalidOperationException("This meter has no valid Modbus/TLS certificate to show."),
                                              ClientTrustAnchors:         clientTrust.Anchors
                                          ),
@@ -662,6 +662,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                      DNSClient:       dnsClient,
                                      LoggerFactory:   loggerFactory
                                  );
+
+            // And the intermediates with it. Hermod asks this one first and
+            // falls back to the selector above, so a chain is sent whenever
+            // there is one to send - which is what a browser needs to build a
+            // path from this certificate to something it trusts.
+            if (HTTPS)
+                this.httpServer.ServerCertificateChainSelector = (tcpServer, tcpClient) => webCertificates.ChainFor(null);
 
             // Below a path of its own rather than at the root, because the
             // root is where the page lives. Hermod dispatches to the most
