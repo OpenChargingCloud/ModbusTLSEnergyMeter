@@ -69,7 +69,7 @@ export const signingKeysPage: Page = {
 
                 ${mayManage ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.role ?? 'somebody'}, which may look at the signing keys
+                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may look at the signing keys
                         but not make or remove one.
                     </div>
                 `}

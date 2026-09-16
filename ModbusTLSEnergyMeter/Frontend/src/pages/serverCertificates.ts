@@ -76,7 +76,7 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
 
                     ${mayManage ? '' : html`
                         <div class="notice">
-                            Signed in as ${auth.user?.role ?? 'somebody'}, which may look at the certificates but
+                            Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may look at the certificates but
                             not ask for or put in a new one.
                         </div>
                     `}

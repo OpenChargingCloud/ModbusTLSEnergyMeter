@@ -82,11 +82,11 @@ export const accountsPage: Page = {
 
                     <table class="kv">
                         <tr><td>Signed in as</td><td><code>${me?.userId ?? '-'}</code></td></tr>
-                        <tr><td>Role</td><td>${roleOf(me?.role ?? null)?.title ?? me?.role ?? 'none'}</td></tr>
+                        <tr><td>Role</td><td>${me?.roleTitle ?? 'none'}</td></tr>
                     </table>
 
-                    ${roleOf(me?.role ?? null) === undefined ? '' : html`
-                        <p class="hint">${roleOf(me?.role ?? null)!.description}</p>
+                    ${me?.roleDescription === null || me?.roleDescription === undefined ? '' : html`
+                        <p class="hint">${me.roleDescription}</p>
                     `}
 
                     <form id="password-form" class="form-stack">
@@ -170,7 +170,7 @@ export const accountsPage: Page = {
 
                 ` : html`
                     <div class="notice">
-                        Signed in as ${roleOf(me?.role ?? null)?.title ?? me?.role ?? 'somebody'}, which may
+                        Signed in as ${me?.roleTitle ?? 'somebody'}, which may
                         change its own password but not see or hand out accounts. Ask an administrator of
                         this meter for that.
                     </div>

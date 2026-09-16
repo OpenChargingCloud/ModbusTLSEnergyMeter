@@ -127,11 +127,11 @@ export function shell(root:     HTMLElement,
                 </ul>
 
                 <div class="sidebar-foot">
-                    <div class="who" title="Signed in as ${auth.user?.role ?? 'nobody'}">
+                    <div class="who" title="${auth.user?.roleDescription ?? 'Signed in with no role in this meter.'}">
                         <i class="fa-solid fa-user"></i>
                         <span>${auth.user?.userId ?? '-'}</span>
                     </div>
-                    <div class="roles small muted">${auth.user?.role ?? 'no role here'}</div>
+                    <div class="roles small muted">${auth.user?.roleTitle ?? 'no role here'}</div>
                     <button type="button" id="sign-out" class="btn small">Sign out</button>
                     <div class="versions small muted">
                         meter ${config.serverVersion} &middot; web ${config.frontendVersion}

@@ -210,6 +210,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// enforces and not the enforcement: every request is checked again on
         /// arrival, so a browser that edits this list gains nothing but a
         /// button that answers 403.
+        ///
+        /// The role travels twice: once as this meter spells it and once as a
+        /// person would say it. Every page that tells somebody what they may
+        /// not do here names their role in the same breath, and "IsAdminReadOnly"
+        /// is not a thing anybody says. Sending the readable form with the role
+        /// it belongs to is one field; the alternative is every page fetching
+        /// the role table to translate one word.
         /// </remarks>
         private Task<HTTPResponse> Me(HTTPRequest Request)
         {
@@ -226,7 +233,18 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                new JProperty("userId",       user.Id.ToString()),
                                new JProperty("name",         user.Name.FirstText()),
                                new JProperty("organization", ModbusTLSEnergyMeter.MeterOrganizationId),
-                               new JProperty("role",         role?.ToString()),
+                               role.HasValue
+                                   ? new JProperty("role",             role.Value.ToString())
+                                   : new JProperty("role",             JValue.CreateNull()),
+
+                               role.HasValue
+                                   ? new JProperty("roleTitle",        role.Value.AsText())
+                                   : new JProperty("roleTitle",        JValue.CreateNull()),
+
+                               role.HasValue
+                                   ? new JProperty("roleDescription",  role.Value.Description())
+                                   : new JProperty("roleDescription",  JValue.CreateNull()),
+
                                new JProperty("permissions",  new JArray(permissions.Names()))
                            ))
                    );

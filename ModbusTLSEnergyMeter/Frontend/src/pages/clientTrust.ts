@@ -52,7 +52,7 @@ export const clientTrustPage: Page = {
 
                 ${mayManage ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.role ?? 'somebody'}, which may look at the accepted CAs
+                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may look at the accepted CAs
                         but not change them.
                     </div>
                 `}

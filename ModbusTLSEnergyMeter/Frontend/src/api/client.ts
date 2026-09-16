@@ -209,7 +209,19 @@ export interface Me {
     organization: string;
     /** Their role in the meter's organization, or null when they have none. */
     role:         string | null;
-    permissions:  Permission[];
+    /**
+     * The same role as a person would say it: "Read-only administrator" rather
+     * than "IsAdminReadOnly".
+     *
+     * Sent with the role rather than looked up, because every page that tells
+     * somebody what they may not do here names their role in the same sentence,
+     * and none of them should have to fetch a table to translate one word.
+     * Null when they hold no role, so a page can fall back to its own wording.
+     */
+    roleTitle:        string | null;
+    /** What that role grants, in the same words the role table uses. */
+    roleDescription:  string | null;
+    permissions:      Permission[];
 }
 
 /** How the meter is doing right now. */

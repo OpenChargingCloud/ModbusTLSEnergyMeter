@@ -223,9 +223,15 @@ identity of the device.
 A role this meter does not know, and an account belonging to no organization of
 it, grant nothing at all.
 
+The names in that table are what the API speaks. What a page shows is the
+readable form - "Read-only administrator" rather than `IsAdminReadOnly` - and it
+travels with the role in `/api/v1/me` rather than being looked up, because every
+page that tells somebody what they may not do here names their role in the same
+sentence and none of them should need a second request to translate one word.
+
 | Resource | |
 |----------|---|
-| `GET  /api/v1/me` | who is signed in, their role and their permissions |
+| `GET  /api/v1/me` | who is signed in, their role - as this meter spells it and as a person would say it - and their permissions |
 | `GET  /api/v1/status` | serial, uptime, both listeners |
 | `GET  /api/v1/meter` | the readings with scale factors applied, the mode, and what the simulated site is doing |
 | `GET  /api/v1/meter/registers?start=&count=` | the raw register block |

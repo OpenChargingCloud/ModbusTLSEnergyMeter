@@ -60,7 +60,7 @@ export const sessionsPage: Page = {
 
                 ${mayDrive ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.role ?? 'somebody'}, which may watch a charging session
+                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may watch a charging session
                         but not start or stop one, and may not ask for a signed reading.
                     </div>
                 `}

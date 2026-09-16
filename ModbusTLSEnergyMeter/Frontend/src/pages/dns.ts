@@ -52,7 +52,7 @@ export const dnsPage: Page = {
 
                 ${mayChange ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.role ?? 'somebody'}, which may look at the name
+                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may look at the name
                         servers but not change them.
                     </div>
                 `}

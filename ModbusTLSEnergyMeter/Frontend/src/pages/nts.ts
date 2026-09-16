@@ -51,7 +51,7 @@ export const ntsPage: Page = {
 
                 ${mayChange ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.role ?? 'somebody'}, which may look at the time
+                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may look at the time
                         client but not change it.
                     </div>
                 `}

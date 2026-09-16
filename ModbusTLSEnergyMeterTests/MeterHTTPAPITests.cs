@@ -138,6 +138,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(me?["organization"]?.ToString(),  Is.EqualTo(ModbusTLSEnergyMeter.MeterOrganizationId));
                 Assert.That(me?["role"]?.ToString(),          Is.EqualTo("IsAdmin"));
 
+                // The readable form travels with it, because every page that
+                // tells somebody what they may not do names their role in the
+                // same sentence, and "IsAdmin" is not a thing anybody says.
+                Assert.That(me?["roleTitle"]?.ToString(),        Is.EqualTo("Administrator"));
+                Assert.That(me?["roleDescription"]?.ToString(),  Does.Contain("Everything"));
+
                 Assert.That(me?["permissions"]?.Values<String>(),
                             Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration",
                                                     "ChangeNetworkSettings", "RunDiagnostics", "WriteRegisters",
@@ -191,6 +197,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
                 Assert.That(me?["role"]?.ToString(),                Is.EqualTo("IsGuest"));
+                Assert.That(me?["roleTitle"]?.ToString(),           Is.EqualTo("Guest"));
                 Assert.That(me?["permissions"]?.Values<String>(),   Is.EquivalentTo(new[] { "ReadMeter" }));
             });
 
@@ -275,6 +282,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(async () => {
 
                 Assert.That(me?["role"]?.Type,                                  Is.EqualTo(JTokenType.Null));
+
+                // Null and not a placeholder: a page falls back to its own
+                // wording for somebody holding no role, and "No role in this
+                // meter" does not fit into "Signed in as ..., which may".
+                Assert.That(me?["roleTitle"]?.Type,                             Is.EqualTo(JTokenType.Null));
+                Assert.That(me?["roleDescription"]?.Type,                       Is.EqualTo(JTokenType.Null));
+
                 Assert.That(me?["permissions"]?.Values<String>(),               Is.Empty);
 
                 Assert.That(await browser.StatusOf(HttpMethod.Get, "api/v1/meter"),
