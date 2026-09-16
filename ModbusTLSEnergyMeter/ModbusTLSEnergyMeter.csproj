@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>cloud.charging.open.EnergyMeters.ModbusTLS</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Hermod\Hermod\Hermod.csproj" />
+    <ProjectReference Include="..\..\Norn\Norn\Norn.csproj" />
+    <ProjectReference Include="..\..\Styx\Styx\Styx.csproj" />
+  </ItemGroup>
+
+  <!--
+    The web interface: one HTML file with its stylesheet and its script inside
+    it, embedded so that a meter is one binary to deploy and needs nothing
+    installed beside it.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="HTTPRoot\index.html" />
+  </ItemGroup>
+
+</Project>
