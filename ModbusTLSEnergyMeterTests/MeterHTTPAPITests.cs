@@ -140,7 +140,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(me?["permissions"]?.Values<String>(),
                             Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration",
-                                                    "ChangeNetworkSettings", "RunDiagnostics", "WriteRegisters" }));
+                                                    "ChangeNetworkSettings", "RunDiagnostics", "WriteRegisters",
+                                                    "ManageCertificates" }));
 
             });
 

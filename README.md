@@ -14,7 +14,8 @@ await using var meter = new ModbusTLSEnergyMeter(
                             ServerPfxPath:      "pki/server.pfx",
                             ServerPfxPassword:  "demo",
                             ClientCACertPath:   "pki/issuing-clients-ca.crt",
-                            MeterMode:          SunSpecMeterMode.ImportOnly
+                            MeterMode:          SunSpecMeterMode.ImportOnly,
+                            HTTPS:              true
                         );
 
 await meter.StartAsync();
@@ -167,12 +168,18 @@ Everything below `/api/v1` needs the session cookie, and each resource names the
 permission it wants. What a person may do follows from their role in the
 organization `EnergyMeter`:
 
-| Role | read meter | read config | change DNS/NTS | diagnostics | write registers |
-|------|:----------:|:-----------:|:--------------:|:-----------:|:---------------:|
-| `IsAdmin`          | yes | yes | yes | yes | yes |
-| `IsAdminReadOnly`  | yes | yes | no  | yes | no  |
-| `IsMember`         | yes | yes | no  | no  | no  |
-| `IsGuest`          | yes | no  | no  | no  | no  |
+| Role | read meter | read config | change DNS/NTS | diagnostics | write registers | manage certificates |
+|------|:----------:|:-----------:|:--------------:|:-----------:|:---------------:|:-------------------:|
+| `IsAdmin`          | yes | yes | yes | yes | yes | yes |
+| `IsAdminReadOnly`  | yes | yes | no  | yes | no  | no  |
+| `IsMember`         | yes | yes | no  | no  | no  | no  |
+| `IsGuest`          | yes | no  | no  | no  | no  | no  |
+
+Managing certificates is its own permission and not part of changing network
+settings, because it is a bigger thing than any of those: which certificate this
+meter shows is who it says it is, and which CAs it trusts is who may talk to it
+at all. Somebody who may repoint a name server has not thereby been handed the
+identity of the device.
 
 A role this meter does not know, and an account belonging to no organization of
 it, grant nothing at all.
@@ -191,6 +198,14 @@ it, grant nothing at all.
 | `POST /api/v1/configuration/nts/sync` | check the clock now |
 | `GET  /api/v1/configuration/time` | what time it is, and what that is worth |
 | `GET  /api/v1/configuration/certificates` | which certificates it was started with |
+| `GET  /api/v1/certificates` | both server stores and the accepted client CAs, in one answer |
+| `GET  /api/v1/certificates/servers/{modbus\|web}` | one store |
+| `POST /api/v1/certificates/servers/{purpose}/requests` | make a key and a signing request for it |
+| `GET  /api/v1/certificates/servers/{purpose}/{id}/request` | that request, as a file |
+| `PUT  /api/v1/certificates/servers/{purpose}/{id}` | `{"pem": ...}`, the signed certificate coming back |
+| `DELETE /api/v1/certificates/servers/{purpose}/{id}` | throw an entry and its key away |
+| `GET/POST /api/v1/certificates/clients` | the CAs Modbus/TLS clients may chain to |
+| `PUT/DELETE /api/v1/certificates/clients/{id}` | switch one off, or remove it |
 | `GET  /api/v1/logs?limit=&after=&tag=` | what happened, newest last |
 | `GET  /api/v1/logs/verify` | walk the log on disk and check every line |
 | `GET  /api/v1/events` | the log as a Server-Sent Events stream |
@@ -249,7 +264,8 @@ npm run typecheck
 and `-p:SkipFrontendBuild=true` leaves it alone.
 
 Pages: the meter and what it is measuring, the DNS client, the NTS client with
-the state of the clock, the certificates, and the log. The DNS and NTS pages are
+the state of the clock, a page each for the two certificate stores and one for
+the accepted client CAs, and the log. The DNS and NTS pages are
 forms - name servers can be added and removed, timeouts and ports changed, and
 the time authority named - and each save writes the configuration file before
 the change takes effect. What somebody may not do is not offered: the controls
@@ -260,6 +276,84 @@ Every URL that is not one of the APIs and does not look like a file of the
 bundle gets the stub with status 200, which is what makes a reload on a deep
 link and a bookmark to one work. A URL that does look like a file and is not one
 gets a real 404: a mistyped script tag must not hand the browser HTML to run.
+
+
+## Certificates
+
+Two stores and a trust store, under `<DataPath>/certificates/`. What lives in
+each of them is decided by who checks it:
+
+| | `certificates/modbus/` | `certificates/web/` |
+|---|---|---|
+| shown to | a charging station or a controller | a browser |
+| issued by | a device PKI | wherever the operator's web certificates come from |
+| checked against | the CA that peer has pinned | the browser's own trust store |
+| first entry | the certificate this meter was started with, adopted | one this meter signs for itself |
+
+They are deliberately not one store. A certificate both would accept would have
+to be issued by a CA that is both pinned by the charging station and trusted by
+the browser, and nothing issues such a thing.
+
+### Asking for one
+
+The private key is made in the meter and never leaves it. What goes out is a
+PKCS#10 request; what comes back is a certificate, which is checked against the
+key that asked for it before it is kept - a certificate this meter has no key
+for is no use to it, and finding that out at the next handshake would be
+finding it out as an outage.
+
+```
+POST /api/v1/certificates/servers/web/requests
+     {"subject": "CN=meter7.lan, O=Acme", "dnsNames": ["meter7.lan"], "keyType": "ec256"}
+GET  /api/v1/certificates/servers/web/<id>/request      -> the .csr, as a file
+PUT  /api/v1/certificates/servers/web/<id>              {"pem": "-----BEGIN CERTIFICATE-----..."}
+```
+
+or the same three steps as three controls on the page.
+
+### Which one is shown
+
+Of the certificates that are valid at this moment, the one whose validity began
+last. Nothing else decides it, and nothing has to be pressed:
+
+* Both listeners ask the store **at every handshake**. A certificate that is
+  valid now is shown to the next peer that connects - no restart, and existing
+  connections are not disturbed.
+* A certificate uploaded today that becomes valid in two days is simply not the
+  answer until then, and is the answer from the second it is. The page says
+  which one is waiting and when it takes over.
+* "Newest" is by `notBefore` and not by when it was uploaded, because what a
+  certificate says about itself is the thing both ends of a handshake can check.
+* An expired one stops being shown. Once a minute the meter looks again, so that
+  a rollover is written down when it happens rather than whenever the next peer
+  turns up - on a quiet meter that could be the following afternoon.
+
+An entry is kept with its key until it is thrown away, so the certificate this
+meter was running under last month can still be pointed at. The one being shown
+cannot be removed while it is the only one that could be: a listener with
+nothing to show refuses every handshake, and doing that to oneself through a web
+page is not a mistake worth making possible.
+
+### Who may connect
+
+`certificates/trust/` holds the CAs a **Modbus/TLS client** certificate may
+chain to - more than one, on purpose. A meter in the field is reached by peers
+whose certificates were issued by different people, and even with one issuer,
+replacing it happens while both the old and the new one still have to work. A
+single pinned CA makes that a flag day.
+
+Anchors are asked for at every handshake as well, so adding or removing one
+takes effect on the next connection. The last accepted CA cannot be removed: a
+meter that accepts none refuses every Modbus/TLS client.
+
+This is only about Modbus/TLS. The web interface authenticates nobody by
+certificate; there a person signs in with an account.
+
+**What is not done yet**: only the leaf is sent, not the intermediates that came
+with it. Against a peer that has the issuing CA - which is the whole mbaps model
+- that is right; against a browser and a certificate that needs a chain, the
+intermediates would have to be sent too, and `SslStreamCertificateContext` is
+where that goes.
 
 
 ## The log

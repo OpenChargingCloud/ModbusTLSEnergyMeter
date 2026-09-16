@@ -48,7 +48,8 @@ export type Permission = 'ReadMeter'
                        | 'ReadConfiguration'
                        | 'ChangeNetworkSettings'
                        | 'RunDiagnostics'
-                       | 'WriteRegisters';
+                       | 'WriteRegisters'
+                       | 'ManageCertificates';
 
 /** Who is signed in to the web interface. */
 export interface Me {
@@ -223,6 +224,93 @@ export interface Certificates {
 }
 
 
+// The certificate stores
+
+/** Which listener a store of certificates belongs to. */
+export type CertificatePurpose = 'modbus' | 'web';
+
+/** What a certificate is, once there is one. */
+export interface CertificateInfo {
+    subject:      string;
+    issuer:       string;
+    notBefore:    string;
+    notAfter:     string;
+    thumbprint:   string;
+    chainLength:  number;
+}
+
+/**
+ * One identity a listener can show: a key that never leaves the meter, the
+ * request that was handed out for it, and the certificate once it came back.
+ */
+export interface CertificateEntry {
+    id:           string;
+    createdAt:    string;
+    subject:      string;
+    dnsNames:     string[];
+    ipAddresses:  string[];
+    keyType:      string;
+    note:         string | null;
+    hasRequest:   boolean;
+    /** "valid", "not valid yet", "expired", "awaiting a certificate", ... */
+    state:        string;
+    certificate:  CertificateInfo | null;
+}
+
+export interface CertificateStore {
+    purpose:    CertificatePurpose;
+    path:       string;
+    /** The entry being shown now, if any. */
+    currentId:  string | null;
+    /** The entry that takes over next, if one is waiting. */
+    nextId:     string | null;
+    nextAt:     string | null;
+    entries:    CertificateEntry[];
+}
+
+/** What a new signing request asks for. */
+export interface CertificateRequestBody {
+    subject:      string;
+    dnsNames?:    string[];
+    ipAddresses?: string[];
+    keyType?:     'ec256' | 'rsa3072';
+    note?:        string;
+}
+
+/** One certificate inside an accepted client chain. */
+export interface TrustedChainCertificate {
+    subject:     string;
+    issuer:      string;
+    notBefore:   string;
+    notAfter:    string;
+    thumbprint:  string;
+    expired:     boolean;
+    isRoot:      boolean;
+}
+
+/** One CA a Modbus/TLS client certificate may chain to. */
+export interface TrustedChain {
+    id:            string;
+    name:          string;
+    addedAt:       string;
+    enabled:       boolean;
+    certificates:  TrustedChainCertificate[];
+}
+
+export interface ClientTrust {
+    path:    string;
+    chains:  TrustedChain[];
+}
+
+/** Both server stores and the accepted client chains, in one answer. */
+export interface CertificateOverview {
+    modbus:   CertificateStore;
+    web:      CertificateStore;
+    clients:  ClientTrust;
+    https:    boolean;
+}
+
+
 // The log on disk
 
 /** One file of the log, and whether it is still what it was. */
@@ -372,6 +460,44 @@ export const api = {
 
     clock:         () => meterAPI<Clock>       ('GET', '/configuration/time'),
     certificates:  () => meterAPI<Certificates>('GET', '/configuration/certificates'),
+
+    /**
+     * The certificates this meter shows.
+     *
+     * Two stores, and deliberately not one: what a charging station checks
+     * comes from a device PKI, what a browser checks comes from wherever the
+     * operator's web certificates come from, and nothing issues a certificate
+     * both of them would accept.
+     */
+    tls: {
+
+        overview:  ()                        => meterAPI<CertificateOverview>('GET', '/certificates'),
+        store:     (p: CertificatePurpose)   => meterAPI<CertificateStore>   ('GET', `/certificates/servers/${p}`),
+
+        /** Make a key and write a signing request for it. The key stays there. */
+        request:   (p: CertificatePurpose, body: CertificateRequestBody) =>
+                       meterAPI<CertificateEntry>('POST', `/certificates/servers/${p}/requests`, body),
+
+        /** Where the browser fetches the request itself; it arrives as a file. */
+        requestURL: (p: CertificatePurpose, id: string) =>
+                       `${config.apiBase}/certificates/servers/${p}/${id}/request`,
+
+        /** The signed certificate coming back, checked against the key that asked. */
+        upload:    (p: CertificatePurpose, id: string, pem: string) =>
+                       meterAPI<CertificateStore>('PUT', `/certificates/servers/${p}/${id}`, { pem }),
+
+        remove:    (p: CertificatePurpose, id: string) =>
+                       meterAPI<CertificateStore>('DELETE', `/certificates/servers/${p}/${id}`)
+
+    },
+
+    /** Which CAs a Modbus/TLS client certificate may chain to. */
+    trust: {
+        get:         ()                              => meterAPI<ClientTrust>('GET',    '/certificates/clients'),
+        add:         (name: string, pem: string)     => meterAPI<ClientTrust>('POST',   '/certificates/clients', { name, pem }),
+        setEnabled:  (id: string, enabled: boolean)  => meterAPI<ClientTrust>('PUT',   `/certificates/clients/${id}`, { enabled }),
+        remove:      (id: string)                    => meterAPI<ClientTrust>('DELETE', `/certificates/clients/${id}`)
+    },
 
     /**
      * A page of the log, oldest of the returned entries first.

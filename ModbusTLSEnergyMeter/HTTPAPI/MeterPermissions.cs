@@ -88,7 +88,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// destroys something, which is why it is not folded into changing
         /// settings.
         /// </remarks>
-        WriteRegisters         = 16
+        WriteRegisters         = 16,
+
+        /// <summary>
+        /// Ask for a new certificate, put one in, and say which CAs a
+        /// Modbus/TLS client may chain to.
+        /// </summary>
+        /// <remarks>
+        /// Its own permission rather than part of changing network settings,
+        /// because it is a bigger thing than any of those: which certificate
+        /// this meter shows is who it says it is, and which CAs it trusts is
+        /// who may talk to it at all. Somebody who may repoint a name server
+        /// has not thereby been handed the identity of the device.
+        /// </remarks>
+        ManageCertificates     = 32
 
     }
 
@@ -118,7 +131,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                                                    MeterPermissions.ReadConfiguration     |
                                                                    MeterPermissions.ChangeNetworkSettings |
                                                                    MeterPermissions.RunDiagnostics        |
-                                                                   MeterPermissions.WriteRegisters,
+                                                                   MeterPermissions.WriteRegisters        |
+                                                                   MeterPermissions.ManageCertificates,
 
                    User2OrganizationEdgeLabel.IsAdminReadOnly   => MeterPermissions.ReadMeter             |
                                                                    MeterPermissions.ReadConfiguration     |

@@ -38,9 +38,11 @@ export const menu: MenuEntry[] = [
         icon:      'fa-sliders',
         needs:     'ReadConfiguration',
         children:  [
-            { path: '/configuration/dns',          label: 'DNS client',   icon: 'fa-magnifying-glass-location' },
-            { path: '/configuration/nts',          label: 'NTS client',   icon: 'fa-clock'                     },
-            { path: '/configuration/certificates', label: 'Certificates', icon: 'fa-certificate'               }
+            { path: '/configuration/dns',                      label: 'DNS client',             icon: 'fa-magnifying-glass-location' },
+            { path: '/configuration/nts',                      label: 'NTS client',             icon: 'fa-clock'                     },
+            { path: '/configuration/certificates/modbus',      label: 'Modbus/TLS certificate', icon: 'fa-plug-circle-bolt'          },
+            { path: '/configuration/certificates/web',         label: 'Web certificate',        icon: 'fa-globe'                     },
+            { path: '/configuration/certificates/clients',     label: 'Client trust',           icon: 'fa-user-shield'               }
         ]
     },
     {

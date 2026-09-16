@@ -860,6 +860,70 @@ input, textarea, select {
 }
 
 
+// Certificates: one card each, and the one being shown marked as such.
+
+.certificates {
+    display:                grid;
+    grid-template-columns:  repeat(auto-fill, minmax(26rem, 1fr));
+    gap:                    1rem;
+    align-items:            start;
+    margin-bottom:          1rem;
+}
+
+.certificate {
+
+    // The one this listener is actually showing. A store with five entries in
+    // it is only readable if that one is obvious at a glance.
+    &.in-use {
+        border-color:  $color-accent;
+        box-shadow:    inset 3px 0 0 $color-accent;
+    }
+
+    // Kept and shown rather than hidden: what this meter was running under
+    // last month is worth being able to point at.
+    &.expired {
+        opacity: 0.7;
+    }
+
+    .kv + .kv {
+        margin-top: 0.4rem;
+    }
+
+    h2 {
+        gap:         0.5rem;
+        flex-wrap:   wrap;
+    }
+
+}
+
+// The box that folds out to take a signed certificate.
+.upload {
+
+    margin-top: 0.8rem;
+
+    label {
+        display:         flex;
+        flex-direction:  column;
+        gap:             0.3rem;
+        font-size:       0.85rem;
+        color:           $color-muted;
+    }
+
+}
+
+textarea.mono {
+    width:          100%;
+    padding:        0.4rem 0.6rem;
+    border:         1px solid $color-border;
+    border-radius:  6px;
+    background:     $color-surface;
+    color:          $color-text;
+    font-family:    $font-mono;
+    font-size:      0.78rem;
+    resize:         vertical;
+}
+
+
 // The meter: one number that matters, and the three phases behind it.
 
 .reading {

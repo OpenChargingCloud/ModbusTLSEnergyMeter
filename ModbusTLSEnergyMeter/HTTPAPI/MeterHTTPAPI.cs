@@ -51,7 +51,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
     /// below is read with. This API only ever asks who the cookie belongs to
     /// and what that person's role in the meter's organization allows.
     /// </remarks>
-    public class MeterHTTPAPI : org.GraphDefined.Vanaheimr.Hermod.HTTP.HTTPAPI
+    public partial class MeterHTTPAPI : org.GraphDefined.Vanaheimr.Hermod.HTTP.HTTPAPI
     {
 
         #region Data
@@ -175,6 +175,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             AddHandler(HTTPPath.Root + "v1/configuration/nts/sync",    PostNTSSync,           HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/configuration/time",        GetClock,              HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/configuration/certificates", GetCertificates,      HTTPMethod.GET);
+
+            RegisterCertificateTemplates();
 
             AddHandler(HTTPPath.Root + "v1/logs",                      GetLogs,               HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/logs/verify",               GetLogVerification,    HTTPMethod.GET);
@@ -981,7 +983,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// <param name="StateChanging">Whether it changes something, and is therefore also checked for being cross-site.</param>
         /// <param name="User">The person behind it.</param>
         /// <param name="Refused">The response to send instead.</param>
-        private Boolean TryAuthorize(HTTPRequest                             Request,
+        internal Boolean TryAuthorize(HTTPRequest                             Request,
                                      MeterPermissions                        Required,
                                      Boolean                                 StateChanging,
                                      [NotNullWhen(true)]  out IUser?         User,
@@ -1073,7 +1075,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// The request body as a JSON object, or the 400 response describing
         /// what is wrong with it.
         /// </summary>
-        private static Boolean TryParseJSONObject(HTTPRequest                             Request,
+        internal static Boolean TryParseJSONObject(HTTPRequest                             Request,
                                                   [NotNullWhen(true)]  out JObject?       JSON,
                                                   [NotNullWhen(false)] out HTTPResponse?  ErrorResponse)
         {
@@ -1217,7 +1219,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #region (private static) ErrorJSON(...) / JSONResponse(...)
 
-        private static HTTPResponse ErrorJSON(HTTPRequest     Request,
+        internal static HTTPResponse ErrorJSON(HTTPRequest     Request,
                                               HTTPStatusCode  StatusCode,
                                               String          Message)
 
@@ -1228,7 +1230,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                );
 
 
-        private static HTTPResponse JSONResponse(HTTPRequest     Request,
+        internal static HTTPResponse JSONResponse(HTTPRequest     Request,
                                                  HTTPStatusCode  StatusCode,
                                                  JToken          JSON)
 
