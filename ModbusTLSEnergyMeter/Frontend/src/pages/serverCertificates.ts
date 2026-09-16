@@ -1,4 +1,4 @@
-import { api, type CertificateEntry, type CertificatePurpose, type CertificateRequestBody, type CertificateStore } from '../api/client';
+import { api, type CertificateEntry, type CertificatePurpose, type CertificateStore, type KeyAlgorithmInfo } from '../api/client';
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
@@ -64,6 +64,14 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
             let cancelled = false;
             let store: CertificateStore | null = null;
 
+            // What a request may ask for, as the meter reports it. Hermod owns
+            // the list; nothing here decides what belongs on it.
+            let keyTypes: KeyAlgorithmInfo[] = [];
+
+            /** What a kind of key is called, or its id when it is one we no longer offer. */
+            const nameOf = (id: string): string =>
+                keyTypes.find(algorithm => algorithm.id === id)?.name ?? id;
+
 
             function draw(): void {
 
@@ -117,21 +125,12 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
 
                                 <label>Key
                                     <select name="keyType" id="key-type">
-                                        <optgroup label="This listener can show these">
-                                            <option value="ec256" selected>ECDSA P-256</option>
-                                            <option value="ec384">ECDSA P-384</option>
-                                            <option value="ec521">ECDSA P-521</option>
-                                            <option value="rsa2048">RSA 2048</option>
-                                            <option value="rsa3072">RSA 3072</option>
-                                            <option value="rsa4096">RSA 4096</option>
-                                        </optgroup>
-                                        <optgroup label="For a certificate used elsewhere">
-                                            <option value="ed25519">Ed25519</option>
-                                            <option value="ed448">Ed448</option>
-                                            <option value="mldsa44">ML-DSA-44</option>
-                                            <option value="mldsa65">ML-DSA-65</option>
-                                            <option value="mldsa87">ML-DSA-87</option>
-                                        </optgroup>
+                                        ${keyTypes.map(algorithm => html`
+                                            <option value="${algorithm.id}"
+                                                    ${algorithm.id === 'ecdsa-p256' ? html`selected` : ''}>
+                                                ${algorithm.name}
+                                            </option>
+                                        `)}
                                     </select>
                                 </label>
 
@@ -191,7 +190,7 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
                             `}
                             ${entry.dnsNames.length    > 0 ? html`<tr><td>DNS names</td><td>${entry.dnsNames.join(', ')}</td></tr>` : ''}
                             ${entry.ipAddresses.length > 0 ? html`<tr><td>IP addresses</td><td>${entry.ipAddresses.join(', ')}</td></tr>` : ''}
-                            <tr><td>Key</td><td>${keyTypeName(entry.keyType)}${entry.servedByTLS ? '' : ' - not for a listener'}</td></tr>
+                            <tr><td>Key</td><td>${nameOf(entry.keyType)}${entry.servedByTLS === false ? ' - not for a listener' : ''}</td></tr>
                             <tr><td>Asked on</td><td>${new Date(entry.createdAt).toLocaleString()}</td></tr>
                             ${entry.note ? html`<tr><td>Note</td><td>${entry.note}</td></tr>` : ''}
                         </table>
@@ -239,7 +238,9 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
                 const keyType     = must<HTMLSelectElement>(content, '#key-type');
                 const keyTypeHint = must<HTMLElement>(content, '#key-type-note');
 
-                const sayWhatItMeans = () => { keyTypeHint.textContent = keyTypeNote(keyType.value); };
+                const sayWhatItMeans = () => {
+                    keyTypeHint.textContent = keyTypes.find(algorithm => algorithm.id === keyType.value)?.remark ?? '';
+                };
 
                 keyType.addEventListener('change', sayWhatItMeans);
                 sayWhatItMeans();
@@ -260,7 +261,7 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
                                               subject:      field(form, 'subject'),
                                               dnsNames:     list(field(form, 'dnsNames')),
                                               ipAddresses:  list(field(form, 'ipAddresses')),
-                                              keyType:      field(form, 'keyType') as CertificateRequestBody['keyType'],
+                                              keyType:      field(form, 'keyType'),
                                               note:         field(form, 'note')
                                           });
 
@@ -343,12 +344,21 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
                 try
                 {
 
-                    const next = await api.tls.store(purpose);
+                    // Both, because the page needs to offer the kinds of key
+                    // this meter knows about and there is no second place to
+                    // learn them from: the list is Hermod's, and a kind added
+                    // there should turn up here without this file changing.
+                    const [next, overview] = await Promise.all([
+                                                 api.tls.store(purpose),
+                                                 api.tls.overview()
+                                             ]);
 
                     if (cancelled)
                         return;
 
-                    store = next;
+                    store     = next;
+                    keyTypes  = overview.keyTypes;
+
                     draw();
 
                 }
@@ -372,48 +382,7 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
 
 
 
-/** What a key type is called where a person reads it. */
-function keyTypeName(keyType: string): string {
-    return ({
-        ec256:    'ECDSA P-256',
-        ec384:    'ECDSA P-384',
-        ec521:    'ECDSA P-521',
-        rsa2048:  'RSA 2048',
-        rsa3072:  'RSA 3072',
-        rsa4096:  'RSA 4096',
-        ed25519:  'Ed25519',
-        ed448:    'Ed448',
-        mldsa44:  'ML-DSA-44',
-        mldsa65:  'ML-DSA-65',
-        mldsa87:  'ML-DSA-87'
-    } as Record<string, string>)[keyType] ?? keyType;
-}
-
-/**
- * What choosing it means, said where it is chosen.
- *
- * The second half of this list is the one worth a sentence: those requests are
- * perfectly good and the certificate that comes back will never be shown by
- * this meter, because .NET's TLS stack authenticates a server with RSA or
- * ECDSA. Somebody should learn that before the trip to their CA rather than
- * afterwards.
- */
-function keyTypeNote(keyType: string): string {
-
-    if (keyType.startsWith('ed') || keyType.startsWith('mldsa'))
-        return `${keyTypeName(keyType)}: this meter will make the key and the request, and no listener of ` +
-                'its own will ever show the certificate that comes back - the TLS stack authenticates a ' +
-                'server with RSA or ECDSA only. Ask for this when the certificate is for something else.';
-
-    if (keyType === 'ec521' || keyType === 'rsa4096')
-        return `${keyTypeName(keyType)}: more than anything needs today, and shown by both listeners.`;
-
-    return `${keyTypeName(keyType)}: shown by both listeners.`;
-
-}
-
-
-/** "a, b , c" as the three things somebody meant. */
+/** A comma-separated field as the list it stands for. */
 function list(text: string): string[] {
     return text.split(',').map(part => part.trim()).filter(part => part.length > 0);
 }

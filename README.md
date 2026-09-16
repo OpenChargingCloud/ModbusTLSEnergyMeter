@@ -375,27 +375,39 @@ or the same three steps as three controls on the page.
 
 ### On which key
 
-A request can be made on any of these:
+The kinds of key come from Hermod's `KeyAlgorithm`, and the list is served with
+the certificates so that a kind added there turns up on the page without
+anything here changing:
 
 | | |
 |---|---|
-| `ec256`, `ec384`, `ec521` | ECDSA on P-256, P-384 and P-521. `ec521` is secp521r1 - there is no secp521r2 |
-| `rsa2048`, `rsa3072`, `rsa4096` | RSA |
+| `ecdsa-p256`, `ecdsa-p384`, `ecdsa-p521` | ECDSA on the NIST curves. `ecdsa-p521` is secp521r1 - there is no secp521r2 |
+| `rsa-2048`, `rsa-3072`, `rsa-4096` | RSA |
 | `ed25519`, `ed448` | Edwards curves |
-| `mldsa44`, `mldsa65`, `mldsa87` | ML-DSA, FIPS 204 |
+| `ml-dsa-44`, `ml-dsa-65`, `ml-dsa-87` | ML-DSA, FIPS 204 |
+| `slh-dsa-sha2-128s`, `slh-dsa-sha2-192s` | SLH-DSA, FIPS 205 - post-quantum on hash functions alone |
 
-The first two families are what a listener of this meter can show. The other two
-are built with BouncyCastle, because .NET's `CertificateRequest` takes no
-Edwards curve at all and reaches ML-DSA only through an API it marks
-experimental - "may change or be removed in future updates" - while BouncyCastle
-has one stable interface for all of them, arrives with ChargyCore already, and
-is what the signing keys are made with.
+Everything goes through Bouncy Castle, including the kinds .NET could do by
+itself: .NET cannot sign a request with an Ed448 or an ML-DSA key, and a store
+that generated one way and read back another would be a store with two sets of
+bugs in it.
 
-What comes back on one of those keys is kept and never shown: .NET's SslStream
-authenticates a server with RSA or ECDSA. The store does not need a special rule
-for it - it hands out a certificate only when the private key is attached to it,
-and for these there is nothing to attach it to - and the entry says "not for a
-listener" rather than leaving somebody to wonder why nothing happened.
+**Whether a certificate can then be shown is a different question, and it is not
+answered from a list.** It depends on the operating system's TLS stack, on the
+runtime and on the year - an Ed25519 certificate is refused by one platform and
+served by the next. Hermod finds out by doing it: one TLS handshake against
+itself, once per algorithm. A store written before knew the answer from a table
+in its own source, which would have been wrong on somebody's machine from the
+day it was written.
+
+So `keyTypes` in the certificates overview carries three answers per algorithm -
+yes, no, and nobody has tried - and an entry says `servedByTLS` once there is a
+certificate to ask about. One this meter cannot present is kept, says "not for a
+listener", and is never handed to either listener.
+
+The old spellings this store used before Hermod had a list - `ec256`, `rsa3072`,
+`mldsa65` - are still read, so a certificate already in a store is not lost over
+a rename. Nothing writes them any more.
 
 ### Which one is shown
 
@@ -764,13 +776,10 @@ words.
   stop; a process that is killed comes back where the last write left it. The
   loss is always downwards - a counter that came back slightly high would be a
   meter billing for energy nobody used.
-* **A certificate on an Edwards curve or on ML-DSA is never shown by a listener
-  of this meter.** The request is made and the certificate is kept, but .NET's
-  SslStream authenticates a server with RSA or ECDSA, so such an entry stays out
-  of the way rather than failing a handshake: its private key is never attached
-  to it, which is the same thing that keeps an expired one out. Every answer
-  that carries an entry says `servedByTLS`, the page groups the choice under
-  "For a certificate used elsewhere", and the entry reads "not for a listener".
+* **A certificate this machine cannot present is kept and never shown.** Which
+  ones those are is found out rather than assumed - see above - and .NET cannot
+  hold an Ed448 or an ML-DSA private key at all, which is its own reason. Such
+  an entry reads "not for a listener".
 * **An Alfen record is verified here as far as anything outside ChargyCore can
   verify it.** It parses, every field comes back as it went in, the buffer its
   verifier would rebuild is byte for byte the one that was signed, and the

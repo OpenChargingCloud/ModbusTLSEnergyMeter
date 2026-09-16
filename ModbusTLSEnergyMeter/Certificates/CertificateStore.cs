@@ -24,7 +24,15 @@ using System.Security.Cryptography.X509Certificates;
 
 using Newtonsoft.Json.Linq;
 
+using Org.BouncyCastle.Asn1.X509;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Pkcs;
+using Org.BouncyCastle.Security;
+using Org.BouncyCastle.Utilities.IO.Pem;
+using Org.BouncyCastle.X509;
+
 using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.PKI;
 
 using NetIPAddress = System.Net.IPAddress;
 
@@ -81,67 +89,85 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         #region Key types
 
         /// <summary>
-        /// The key types a certificate can be asked for here, strongest of each
-        /// family last.
+        /// The kinds of key a certificate can be asked for here.
         /// </summary>
         /// <remarks>
-        /// Two families, and they are not interchangeable.
-        ///
-        /// Elliptic curve and RSA are what a TLS listener of this meter can
-        /// actually show: .NET's SslStream authenticates a server with those and
-        /// with nothing else. Ed25519, Ed448 and ML-DSA produce a perfectly good
-        /// certificate that neither listener will ever present - the store never
-        /// hands one out, because its private key is never attached to it - and
-        /// they are here because a request is worth making for a certificate
-        /// that will be used somewhere else, or to give a piece of PKI software
-        /// something to chew on.
-        ///
-        /// <see cref="ServedByTLS"/> is which is which, and every answer that
-        /// carries an entry says so.
+        /// Hermod's list, not one of this meter's own. Generating a key,
+        /// writing it down, making a signing request and pairing the answer
+        /// back with the key are the same problem for every device that has a
+        /// certificate, and this store solved it a second time until Hermod
+        /// solved it properly - including the two things that were guesswork
+        /// here: whether a key may claim keyEncipherment, and whether the
+        /// platform can present it at all.
         /// </remarks>
         public static IEnumerable<String> KeyTypes
 
-            => [ .. TLSKeyTypes, .. BouncyCastleRequests.KeyTypes ];
+            => KeyAlgorithm.All.Select(algorithm => algorithm.Id);
 
         /// <summary>
-        /// The key types a certificate from this store can be shown with.
+        /// What this meter asks for when nobody says.
         /// </summary>
-        public static IEnumerable<String> TLSKeyTypes
-
-            => [ "ec256", "ec384", "ec521", "rsa2048", "rsa3072", "rsa4096" ];
+        public const String DefaultKeyType = KeyAlgorithm.DefaultId;
 
         /// <summary>
-        /// Whether a TLS listener of this meter could ever present a certificate
-        /// over this kind of key.
+        /// The spellings this store used before Hermod had a list, and what
+        /// they are called now.
         /// </summary>
         /// <remarks>
-        /// Said out loud rather than left to be discovered as a certificate that
-        /// is uploaded, accepted, and then never used by anything.
+        /// Read only, never written. A certificate already in a store was
+        /// written down under the old name, and dropping it because the
+        /// spelling changed would lose a certificate over a rename.
         /// </remarks>
-        public static Boolean ServedByTLS(String? KeyType)
-
-            => KeyType is not null && !BouncyCastleRequests.Handles(KeyType);
+        private static readonly Dictionary<String, String> renamedKeyTypes = new () {
+            { "ec256",    "ecdsa-p256" },
+            { "ec384",    "ecdsa-p384" },
+            { "ec521",    "ecdsa-p521" },
+            { "rsa2048",  "rsa-2048"   },
+            { "rsa3072",  "rsa-3072"   },
+            { "rsa4096",  "rsa-4096"   },
+            { "mldsa44",  "ml-dsa-44"  },
+            { "mldsa65",  "ml-dsa-65"  },
+            { "mldsa87",  "ml-dsa-87"  }
+        };
 
         /// <summary>
-        /// The curve and the digest that belongs with it.
+        /// The algorithm a key type names, under its name now or the one this
+        /// store used to write.
+        /// </summary>
+        public static KeyAlgorithm? AlgorithmOf(String? KeyType)
+
+            => KeyAlgorithm.Find(KeyType) ??
+               (KeyType is not null && renamedKeyTypes.TryGetValue(KeyType, out var renamed)
+                    ? KeyAlgorithm.Find(renamed)
+                    : null);
+
+        /// <summary>
+        /// Whether this machine can hold a certificate of this kind up to
+        /// somebody during a TLS handshake.
         /// </summary>
         /// <remarks>
-        /// The digest is not a free choice: it is the one whose output matches
-        /// the size of the curve's order. A 521 bit curve signing a SHA-256
-        /// digest throws away most of what the curve is for.
+        /// Asked by doing it, once per algorithm, and not answered from a list
+        /// written here. Whether an Ed25519 certificate can be presented
+        /// depends on the operating system's TLS stack, on the runtime and on
+        /// the year, and a table in this file would be wrong on somebody's
+        /// machine from the day it was written. Hermod does the asking; this
+        /// only needs a certificate to ask with.
         /// </remarks>
-        private static readonly Dictionary<String, (ECCurve Curve, HashAlgorithmName Hash)> Curves = new () {
-            { "ec256",  (ECCurve.NamedCurves.nistP256, HashAlgorithmName.SHA256) },
-            { "ec384",  (ECCurve.NamedCurves.nistP384, HashAlgorithmName.SHA384) },
-            // secp521r1: the curve is "P-521", and there is no secp521r2.
-            { "ec521",  (ECCurve.NamedCurves.nistP521, HashAlgorithmName.SHA512) }
-        };
+        public static Boolean ServedByTLS(String?           KeyType,
+                                          X509Certificate2  Certificate)
 
-        private static readonly Dictionary<String, Int32> RSASizes = new () {
-            { "rsa2048",  2048 },
-            { "rsa3072",  3072 },
-            { "rsa4096",  4096 }
-        };
+               // Asked only of a certificate that has its key, and not because
+               // the answer would otherwise be wrong - it would be no, and
+               // rightly. It is that the answer is kept per algorithm: a no
+               // about one keyless certificate would be remembered as a no
+               // about the algorithm, for every certificate after it.
+               //
+               // A certificate that came out of this store without a private
+               // key is one .NET could not hold the key for, which is its own
+               // kind of "cannot be presented".
+            => Certificate.HasPrivateKey &&
+               AlgorithmOf(KeyType) is KeyAlgorithm algorithm &&
+               KeyAlgorithm.CanBePresented(algorithm.Id, Certificate);
 
         #endregion
 
@@ -425,12 +451,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// <param name="Subject">The subject to ask for, e.g. "CN=meter7.lan, O=Acme".</param>
         /// <param name="DNSNames">The names a peer will dial.</param>
         /// <param name="IPAddresses">The addresses a peer will dial.</param>
-        /// <param name="KeyType">One of <see cref="KeyTypes"/>, e.g. "ec256", "ec521" or "rsa4096".</param>
+        /// <param name="KeyType">One of <see cref="KeyTypes"/>, e.g. "ecdsa-p256", "ed448" or "ml-dsa-65".</param>
         /// <param name="Note">A line to remember what this is for.</param>
         public CertificateEntry CreateRequest(String                 Subject,
                                               IEnumerable<String>?   DNSNames      = null,
                                               IEnumerable<String>?   IPAddresses   = null,
-                                              String                 KeyType       = "ec256",
+                                              String                 KeyType       = DefaultKeyType,
                                               String?                Note          = null)
         {
 
@@ -439,40 +465,34 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             var dnsNames     = DNSNames?.   Where(name => name.   Trim().Length > 0).Select(name => name.Trim()).Distinct().ToList() ?? [];
             var ipAddresses  = IPAddresses?.Where(address => address.Trim().Length > 0).Select(address => address.Trim()).Distinct().ToList() ?? [];
 
-            var entry        = new CertificateEntry(id, now, Subject, dnsNames, ipAddresses, KeyType, Note);
+            var algorithm    = AlgorithmOf(KeyType)
+                                   ?? throw new ArgumentException(
+                                          $"'{KeyType}' is not a key type this meter can ask for. " +
+                                          $"One of: {String.Join(", ", KeyTypes)}.",
+                                          nameof(KeyType));
+
+            // Written down under the name it is called now, whatever spelling
+            // the caller used.
+            var entry        = new CertificateEntry(id, now, Subject, dnsNames, ipAddresses, algorithm.Id, Note);
 
             var directory    = System.IO.Path.Combine(Path, id);
             Directory.CreateDirectory(directory);
 
-            String requestPEM;
-            String keyPEM;
+            // One path for every kind of key. There used to be three - .NET for
+            // RSA, .NET for the curves, Bouncy Castle for the rest - and a
+            // store that generates one way and reads back another is a store
+            // with two sets of bugs in it.
+            var pair       = algorithm.Generate();
 
-            if (RSASizes.TryGetValue(KeyType, out var bits))
-            {
-                using var key = RSA.Create(bits);
-                requestPEM = BuildRequest(new CertificateRequest(Subject, key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1), dnsNames, ipAddresses);
-                keyPEM     = key.ExportPkcs8PrivateKeyPem();
-            }
+            var request    = PKIFactory.GenerateCertificateSigningRequest(
+                                 pair,
+                                 new X509Name(Subject),
+                                 algorithm,
+                                 [.. dnsNames, .. ipAddresses]
+                             );
 
-            else if (Curves.TryGetValue(KeyType, out var curve))
-            {
-                using var key = ECDsa.Create(curve.Curve);
-                requestPEM = BuildRequest(new CertificateRequest(Subject, key, curve.Hash), dnsNames, ipAddresses);
-                keyPEM     = key.ExportPkcs8PrivateKeyPem();
-            }
-
-            else if (BouncyCastleRequests.Handles(KeyType))
-            {
-                // The ones .NET will not build: an Edwards curve, or a lattice
-                // behind an API it calls experimental.
-                (requestPEM, keyPEM) = BouncyCastleRequests.Create(Subject, dnsNames, ipAddresses, KeyType);
-            }
-
-            else
-                throw new ArgumentException(
-                          $"'{KeyType}' is not a key type this meter can ask for. " +
-                          $"One of: {String.Join(", ", KeyTypes)}.",
-                          nameof(KeyType));
+            var requestPEM = PEM("CERTIFICATE REQUEST", request.GetEncoded());
+            var keyPEM     = PEM("PRIVATE KEY",         PrivateKeyInfoFactory.CreatePrivateKeyInfo(pair.Private).GetEncoded());
 
             WritePrivateFile(System.IO.Path.Combine(directory, "key.pem"), keyPEM);
             File.WriteAllText(System.IO.Path.Combine(directory, "request.pem"), requestPEM);
@@ -488,53 +508,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             }
 
             return entry;
-
-        }
-
-        /// <summary>
-        /// The extensions every server certificate this meter asks for wants,
-        /// and then the request itself.
-        /// </summary>
-        private static String BuildRequest(CertificateRequest     Request,
-                                           IEnumerable<String>    DNSNames,
-                                           IEnumerable<String>    IPAddresses)
-        {
-
-            var subjectAlternativeNames = new SubjectAlternativeNameBuilder();
-            var any                     = false;
-
-            foreach (var name in DNSNames)
-            {
-                subjectAlternativeNames.AddDnsName(name);
-                any = true;
-            }
-
-            foreach (var address in IPAddresses)
-            {
-                if (NetIPAddress.TryParse(address, out var parsed))
-                {
-                    subjectAlternativeNames.AddIpAddress(parsed);
-                    any = true;
-                }
-            }
-
-            if (any)
-                Request.CertificateExtensions.Add(subjectAlternativeNames.Build());
-
-            Request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
-
-            Request.CertificateExtensions.Add(new X509KeyUsageExtension(
-                                                  X509KeyUsageFlags.DigitalSignature |
-                                                  X509KeyUsageFlags.KeyEncipherment,
-                                                  true));
-
-            // serverAuth: this certificate is for a listener, and a CA that
-            // reads the request is being told so rather than having to guess.
-            Request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(
-                                                  [new Oid("1.3.6.1.5.5.7.3.1", "serverAuth")],
-                                                  false));
-
-            return Request.CreateSigningRequestPem();
 
         }
 
@@ -559,7 +532,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                                                  String?               Note          = null)
         {
 
-            var entry      = CreateRequest(Subject, DNSNames, IPAddresses, "ec256", Note);
+            var entry      = CreateRequest(Subject, DNSNames, IPAddresses, DefaultKeyType, Note);
             var directory  = System.IO.Path.Combine(Path, entry.Id);
             var now        = TimeProvider.GetUtcNow();
 
@@ -950,9 +923,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// <see cref="CertificateEntry.IsValidAt"/> is false and no listener is
         /// ever handed it, which is exactly right: it could not show it.
         /// </remarks>
-        private static Boolean TryPairWithKey(X509Certificate2                        Candidate,
-                                              String                                  KeyType,
-                                              String                                  KeyPEM,
+        private static Boolean TryPairWithKey(X509Certificate2                          Candidate,
+                                              String                                    KeyType,
+                                              String                                    KeyPEM,
                                               [NotNullWhen(true)] out X509Certificate2?  Paired)
         {
 
@@ -961,24 +934,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             try
             {
 
-                if (BouncyCastleRequests.Handles(KeyType))
-                {
+                // Whether this certificate is the one our key asked for. The
+                // public key is in both, and two SubjectPublicKeyInfos being
+                // equal is the proof - which works for every kind of key,
+                // unlike attaching the private one and seeing whether .NET
+                // complains.
+                var ours       = SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(
+                                     PKIFactory.PublicKeyOf(PrivateKeyOf(KeyPEM))
+                                 ).GetDerEncoded();
 
-                    if (!Candidate.PublicKey.ExportSubjectPublicKeyInfo().
-                             SequenceEqual(BouncyCastleRequests.PublicKeyOf(KeyPEM)))
-                        return false;
-
-                    Paired = Candidate;
-                    return true;
-
-                }
-
-                using var withKey = IsRSA(KeyType)
-                                        ? Candidate.CopyWithPrivateKey(RSAFrom(KeyPEM))
-                                        : Candidate.CopyWithPrivateKey(ECDsaFrom(KeyPEM));
-
-                Paired = Usable(withKey);
-                return true;
+                if (!Candidate.PublicKey.ExportSubjectPublicKeyInfo().SequenceEqual(ours))
+                    return false;
 
             }
             catch
@@ -987,6 +953,23 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                 // different key altogether.
                 return false;
             }
+
+            // It is ours. Whether the key can also be attached to it is a
+            // second question with a different answer per algorithm: .NET holds
+            // an RSA or an ECDSA private key and refuses an Ed448 one outright.
+            // A failure here is not a reason to reject the certificate - it was
+            // already shown to be the right one - it only means no listener
+            // will be able to show it.
+            try
+            {
+                Paired = PKIFactory.WithPrivateKey(Candidate, PrivateKeyOf(KeyPEM));
+            }
+            catch
+            {
+                Paired = Candidate;
+            }
+
+            return true;
 
         }
 
@@ -1038,6 +1021,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             return key;
         }
 
+        /// <summary>
+        /// What kind of key a certificate carries, as far as this matters here.
+        /// </summary>
+        /// <remarks>
+        /// Only for a certificate adopted from outside, which this meter did
+        /// not make a request for and therefore has no key type written down
+        /// for. Everything it asked for itself says so in its own metadata.
+        /// </remarks>
         private static String KeyTypeOf(X509Certificate2 Certificate)
         {
 
@@ -1045,9 +1036,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             {
                 using (ecdsa)
                     return ecdsa.KeySize switch {
-                               384  => "ec384",
-                               521  => "ec521",
-                               _    => "ec256"
+                               384  => "ecdsa-p384",
+                               521  => "ecdsa-p521",
+                               _    => "ecdsa-p256"
                            };
             }
 
@@ -1055,9 +1046,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             {
                 using (rsa)
                     return rsa.KeySize switch {
-                               2048  => "rsa2048",
-                               4096  => "rsa4096",
-                               _     => "rsa3072"
+                               2048  => "rsa-2048",
+                               4096  => "rsa-4096",
+                               _     => "rsa-3072"
                            };
             }
 
@@ -1077,6 +1068,29 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                    OfType<X509SubjectAlternativeNameExtension>().
                    SelectMany(extension => extension.EnumerateIPAddresses()).
                    Select(address => address.ToString());
+
+        /// <summary>
+        /// A private key out of the PEM this store wrote.
+        /// </summary>
+        private static AsymmetricKeyParameter PrivateKeyOf(String KeyPEM)
+
+            => PrivateKeyFactory.CreateKey(
+                   new PemReader(new StringReader(KeyPEM)).ReadPemObject().Content
+               );
+
+        private static String PEM(String  Label,
+                                  Byte[]  DER)
+        {
+
+            var text   = new StringWriter();
+            var writer = new PemWriter(text);
+
+            writer.WriteObject(new PemObject(Label, DER));
+            writer.Writer.Flush();
+
+            return text.ToString();
+
+        }
 
         private String NewId(DateTimeOffset Now)
 

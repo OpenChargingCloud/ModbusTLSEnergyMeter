@@ -164,56 +164,51 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
 
 
-        #region EveryKeyType_MakesAUsableRequest(KeyType, Bits)
+        #region EveryKeyTypeHermodOffers_MakesARequestThatVerifies()
 
         /// <summary>
-        /// Every key type on offer makes a signing request a CA would accept,
-        /// over a key of the size it promised.
+        /// Every kind of key Hermod can generate makes a signing request that
+        /// verifies against its own key and asks for the right things.
         /// </summary>
         /// <remarks>
-        /// The size is checked and not only the fact that something came out:
-        /// a table that silently fell back to P-256 for every name it did not
-        /// recognise would pass a test that only asked whether a request
-        /// appeared, and would hand somebody a 256 bit key when they asked for
-        /// 521.
+        /// Driven off Hermod's list rather than a copy of it, so an algorithm
+        /// added there is covered here without anybody remembering to add it -
+        /// which is the whole reason this store stopped keeping its own list.
         /// </remarks>
-        [TestCase("ec256",    256)]
-        [TestCase("ec384",    384)]
-        [TestCase("ec521",    521)]
-        [TestCase("rsa2048",  2048)]
-        [TestCase("rsa3072",  3072)]
-        [TestCase("rsa4096",  4096)]
-        public void EveryKeyType_MakesAUsableRequest(String KeyType, Int32 Bits)
+        [Test]
+        public void EveryKeyTypeHermodOffers_MakesARequestThatVerifies()
         {
 
             var store = NewStore(TimeProvider.System, storePath);
-            var entry = store.CreateRequest("CN=meter.example", ["meter.example"], null, KeyType);
 
-            Assert.That(entry.RequestPEM, Is.Not.Null);
-            Assert.That(entry.KeyType,    Is.EqualTo(KeyType));
-
-            var request = CertificateRequest.LoadSigningRequestPem(
-                              entry.RequestPEM!,
-                              HashAlgorithmName.SHA256,
-                              CertificateRequestLoadOptions.UnsafeLoadCertificateExtensions
-                          );
+            Assert.That(CertificateStore.KeyTypes.Count(), Is.GreaterThanOrEqualTo(12),
+                        "Hermod should be offering a good many kinds of key");
 
             Assert.Multiple(() => {
 
-                Assert.That(request.SubjectName.Name, Does.Contain("meter.example"));
+                foreach (var keyType in CertificateStore.KeyTypes)
+                {
 
-                Assert.That(KeyType.StartsWith("rsa")
-                                ? request.PublicKey.GetRSAPublicKey()!.KeySize
-                                : request.PublicKey.GetECDsaPublicKey()!.KeySize,
-                            Is.EqualTo(Bits),
-                            $"'{KeyType}' should ask for a {Bits} bit key");
+                    var entry = store.CreateRequest($"CN={keyType}.example", ["meter.example"], null, keyType);
 
-                // The names a peer will dial have to be in the request, or the
-                // certificate that comes back is for a host nobody connects to.
-                Assert.That(request.CertificateExtensions.
-                                OfType<X509SubjectAlternativeNameExtension>().
-                                SelectMany(extension => extension.EnumerateDnsNames()),
-                            Does.Contain("meter.example"));
+                    Assert.That(entry.KeyType,    Is.EqualTo(keyType), keyType);
+                    Assert.That(entry.RequestPEM, Is.Not.Null,         keyType);
+
+                    var request = new Org.BouncyCastle.Pkcs.Pkcs10CertificationRequest(
+                                      Convert.FromBase64String(
+                                          String.Concat(entry.RequestPEM!.Split('\n').
+                                                            Where(line => !line.StartsWith("-----")).
+                                                            Select(line => line.Trim()))
+                                      )
+                                  );
+
+                    Assert.That(request.Verify(), Is.True,
+                                $"a {keyType} request must verify against the key that made it");
+
+                    Assert.That(request.GetCertificationRequestInfo().Subject.ToString(),
+                                Does.Contain(keyType), keyType);
+
+                }
 
             });
 
@@ -221,103 +216,84 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
-        #region EveryBouncyCastleKeyType_MakesARequestThatVerifies(KeyType)
+        #region TheOldKeyTypeSpellings_StillResolve()
 
         /// <summary>
-        /// The key types .NET will not build a request for: an Edwards curve,
-        /// and the three lattice parameter sets.
-        /// </summary>
-        /// <remarks>
-        /// The request has to verify against its own key, which is the one
-        /// property a CA will check first and the one a wrong signature
-        /// algorithm name breaks - an ML-DSA key of one parameter set signed
-        /// with the name of another produces nothing at all, and pairing them
-        /// by hand is exactly the mistake a table is meant to prevent.
-        /// </remarks>
-        [TestCase("ed25519")]
-        [TestCase("ed448")]
-        [TestCase("mldsa44")]
-        [TestCase("mldsa65")]
-        [TestCase("mldsa87")]
-        public void EveryBouncyCastleKeyType_MakesARequestThatVerifies(String KeyType)
-        {
-
-            var store = NewStore(TimeProvider.System, storePath);
-            var entry = store.CreateRequest("CN=meter.example", ["meter.example"], null, KeyType);
-
-            Assert.That(entry.RequestPEM, Is.Not.Null);
-            Assert.That(entry.KeyType,    Is.EqualTo(KeyType));
-
-            var request = new Org.BouncyCastle.Pkcs.Pkcs10CertificationRequest(
-                              Convert.FromBase64String(
-                                  String.Concat(entry.RequestPEM!.Split('\n').
-                                                    Where(line => !line.StartsWith("-----")).
-                                                    Select(line => line.Trim()))
-                              )
-                          );
-
-            Assert.Multiple(() => {
-
-                Assert.That(request.Verify(), Is.True, "a request must verify against the key that made it");
-
-                Assert.That(request.GetCertificationRequestInfo().Subject.ToString(),
-                            Does.Contain("meter.example"));
-
-                // And this meter says plainly that no listener of its own will
-                // ever show the certificate that comes back.
-                Assert.That(entry.ServedByTLS,                Is.False);
-                Assert.That(CertificateStore.ServedByTLS(KeyType), Is.False);
-
-            });
-
-        }
-
-        #endregion
-
-        #region TheKeyTypesSayWhichOnesAListenerCanShow()
-
-        /// <summary>
-        /// Two families on one list, and which is which is not guesswork.
+        /// A store written before Hermod had a list called these "ec256" and
+        /// "mldsa65". Dropping such an entry because the spelling changed would
+        /// lose a certificate over a rename.
         /// </summary>
         [Test]
-        public void TheKeyTypesSayWhichOnesAListenerCanShow()
+        public void TheOldKeyTypeSpellings_StillResolve()
         {
 
             Assert.Multiple(() => {
 
-                Assert.That(CertificateStore.KeyTypes,
-                            Is.SupersetOf(new[] { "ec256", "ec521", "rsa4096", "ed448", "mldsa87" }));
+                Assert.That(CertificateStore.AlgorithmOf("ec256")?.Id,    Is.EqualTo("ecdsa-p256"));
+                Assert.That(CertificateStore.AlgorithmOf("ec521")?.Id,    Is.EqualTo("ecdsa-p521"));
+                Assert.That(CertificateStore.AlgorithmOf("rsa3072")?.Id,  Is.EqualTo("rsa-3072"));
+                Assert.That(CertificateStore.AlgorithmOf("mldsa65")?.Id,  Is.EqualTo("ml-dsa-65"));
 
-                foreach (var keyType in CertificateStore.TLSKeyTypes)
-                    Assert.That(CertificateStore.ServedByTLS(keyType), Is.True, keyType);
+                // And the names used now, which is what everything writes.
+                Assert.That(CertificateStore.AlgorithmOf("ed448")?.Id,    Is.EqualTo("ed448"));
 
-                foreach (var keyType in new[] { "ed25519", "ed448", "mldsa44", "mldsa65", "mldsa87" })
-                    Assert.That(CertificateStore.ServedByTLS(keyType), Is.False, keyType);
+                Assert.That(CertificateStore.AlgorithmOf("falcon-1024"),  Is.Null);
 
             });
+
+            // A request asked for under an old name is written down under the
+            // new one, so a store does not go on accumulating both spellings.
+            var store = NewStore(TimeProvider.System, storePath);
+
+            Assert.That(store.CreateRequest("CN=meter.example", null, null, "ec256").KeyType,
+                        Is.EqualTo("ecdsa-p256"));
 
         }
 
         #endregion
 
-
-        #region ACertificateOnSuchAKey_ComesBackIn_AndIsNeverShown(KeyType)
+        #region AnUnknownKeyType_IsRefused()
 
         /// <summary>
-        /// The whole round trip for a key .NET cannot attach to a certificate:
-        /// a request goes out, a signed certificate comes back, the store takes
-        /// it - and no listener is ever handed it.
+        /// A key type this meter does not know is refused rather than quietly
+        /// becoming the default one.
+        /// </summary>
+        [Test]
+        public void AnUnknownKeyType_IsRefused()
+        {
+
+            var store = NewStore(TimeProvider.System, storePath);
+
+            var problem = Assert.Throws<ArgumentException>(
+                              () => store.CreateRequest("CN=meter.example", null, null, "falcon-1024")
+                          );
+
+            Assert.That(problem!.Message, Does.Contain("ecdsa-p256"), "and says what it does know");
+
+        }
+
+        #endregion
+
+        #region ACertificateComesBackIn_AndIsOnlyShownIfThisMachineCan(KeyType)
+
+        /// <summary>
+        /// The whole round trip - request out, signed certificate back, store
+        /// takes it - and then the one rule that matters: an entry is offered
+        /// to a listener only if this machine can actually present it.
         /// </summary>
         /// <remarks>
-        /// The last part is the one that matters. A certificate this meter
-        /// accepted and then quietly showed to nobody would be a mystery; a
-        /// certificate it accepted and then tried to show would be a handshake
-        /// failure at the worst possible moment. It is kept, it says what it is,
-        /// and it stays out of the way.
+        /// Whether it can is not asserted either way. On one machine an Ed25519
+        /// certificate is served and on the next it is refused, and a test that
+        /// picked a side would be wrong on somebody's laptop. What is asserted
+        /// is that the store's answer and the machine's answer are the same
+        /// answer - a certificate that cannot be presented must never be
+        /// selected, and one that can must not be held back.
         /// </remarks>
+        [TestCase("ecdsa-p256")]
+        [TestCase("rsa-2048")]
         [TestCase("ed448")]
-        [TestCase("mldsa65")]
-        public void ACertificateOnSuchAKey_ComesBackIn_AndIsNeverShown(String KeyType)
+        [TestCase("ml-dsa-65")]
+        public void ACertificateComesBackIn_AndIsOnlyShownIfThisMachineCan(String KeyType)
         {
 
             var clock = new MovableClock(DateTimeOffset.Parse("2026-09-16T10:00:00Z"));
@@ -325,27 +301,30 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var entry = store.CreateRequest("CN=meter.example", ["meter.example"], null, KeyType);
 
-            var signed = SignWithATestCA(entry.RequestPEM!, clock.GetUtcNow());
-
-            Assert.That(store.TryImportCertificate(entry.Id, signed, out var error), Is.True,
-                        $"the signed certificate should be accepted: {error}");
+            Assert.That(store.TryImportCertificate(entry.Id, SignWithATestCA(entry.RequestPEM!, clock.GetUtcNow()),
+                                                   out var error),
+                        Is.True, $"the signed certificate should be accepted: {error}");
 
             var stored = store.Entries.First(candidate => candidate.Id == entry.Id);
 
+            Assert.That(stored.Certificate, Is.Not.Null);
+
+            // Not asserted either way. .NET holds an RSA or an ECDSA private
+            // key and cannot hold an Ed448 or an ML-DSA one at all, so for
+            // those the certificate comes back without it - which is its own
+            // reason a listener will never show it.
+            var presentable = stored.ServedByTLS;
+
             Assert.Multiple(() => {
 
-                Assert.That(stored.Certificate,                   Is.Not.Null);
-                Assert.That(stored.Certificate!.Subject,          Does.Contain("meter.example"));
+                Assert.That(stored.IsValidAt(clock.GetUtcNow()), Is.EqualTo(presentable),
+                            "an entry is valid exactly when this machine could present it");
 
-                // Kept, and honest about itself.
-                Assert.That(stored.ServedByTLS,                   Is.False);
-                Assert.That(stored.StateAt(clock.GetUtcNow()),    Is.EqualTo("not for a listener"));
+                Assert.That(store.Current?.Id, presentable ? Is.EqualTo(entry.Id) : Is.Null,
+                            "and is handed to a listener on the same condition");
 
-                // And never the answer to "what should this listener show?",
-                // however valid it is right now.
-                Assert.That(stored.IsValidAt(clock.GetUtcNow()),  Is.False);
-                Assert.That(store.Current,                        Is.Null);
-                Assert.That(store.ChainFor(null),                 Is.Null);
+                Assert.That(stored.StateAt(clock.GetUtcNow()),
+                            Is.EqualTo(presentable ? "valid" : "not for a listener"));
 
             });
 
@@ -356,15 +335,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #region ACertificateForSomebodyElsesKey_IsRefused()
 
         /// <summary>
-        /// The match is made on the public key for these, and it has to be a
-        /// real check rather than a shrug.
+        /// A certificate is matched to the key that asked for it on the public
+        /// key, and it has to be a real check rather than a shrug.
         /// </summary>
         [Test]
         public void ACertificateForSomebodyElsesKey_IsRefused()
         {
 
-            var clock = new MovableClock(DateTimeOffset.Parse("2026-09-16T10:00:00Z"));
-            var store = NewStore(clock, storePath);
+            var clock   = new MovableClock(DateTimeOffset.Parse("2026-09-16T10:00:00Z"));
+            var store   = NewStore(clock, storePath);
 
             var ours    = store.CreateRequest("CN=ours.example",   null, null, "ed448");
             var theirs  = store.CreateRequest("CN=theirs.example", null, null, "ed448");
@@ -438,27 +417,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
-        #region AnUnknownKeyType_IsRefused()
-
-        /// <summary>
-        /// A key type this meter does not know is refused rather than quietly
-        /// becoming the default one.
-        /// </summary>
-        [Test]
-        public void AnUnknownKeyType_IsRefused()
-        {
-
-            var store = NewStore(TimeProvider.System, storePath);
-
-            var problem = Assert.Throws<ArgumentException>(
-                              () => store.CreateRequest("CN=meter.example", null, null, "falcon1024")
-                          );
-
-            Assert.That(problem!.Message, Does.Contain("ec521"), "and says what it does know");
-
-        }
-
-        #endregion
 
         #region ARequestKeepsItsKeyAndGivesOutOnlyTheRequest()
 

@@ -120,7 +120,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             => Certificate is not null &&
                Certificate.HasPrivateKey &&
                Now >= Certificate.NotBefore &&
-               Now <= Certificate.NotAfter;
+               Now <= Certificate.NotAfter &&
+
+               // A certificate this machine cannot present is never the answer
+               // to "what should this listener show?". This used to follow from
+               // the private key: there was no way to attach one to an Ed448 or
+               // an ML-DSA certificate, so such an entry fell out here by
+               // itself. Hermod can attach one now, so the question has to be
+               // asked on purpose - and it is a better question, because it is
+               // asked of the machine rather than of a list.
+               ServedByTLS;
 
         /// <summary>
         /// What this entry is at that moment, in one word, for a page and for
@@ -128,26 +137,33 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// </summary>
         public String StateAt(DateTimeOffset Now)
 
-            => Certificate is null                     ? "awaiting a certificate"
-             : Now <  Certificate.NotBefore            ? "not valid yet"
-             : Now >  Certificate.NotAfter             ? "expired"
+            => Certificate is null            ? "awaiting a certificate"
+             : Now <  Certificate.NotBefore   ? "not valid yet"
+             : Now >  Certificate.NotAfter    ? "expired"
 
-             // The key is here and this certificate is fine; what cannot happen
-             // is a listener showing it, because the TLS stack does not
-             // authenticate a server with this kind of key. Said apart from
-             // "without its key", which is the different and worse case of a
-             // key that has actually gone missing.
-             : !CertificateStore.ServedByTLS(KeyType)  ? "not for a listener"
+             // One state and not two. A certificate can fail to be presentable
+             // because this machine's TLS stack will not authenticate a server
+             // with that kind of key, or because .NET could not hold the
+             // private key in the first place - and for somebody looking at
+             // this meter those are the same fact: no listener will show it.
+             // Asked last, because it is the only one of these that costs a
+             // handshake.
+             : !ServedByTLS                   ? "not for a listener"
 
-             : !Certificate.HasPrivateKey              ? "without its key"
-             :                                           "valid";
+             :                                  "valid";
 
         /// <summary>
-        /// Whether a TLS listener of this meter could ever show this one.
+        /// Whether a TLS listener of this meter could show this one.
         /// </summary>
+        /// <remarks>
+        /// Found out by trying, once per algorithm, and true for a certificate
+        /// that is not here yet - nothing is being kept out until there is
+        /// something to keep out.
+        /// </remarks>
         public Boolean ServedByTLS
 
-            => CertificateStore.ServedByTLS(KeyType);
+            => Certificate is null ||
+               CertificateStore.ServedByTLS(KeyType, Certificate);
 
         #endregion
 
@@ -192,7 +208,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                    new JProperty("keyType",        KeyType),
                    new JProperty("note",           Note),
                    new JProperty("hasRequest",     RequestPEM is not null),
-                   new JProperty("servedByTLS",    ServedByTLS),
+                   // Three answers, not two. Until a certificate is here there
+                   // is nothing to ask the question of, and saying "yes" then
+                   // would be a promise about a certificate that has not
+                   // arrived - one on an Edwards curve will very likely turn
+                   // out to be a no.
+                   Certificate is not null
+                       ? new JProperty("servedByTLS",  ServedByTLS)
+                       : new JProperty("servedByTLS",  JValue.CreateNull()),
                    new JProperty("state",          StateAt(Now)),
 
                    // JValue.CreateNull() rather than a bare null: a literal

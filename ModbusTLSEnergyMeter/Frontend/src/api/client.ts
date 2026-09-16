@@ -423,7 +423,7 @@ export interface CertificateEntry {
      * those is a perfectly good certificate for use somewhere else and is never
      * handed to a listener here.
      */
-    servedByTLS:  boolean;
+    servedByTLS:  boolean | null;
     /** "valid", "not for a listener", "not valid yet", "expired", ... */
     state:        string;
     certificate:  CertificateInfo | null;
@@ -445,18 +445,33 @@ export interface CertificateRequestBody {
     subject:      string;
     dnsNames?:    string[];
     ipAddresses?: string[];
-    /**
-     * What kind of key to make.
-     *
-     * The elliptic curve and RSA ones a listener can show; the Edwards curves
-     * and ML-DSA it cannot, and asking for one of those is asking for a
-     * certificate to use elsewhere.
-     */
-    keyType?:     'ec256'    | 'ec384'   | 'ec521'
-                | 'rsa2048'  | 'rsa3072' | 'rsa4096'
-                | 'ed25519'  | 'ed448'
-                | 'mldsa44'  | 'mldsa65' | 'mldsa87';
+    /** One of the ids from the overview's `keyTypes`, e.g. "ecdsa-p256". */
+    keyType?:     string;
     note?:        string;
+}
+
+/**
+ * One kind of key a certificate can be asked for.
+ *
+ * Hermod's list, served by the meter, so that a kind added there turns up here
+ * without this file being touched.
+ */
+export interface KeyAlgorithmInfo {
+    /** How it is written in a request, e.g. "ecdsa-p256". */
+    id:           string;
+    /** How it is written on a page, e.g. "ECDSA P-256 (secp256r1)". */
+    name:         string;
+    /** What somebody choosing it should know. */
+    remark:       string;
+    /**
+     * Whether this machine turned out to be able to present such a certificate
+     * in a TLS handshake - absent while nobody has tried.
+     *
+     * Found out by doing it rather than read from a list: whether an Ed25519
+     * certificate can be served depends on the operating system, the runtime
+     * and the year.
+     */
+    presentable?: boolean;
 }
 
 /** One certificate inside an accepted client chain. */
@@ -486,10 +501,12 @@ export interface ClientTrust {
 
 /** Both server stores and the accepted client chains, in one answer. */
 export interface CertificateOverview {
-    modbus:   CertificateStore;
-    web:      CertificateStore;
-    clients:  ClientTrust;
-    https:    boolean;
+    modbus:    CertificateStore;
+    web:       CertificateStore;
+    clients:   ClientTrust;
+    https:     boolean;
+    /** What a request may ask for, and what each one means. */
+    keyTypes:  KeyAlgorithmInfo[];
 }
 
 

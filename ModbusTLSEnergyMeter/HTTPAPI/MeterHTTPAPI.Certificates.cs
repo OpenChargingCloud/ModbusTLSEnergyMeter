@@ -22,6 +22,7 @@ using System.Text;
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod.PKI;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 
@@ -92,10 +93,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                new JProperty("clients",  meter.ClientTrust.       ToJSON()),
                                new JProperty("https",    meter.HTTPSEnabled),
 
-                               // What a request may ask for, said once rather
-                               // than repeated in a page that would then have to
-                               // be changed alongside this one.
-                               new JProperty("keyTypes", new JArray(CertificateStore.KeyTypes))
+                               // What a request may ask for, with what each one
+                               // is called and what somebody choosing it should
+                               // know. Said once here rather than repeated in a
+                               // page that would then have to be changed
+                               // alongside Hermod's list.
+                               new JProperty("keyTypes", new JArray(KeyAlgorithm.All.Select(algorithm => algorithm.ToJSON())))
                            ))
                    );
 
