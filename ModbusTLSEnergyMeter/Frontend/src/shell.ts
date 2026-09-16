@@ -50,6 +50,15 @@ export const menu: MenuEntry[] = [
         label:  'Logs',
         icon:   'fa-list-ul',
         needs:  'ReadConfiguration'
+    },
+    {
+        // No permission: everybody signed in can reach it, because everybody
+        // signed in has a password of their own to change. What an
+        // administrator additionally sees there - everybody else's account -
+        // is decided on the page and by the meter, not by this list.
+        path:   '/configuration/accounts',
+        label:  'Accounts',
+        icon:   'fa-users'
     }
 ];
 

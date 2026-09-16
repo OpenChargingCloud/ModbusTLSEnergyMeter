@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -180,7 +180,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         #endregion
 
-        #region (private static) GeneratePassword()
+        #region (internal static) GeneratePassword()
 
         /// <summary>
         /// A password nobody has to remember, because it is written down the
@@ -193,7 +193,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <see cref="Random"/> - a password seeded from the clock is one that
         /// somebody who knows roughly when the meter started can search.
         /// </remarks>
-        private static String GeneratePassword()
+        internal static String GeneratePassword()
 
             => Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).
                        Replace('+', '-').

@@ -162,18 +162,57 @@ Signing in is a `POST` to `/accounts/auth/login` with
 every resource below is read with.
 
 
+### More than one of them
+
+The first administrator is not meant to be the only account. Under
+Configuration -> Accounts an administrator makes more, gives each a role, resets
+a password somebody has lost, and takes an account away again; everybody else
+finds their own account there and nothing else.
+
+Three of the four roles change nothing, which is the reason the page exists.
+Watching what a meter is doing - on a night shift, over the phone, for an audit
+- should not need the account that can also clear the energy counters or replace
+the certificate. `IsMember` sees the readings and the configuration and touches
+neither; `IsGuest` sees only the readings; `IsAdminReadOnly` additionally sees
+the certificates and may ask a time server whether it answers, which sends
+traffic and is therefore not folded into reading.
+
+No password is asked for when an account is made: the meter makes one, shows it
+once, and keeps it nowhere it could be read back. The person it was made for
+replaces it at `POST /accounts/auth/password`, which asks for the current one
+first - the one thing an administrator's reset cannot ask for, and the reason
+the two are different routes.
+
+Two rules, and only two:
+
+* **The last administrator cannot be demoted or removed.** A meter with none
+  left cannot be given another one from a browser, cannot be given a new
+  certificate and cannot be told which CAs to accept; the only way back is a
+  text editor on its disk. Stepping down is allowed as soon as somebody else is
+  an administrator, which is what handing a meter over looks like.
+* **A password is reset for somebody else, never for yourself.** That route asks
+  for no current password, because an administrator does not know it - pointed
+  at your own account it would be a way for whoever finds an unlocked browser to
+  take it over.
+
+A role that changes ends every session of that account, and so does a reset: a
+browser holding the old answer of `/me` would go on offering buttons that now
+answer 403, and a reset that left the old session alive would not have taken the
+account back.
+
+
 ## The JSON API
 
 Everything below `/api/v1` needs the session cookie, and each resource names the
 permission it wants. What a person may do follows from their role in the
 organization `EnergyMeter`:
 
-| Role | read meter | read config | change DNS/NTS | diagnostics | write registers | manage certificates |
-|------|:----------:|:-----------:|:--------------:|:-----------:|:---------------:|:-------------------:|
-| `IsAdmin`          | yes | yes | yes | yes | yes | yes |
-| `IsAdminReadOnly`  | yes | yes | no  | yes | no  | no  |
-| `IsMember`         | yes | yes | no  | no  | no  | no  |
-| `IsGuest`          | yes | no  | no  | no  | no  | no  |
+| Role | read meter | read config | change DNS/NTS | diagnostics | write registers | certificates | accounts |
+|------|:----------:|:-----------:|:--------------:|:-----------:|:---------------:|:------------:|:--------:|
+| `IsAdmin`          | yes | yes | yes | yes | yes | yes | yes |
+| `IsAdminReadOnly`  | yes | yes | no  | yes | no  | no  | no  |
+| `IsMember`         | yes | yes | no  | no  | no  | no  | no  |
+| `IsGuest`          | yes | no  | no  | no  | no  | no  | no  |
 
 Managing certificates is its own permission and not part of changing network
 settings, because it is a bigger thing than any of those: which certificate this
@@ -206,6 +245,12 @@ it, grant nothing at all.
 | `DELETE /api/v1/certificates/servers/{purpose}/{id}` | throw an entry and its key away |
 | `GET/POST /api/v1/certificates/clients` | the CAs Modbus/TLS clients may chain to |
 | `PUT/DELETE /api/v1/certificates/clients/{id}` | switch one off, or remove it |
+| `GET  /api/v1/accounts` | who may sign in, and the roles that can be given out |
+| `POST /api/v1/accounts` | make one; leaving out the password gets one the meter made |
+| `GET  /api/v1/accounts/roles` | what each role is called and what it grants |
+| `PUT  /api/v1/accounts/{id}/role` | `{"role": "IsMember"}` |
+| `PUT  /api/v1/accounts/{id}/password` | a new password for somebody who lost theirs |
+| `DELETE /api/v1/accounts/{id}` | take an account away |
 | `GET  /api/v1/logs?limit=&after=&tag=` | what happened, newest last |
 | `GET  /api/v1/logs/verify` | walk the log on disk and check every line |
 | `GET  /api/v1/events` | the log as a Server-Sent Events stream |
@@ -265,10 +310,12 @@ and `-p:SkipFrontendBuild=true` leaves it alone.
 
 Pages: the meter and what it is measuring, the DNS client, the NTS client with
 the state of the clock, a page each for the two certificate stores and one for
-the accepted client CAs, and the log. The DNS and NTS pages are
+the accepted client CAs, the accounts, and the log. The DNS and NTS pages are
 forms - name servers can be added and removed, timeouts and ports changed, and
 the time authority named - and each save writes the configuration file before
-the change takes effect. What somebody may not do is not offered: the controls
+the change takes effect. Accounts is the one page everybody signed in can reach,
+because everybody has a password of their own to change; what an administrator
+additionally sees there is everybody else's account. What somebody may not do is not offered: the controls
 are absent rather than disabled-and-refused, though every request is checked
 again on arrival, so a browser that puts them back gains nothing but a 403.
 
@@ -487,10 +534,12 @@ words.
 * The simulated day is the same day all year: sunrise at 6, sunset at 20, one
   bell curve in between. Enough for "does this controller do the right thing
   when the site exports", not enough for a seasonal study.
-* New accounts have to be made in code. Hermod's user-creation routes are
-  commented out in this version, so only the first administrator appears by
-  itself; the tests in `ModbusTLSEnergyMeterTests` show how to add more. There
-  is no page for accounts either.
+* An account is a person and a role, and that is the whole of it: there are no
+  per-resource rights, so somebody who may write the meter mode may write all of
+  it. Four roles are enough for a meter and would not be enough for much else.
+* Nothing expires. An account stays until somebody takes it away, and there is
+  no lockout after repeated wrong passwords beyond the rate limiting Hermod
+  already does on signing in.
 * A refused request is written down twice: once by the Modbus/TLS frontend in
   Hermod, which says `RBAC DENY ...` as it always did, and once by this meter as
   the audit record above. The second is the one with the data attached; the

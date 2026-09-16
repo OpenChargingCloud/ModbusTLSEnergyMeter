@@ -15,6 +15,7 @@ import { dnsPage }           from './pages/dns';
 import { ntsPage }           from './pages/nts';
 import { modbusCertificatesPage, webCertificatesPage } from './pages/serverCertificates';
 import { clientTrustPage }   from './pages/clientTrust';
+import { accountsPage }      from './pages/accounts';
 import { logsPage }          from './pages/logs';
 import { loginPage }         from './pages/login';
 import { notFoundPage }      from './pages/notFound';
@@ -42,6 +43,7 @@ const router = new Router({
         { path: '/configuration/certificates/modbus',  page: modbusCertificatesPage,  guard: auth.requireSignIn },
         { path: '/configuration/certificates/web',     page: webCertificatesPage,     guard: auth.requireSignIn },
         { path: '/configuration/certificates/clients', page: clientTrustPage,         guard: auth.requireSignIn },
+        { path: '/configuration/accounts',             page: accountsPage,            guard: auth.requireSignIn },
         { path: '/logs',                       page: logsPage,          guard: auth.requireSignIn },
         { path: '/login',                      page: loginPage }
     ],

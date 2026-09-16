@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -141,7 +141,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(me?["permissions"]?.Values<String>(),
                             Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration",
                                                     "ChangeNetworkSettings", "RunDiagnostics", "WriteRegisters",
-                                                    "ManageCertificates" }));
+                                                    "ManageCertificates", "ManageAccounts" }));
 
             });
 
@@ -303,6 +303,470 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(status,                     Is.EqualTo(HttpStatusCode.NotFound));
                 Assert.That(json?["error"]?.ToString(), Does.Contain("nonsense"));
             });
+
+        }
+
+        #endregion
+
+        #region TheRoleTable_SaysWhatEachRoleGrants()
+
+        /// <summary>
+        /// The table of roles is readable by anybody signed in - it names
+        /// nobody - while the list of who holds them is not.
+        /// </summary>
+        [Test]
+        public async Task TheRoleTable_SaysWhatEachRoleGrants()
+        {
+
+            await CreateUserAsync("gwen", "Correct-Horse-1", User2OrganizationEdgeLabel.IsGuest);
+
+            using var browser = await SignIn("gwen", "Correct-Horse-1");
+
+            var (rolesStatus, roles) = await browser.Call(HttpMethod.Get, "api/v1/accounts/roles");
+
+            Assert.Multiple(() => {
+
+                Assert.That(rolesStatus, Is.EqualTo(HttpStatusCode.OK), "a guest may read what the roles mean");
+
+                Assert.That(roles?["roles"]?.Select(role => role["role"]?.ToString()),
+                            Is.EquivalentTo(new[] { "IsAdmin", "IsAdminReadOnly", "IsMember", "IsGuest" }));
+
+                // What the table promises has to be what the meter enforces,
+                // otherwise it is a sentence somebody reads and believes.
+                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "IsMember")?["permissions"]?.Values<String>(),
+                            Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration" }));
+
+                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "IsMember")?["title"]?.ToString(),
+                            Is.EqualTo("Member"));
+
+            });
+
+            Assert.That(await browser.StatusOf(HttpMethod.Get, "api/v1/accounts"),
+                        Is.EqualTo(HttpStatusCode.Forbidden),
+                        "but not who holds them");
+
+        }
+
+        #endregion
+
+        #region AnAdministrator_CanMakeAReadOnlyAccount()
+
+        /// <summary>
+        /// The whole point of this: somebody who has to watch a meter gets an
+        /// account that can look and cannot touch, made from a browser rather
+        /// than from a text editor on the meter's disk.
+        /// </summary>
+        [Test]
+        public async Task AnAdministrator_CanMakeAReadOnlyAccount()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (status, created) = await administrator.Call(
+                                              HttpMethod.Post,
+                                              "api/v1/accounts",
+                                              new { userId = "rory", name = "Rory", role = "IsMember" }
+                                          );
+
+            var password = created?["password"]?.ToString();
+
+            Assert.Multiple(() => {
+
+                Assert.That(status,                                    Is.EqualTo(HttpStatusCode.Created));
+                Assert.That(created?["account"]?["userId"]?.ToString(), Is.EqualTo("rory"));
+                Assert.That(created?["account"]?["role"]?.ToString(),   Is.EqualTo("IsMember"));
+                Assert.That(created?["account"]?["isYou"]?.Value<Boolean>(), Is.False);
+
+                // No password was given, so the meter made one and this is the
+                // only time it is ever shown.
+                Assert.That(password,                                  Is.Not.Null.And.Not.Empty);
+
+            });
+
+            // And it works: an account that appears in a list and cannot sign in
+            // would pass every assertion above.
+            using var rory = await SignIn("rory", password!);
+
+            var me = await rory.GetJSON("api/v1/me");
+
+            Assert.Multiple(() => {
+                Assert.That(me?["userId"]?.ToString(),              Is.EqualTo("rory"));
+                Assert.That(me?["role"]?.ToString(),                Is.EqualTo("IsMember"));
+                Assert.That(me?["permissions"]?.Values<String>(),   Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration" }));
+            });
+
+        }
+
+        #endregion
+
+        #region AReadOnlyAccount_MayLookAndNotTouch()
+
+        /// <summary>
+        /// What "read-only" has to mean if it is to be worth giving out: every
+        /// reading resource answers, and everything that changes the meter,
+        /// its certificates or its accounts is refused with a 403.
+        /// </summary>
+        [Test]
+        public async Task AReadOnlyAccount_MayLookAndNotTouch()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, created) = await administrator.Call(
+                                         HttpMethod.Post,
+                                         "api/v1/accounts",
+                                         new { userId = "rory", role = "IsMember" }
+                                     );
+
+            using var rory = await SignIn("rory", created?["password"]?.ToString()!);
+
+            Assert.Multiple(async () => {
+
+                foreach (var path in new[] { "api/v1/meter", "api/v1/meter/registers",
+                                             "api/v1/configuration", "api/v1/configuration/dns",
+                                             "api/v1/configuration/nts", "api/v1/logs" })
+                {
+                    Assert.That(await rory.StatusOf(HttpMethod.Get, path),
+                                Is.EqualTo(HttpStatusCode.OK),
+                                $"reading '{path}'");
+                }
+
+                Assert.That(await rory.StatusOf(HttpMethod.Put, "api/v1/meter/mode", new { mode = "ImportOnly" }),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "may not set the meter mode");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/meter/energy/reset", new { }),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "may not clear the energy counters");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Put, "api/v1/configuration/dns", new { enabled = false }),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "may not repoint the name servers");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/configuration/nts/sync", new { }),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "may not make the meter send anything");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/certificates/servers/web/requests",
+                                                new { subject = "CN=whoever" }),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "may not ask for a certificate");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/accounts"),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "may not see the accounts");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/accounts",
+                                                new { userId = "smuggled", role = "IsAdmin" }),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "and may not make itself company");
+
+            });
+
+        }
+
+        #endregion
+
+        #region MakingAnAccount_IsRefusedTwice_AndWithARoleThisMeterDoesNotHandOut()
+
+        /// <summary>
+        /// The two ways of asking for an account that cannot be made.
+        /// </summary>
+        /// <remarks>
+        /// The second matters more than it looks: "follows" is a real label in
+        /// Hermod's enumeration and grants nothing here, so taking it would
+        /// make an account that can sign in and do nothing, which somebody
+        /// would later have to work out the reason for.
+        /// </remarks>
+        [Test]
+        public async Task MakingAnAccount_IsRefusedTwice_AndWithARoleThisMeterDoesNotHandOut()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            await administrator.Call(HttpMethod.Post, "api/v1/accounts", new { userId = "rory", role = "IsGuest" });
+
+            var (again,   conflict) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                               new { userId = "rory", role = "IsGuest" });
+
+            var (unknown, refused)  = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                               new { userId = "nora", role = "follows" });
+
+            var (none,    missing)  = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                               new { userId = "nora" });
+
+            Assert.Multiple(() => {
+
+                Assert.That(again,                          Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(conflict?["error"]?.ToString(), Does.Contain("already"));
+
+                Assert.That(unknown,                        Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(refused?["error"]?.ToString(),  Does.Contain("IsMember"), "and says which roles there are");
+
+                Assert.That(none,                           Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(missing?["error"]?.ToString(),  Does.Contain("role"));
+
+            });
+
+        }
+
+        #endregion
+
+        #region TheLastAdministrator_CannotBeDemotedOrRemoved()
+
+        /// <summary>
+        /// The rule that is not about tidiness: a meter with no administrator
+        /// left cannot be given one from a browser, cannot be given a new
+        /// certificate, and cannot be told which CAs to accept.
+        /// </summary>
+        [Test]
+        public async Task TheLastAdministrator_CannotBeDemotedOrRemoved()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (demoted, why)   = await administrator.Call(HttpMethod.Put, "api/v1/accounts/admin/role",
+                                                            new { role = "IsGuest" });
+
+            var (removed, why2)  = await administrator.Call(HttpMethod.Delete, "api/v1/accounts/admin");
+
+            Assert.Multiple(() => {
+
+                Assert.That(demoted,                   Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(why?["error"]?.ToString(), Does.Contain("only administrator"));
+
+                Assert.That(removed,                    Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(why2?["error"]?.ToString(), Does.Contain("only administrator"));
+
+            });
+
+            // And the account is still there, still an administrator: a refusal
+            // that half-happened would be worse than either outcome.
+            var me = await administrator.GetJSON("api/v1/me");
+
+            Assert.That(me?["role"]?.ToString(), Is.EqualTo("IsAdmin"));
+
+        }
+
+        #endregion
+
+        #region AnAdministrator_CanStepDown_OnceThereIsAnother()
+
+        /// <summary>
+        /// Handing a meter over: make somebody else an administrator, then take
+        /// your own account off it.
+        /// </summary>
+        [Test]
+        public async Task AnAdministrator_CanStepDown_OnceThereIsAnother()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                        new { userId = "nora", role = "IsAdmin" });
+
+            using var nora = await SignIn("nora", created?["password"]?.ToString()!);
+
+            var (removed, json) = await nora.Call(HttpMethod.Delete, "api/v1/accounts/admin");
+
+            Assert.Multiple(() => {
+                Assert.That(removed,                            Is.EqualTo(HttpStatusCode.OK), $"{json}");
+                Assert.That(json?["wasYou"]?.Value<Boolean>(),   Is.False);
+            });
+
+            // The session of the account that is gone goes with it.
+            Assert.That(await administrator.StatusOf(HttpMethod.Get, "api/v1/me"),
+                        Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var accounts = await nora.GetJSON("api/v1/accounts");
+
+            Assert.That(accounts?["accounts"]?.Select(account => account["userId"]?.ToString()),
+                        Is.EquivalentTo(new[] { "nora" }));
+
+        }
+
+        #endregion
+
+        #region ChangingARole_EndsTheSessionsOfThatAccount()
+
+        /// <summary>
+        /// A browser holding the old answer of /me would go on showing buttons
+        /// that now answer 403. Signing it out is the honest way to say so.
+        /// </summary>
+        [Test]
+        public async Task ChangingARole_EndsTheSessionsOfThatAccount()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                        new { userId = "rory", role = "IsAdminReadOnly" });
+
+            var password = created?["password"]?.ToString()!;
+
+            using var rory = await SignIn("rory", password);
+
+            Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/configuration/nts/sync", new { }),
+                        Is.EqualTo(HttpStatusCode.OK),
+                        "a read-only administrator may ask a time server whether it answers");
+
+            var (changed, account) = await administrator.Call(HttpMethod.Put, "api/v1/accounts/rory/role",
+                                                              new { role = "IsGuest" });
+
+            Assert.Multiple(() => {
+                Assert.That(changed,                            Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(account?["role"]?.ToString(),       Is.EqualTo("IsGuest"));
+                Assert.That(account?["roleTitle"]?.ToString(),  Is.EqualTo("Guest"));
+            });
+
+            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/me"),
+                        Is.EqualTo(HttpStatusCode.Unauthorized),
+                        "and the old session is gone rather than quietly weaker");
+
+            // Signing in again shows what they may do now - and a role is the
+            // one they were given, not the strongest of everything they ever held.
+            using var again = await SignIn("rory", password);
+
+            var me = await again.GetJSON("api/v1/me");
+
+            Assert.Multiple(() => {
+                Assert.That(me?["role"]?.ToString(),              Is.EqualTo("IsGuest"));
+                Assert.That(me?["permissions"]?.Values<String>(), Is.EquivalentTo(new[] { "ReadMeter" }));
+            });
+
+        }
+
+        #endregion
+
+        #region ResettingAPassword_IsNotForYourOwnAccount()
+
+        /// <summary>
+        /// This route asks for no current password, because an administrator
+        /// resetting somebody else's does not know it. Pointed at your own
+        /// account that would be a way for whoever finds an unlocked browser to
+        /// take it over, so it is refused and says where to go instead.
+        /// </summary>
+        [Test]
+        public async Task ResettingAPassword_IsNotForYourOwnAccount()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (status, json) = await administrator.Call(HttpMethod.Put, "api/v1/accounts/admin/password", new { });
+
+            Assert.Multiple(() => {
+                Assert.That(status,                     Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(json?["error"]?.ToString(), Does.Contain("your own"));
+            });
+
+            // And the password it refused to change still works.
+            using var again = await SignInAsAdministrator();
+
+            Assert.That(await again.StatusOf(HttpMethod.Get, "api/v1/me"), Is.EqualTo(HttpStatusCode.OK));
+
+        }
+
+        #endregion
+
+        #region ResettingAPassword_TakesTheAccountBack()
+
+        /// <summary>
+        /// Somebody has lost their password, or should no longer have the one
+        /// they have. A reset that left the old session alive would not have
+        /// taken the account back.
+        /// </summary>
+        [Test]
+        public async Task ResettingAPassword_TakesTheAccountBack()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                        new { userId = "rory", role = "IsMember" });
+
+            using var rory = await SignIn("rory", created?["password"]?.ToString()!);
+
+            var (status, reset) = await administrator.Call(HttpMethod.Put, "api/v1/accounts/rory/password", new { });
+
+            var newPassword = reset?["password"]?.ToString();
+
+            Assert.Multiple(() => {
+                Assert.That(status,       Is.EqualTo(HttpStatusCode.OK), $"{reset}");
+                Assert.That(newPassword,  Is.Not.Null.And.Not.Empty);
+            });
+
+            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/me"),
+                        Is.EqualTo(HttpStatusCode.Unauthorized),
+                        "the session that knew the old password is gone");
+
+            using var afterwards = await SignIn("rory", newPassword!);
+
+            Assert.That((await afterwards.GetJSON("api/v1/me"))?["userId"]?.ToString(), Is.EqualTo("rory"));
+
+        }
+
+        #endregion
+
+        #region AnAccountThatIsNotThere_IsA404()
+
+        /// <summary>
+        /// Naming an account that does not exist is a 404 and not a 500, on
+        /// every route that names one.
+        /// </summary>
+        [Test]
+        public async Task AnAccountThatIsNotThere_IsA404()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            Assert.Multiple(async () => {
+
+                Assert.That(await administrator.StatusOf(HttpMethod.Delete, "api/v1/accounts/nobody"),
+                            Is.EqualTo(HttpStatusCode.NotFound));
+
+                Assert.That(await administrator.StatusOf(HttpMethod.Put, "api/v1/accounts/nobody/role",
+                                                         new { role = "IsGuest" }),
+                            Is.EqualTo(HttpStatusCode.NotFound));
+
+                Assert.That(await administrator.StatusOf(HttpMethod.Put, "api/v1/accounts/nobody/password", new { }),
+                            Is.EqualTo(HttpStatusCode.NotFound));
+
+            });
+
+        }
+
+        #endregion
+
+        #region SomebodyCanChangeTheirOwnPassword()
+
+        /// <summary>
+        /// The other half of handing out accounts: the person who was given a
+        /// password the meter made can replace it with one of their own, and
+        /// only by proving they know the current one.
+        /// </summary>
+        /// <remarks>
+        /// Answered by Hermod at "/accounts/auth/password" rather than by this
+        /// API, which is why it is worth a test here: the meter's web interface
+        /// depends on it being there and on it asking.
+        /// </remarks>
+        [Test]
+        public async Task SomebodyCanChangeTheirOwnPassword()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                        new { userId = "rory", role = "IsMember" });
+
+            var given = created?["password"]?.ToString()!;
+
+            using var rory = await SignIn("rory", given);
+
+            Assert.That(await rory.StatusOf(HttpMethod.Post, "accounts/auth/password",
+                                            new { currentPassword = "not-the-one", newPassword = "Correct-Horse-9" }),
+                        Is.EqualTo(HttpStatusCode.Forbidden),
+                        "not without the current one");
+
+            Assert.That(await rory.StatusOf(HttpMethod.Post, "accounts/auth/password",
+                                            new { currentPassword = given, newPassword = "Correct-Horse-9" }),
+                        Is.EqualTo(HttpStatusCode.NoContent));
+
+            using var afterwards = await SignIn("rory", "Correct-Horse-9");
+
+            Assert.That((await afterwards.GetJSON("api/v1/me"))?["role"]?.ToString(), Is.EqualTo("IsMember"));
 
         }
 

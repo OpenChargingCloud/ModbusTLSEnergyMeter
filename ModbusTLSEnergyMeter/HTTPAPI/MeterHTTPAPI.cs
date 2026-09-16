@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -177,6 +177,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             AddHandler(HTTPPath.Root + "v1/configuration/certificates", GetCertificates,      HTTPMethod.GET);
 
             RegisterCertificateTemplates();
+            RegisterAccountTemplates();
 
             AddHandler(HTTPPath.Root + "v1/logs",                      GetLogs,               HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/logs/verify",               GetLogVerification,    HTTPMethod.GET);

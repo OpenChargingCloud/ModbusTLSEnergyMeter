@@ -997,3 +997,76 @@ table.numbers {
 .login-hint {
     margin-bottom: 0.4rem;
 }
+
+
+// Accounts: who may sign in, and as what.
+
+.accounts {
+    display:                grid;
+    grid-template-columns:  repeat(auto-fill, minmax(26rem, 1fr));
+    gap:                    1rem;
+    align-items:            start;
+    margin-bottom:          1rem;
+}
+
+.account {
+
+    // An account holding no role at all: it can sign in and do nothing, which
+    // is a state worth noticing rather than one worth hiding.
+    &.expired {
+        opacity: 0.7;
+    }
+
+    h2 {
+        gap:        0.5rem;
+        flex-wrap:  wrap;
+    }
+
+    select {
+        width: 100%;
+    }
+
+}
+
+// A password the meter has just made. It is shown once, so it is shown loudly.
+.issued {
+
+    border-color:  $color-warn;
+    background:    $color-warn-bg;
+
+    // A row of its own rather than the block .form-actions is elsewhere: the
+    // password has to be shown whole, and an input at its default width shows
+    // about two thirds of one.
+    .form-actions {
+        display:      flex;
+        flex-wrap:    wrap;
+        align-items:  center;
+        gap:          0.5rem;
+    }
+
+    input.mono {
+        padding:        0.4rem 0.6rem;
+        border:         1px solid $color-border;
+        border-radius:  6px;
+        background:     $color-surface;
+        color:          $color-text;
+        font-family:    $font-mono;
+        font-size:      0.95rem;
+    }
+
+    // Long enough to read the whole thing without scrolling it sideways.
+    .grow {
+        flex:       1 1 24rem;
+        min-width:  14rem;
+    }
+
+}
+
+// A heading between two stacks of cards, so the second is not read as more of
+// the first.
+.section-heading {
+    margin:       1.4rem 0 0.6rem;
+    font-size:    0.95rem;
+    font-weight:  600;
+    color:        $color-muted;
+}

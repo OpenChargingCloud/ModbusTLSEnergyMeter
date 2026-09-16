@@ -49,7 +49,65 @@ export type Permission = 'ReadMeter'
                        | 'ChangeNetworkSettings'
                        | 'RunDiagnostics'
                        | 'WriteRegisters'
-                       | 'ManageCertificates';
+                       | 'ManageCertificates'
+                       | 'ManageAccounts';
+
+
+/** One of the roles this meter hands out, and what holding it means. */
+export interface RoleInfo {
+    /** What the meter calls it: "IsAdmin", "IsMember", ... */
+    role:         string;
+    /** What a person calls it: "Administrator", "Member", ... */
+    title:        string;
+    description:  string;
+    permissions:  Permission[];
+}
+
+/** Somebody who may sign in to this meter. */
+export interface Account {
+    userId:       string;
+    name:         string | null;
+    email:        string;
+    /** Their role, or null when they hold none and may therefore do nothing. */
+    role:         string | null;
+    roleTitle:    string;
+    permissions:  Permission[];
+    /** Whether this is the account the request was made with. */
+    isYou:        boolean;
+}
+
+/** Who may sign in, and the roles that can be given out. */
+export interface AccountList {
+    accounts:  Account[];
+    roles:     RoleInfo[];
+}
+
+/** What comes back when an account is made or its password reset. */
+export interface AccountWithPassword {
+    account:   Account;
+    /**
+     * The password the meter made, shown this once and kept nowhere it could
+     * be read back - null when one was given rather than generated.
+     */
+    password:  string | null;
+}
+
+/** What is left of an account that has been removed. */
+export interface AccountRemoved {
+    removed:  string;
+    /** Whether that was the account this browser is signed in as. */
+    wasYou:   boolean;
+}
+
+/** What is needed to make an account. */
+export interface NewAccount {
+    userId:     string;
+    role:       string;
+    name?:      string;
+    email?:     string;
+    /** Left out on purpose, so that the meter makes one instead. */
+    password?:  string;
+}
 
 /** Who is signed in to the web interface. */
 export interface Me {
@@ -433,7 +491,15 @@ export const api = {
     auth: {
         me:      ()                                 => meterAPI   <Me>  ('GET',  '/me'),
         login:   (login: string, password: string)  => accountsAPI<void>('POST', '/auth/login', { login, password }),
-        logout:  ()                                 => accountsAPI<void>('POST', '/auth/logout')
+        logout:  ()                                 => accountsAPI<void>('POST', '/auth/logout'),
+
+        /**
+         * Your own password. The current one has to come with it - which is
+         * what stops whoever finds an unlocked browser from taking the account
+         * over - and every other session of the account ends.
+         */
+        changePassword: (currentPassword: string, newPassword: string) =>
+                            accountsAPI<void>('POST', '/auth/password', { currentPassword, newPassword })
     },
 
     status:  () => meterAPI<Status>('GET', '/status'),
@@ -489,6 +555,23 @@ export const api = {
         remove:    (p: CertificatePurpose, id: string) =>
                        meterAPI<CertificateStore>('DELETE', `/certificates/servers/${p}/${id}`)
 
+    },
+
+    /**
+     * Who may sign in to this meter, and as what.
+     *
+     * Reading the list needs ManageAccounts; reading what the roles mean does
+     * not, because it names nobody and is what somebody who was given one
+     * wants to know about their own.
+     */
+    accounts: {
+        list:           ()                             => meterAPI<AccountList>        ('GET',    '/accounts'),
+        roles:          ()                             => meterAPI<{ roles: RoleInfo[] }>('GET',  '/accounts/roles'),
+        create:         (account: NewAccount)          => meterAPI<AccountWithPassword>('POST',   '/accounts', account),
+        setRole:        (userId: string, role: string) => meterAPI<Account>             ('PUT',   `/accounts/${encodeURIComponent(userId)}/role`, { role }),
+        /** A new password for somebody who has lost theirs; not for your own account. */
+        resetPassword:  (userId: string)               => meterAPI<AccountWithPassword>('PUT',   `/accounts/${encodeURIComponent(userId)}/password`, {}),
+        remove:         (userId: string)               => meterAPI<AccountRemoved>     ('DELETE', `/accounts/${encodeURIComponent(userId)}`)
     },
 
     /** Which CAs a Modbus/TLS client certificate may chain to. */
