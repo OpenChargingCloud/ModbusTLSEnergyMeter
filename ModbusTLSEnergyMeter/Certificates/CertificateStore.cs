@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -74,6 +74,58 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         private CertificateEntry?       current;
         private ServerCertificateChain?  currentChain;
         private DateTimeOffset           currentValidUntil = DateTimeOffset.MinValue;
+
+        #endregion
+
+        #region Key types
+
+        /// <summary>
+        /// The key types a certificate can be asked for here, strongest of each
+        /// family last.
+        /// </summary>
+        /// <remarks>
+        /// Elliptic curve and RSA, and deliberately nothing else. Ed25519,
+        /// Ed448 and ML-DSA are the algorithms worth wanting for a signature
+        /// that has to outlive the device, and this meter does use all of them -
+        /// for the keys it signs readings with, where nothing but this meter and
+        /// whoever checks the reading has to agree.
+        ///
+        /// A certificate here is different: it is shown to a peer during a TLS
+        /// handshake, and what may be shown is decided by the TLS stack, not by
+        /// this store. .NET's SslStream authenticates a server with RSA or
+        /// ECDSA. A certificate over an Edwards curve or a lattice would be a
+        /// perfectly good certificate that neither listener could ever present,
+        /// and offering to ask a CA for one would be offering somebody a trip to
+        /// their certificate authority for nothing.
+        ///
+        /// So the modern algorithms live on the signing keys, the interoperable
+        /// ones live here, and the split is the honest one rather than the tidy
+        /// one.
+        /// </remarks>
+        public static IEnumerable<String> KeyTypes
+
+            => [ "ec256", "ec384", "ec521", "rsa2048", "rsa3072", "rsa4096" ];
+
+        /// <summary>
+        /// The curve and the digest that belongs with it.
+        /// </summary>
+        /// <remarks>
+        /// The digest is not a free choice: it is the one whose output matches
+        /// the size of the curve's order. A 521 bit curve signing a SHA-256
+        /// digest throws away most of what the curve is for.
+        /// </remarks>
+        private static readonly Dictionary<String, (ECCurve Curve, HashAlgorithmName Hash)> Curves = new () {
+            { "ec256",  (ECCurve.NamedCurves.nistP256, HashAlgorithmName.SHA256) },
+            { "ec384",  (ECCurve.NamedCurves.nistP384, HashAlgorithmName.SHA384) },
+            // secp521r1: the curve is "P-521", and there is no secp521r2.
+            { "ec521",  (ECCurve.NamedCurves.nistP521, HashAlgorithmName.SHA512) }
+        };
+
+        private static readonly Dictionary<String, Int32> RSASizes = new () {
+            { "rsa2048",  2048 },
+            { "rsa3072",  3072 },
+            { "rsa4096",  4096 }
+        };
 
         #endregion
 
@@ -357,7 +409,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// <param name="Subject">The subject to ask for, e.g. "CN=meter7.lan, O=Acme".</param>
         /// <param name="DNSNames">The names a peer will dial.</param>
         /// <param name="IPAddresses">The addresses a peer will dial.</param>
-        /// <param name="KeyType">"ec256" or "rsa3072".</param>
+        /// <param name="KeyType">One of <see cref="KeyTypes"/>, e.g. "ec256", "ec521" or "rsa4096".</param>
         /// <param name="Note">A line to remember what this is for.</param>
         public CertificateEntry CreateRequest(String                 Subject,
                                               IEnumerable<String>?   DNSNames      = null,
@@ -379,18 +431,25 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             String requestPEM;
             String keyPEM;
 
-            if (KeyType == "rsa3072")
+            if (RSASizes.TryGetValue(KeyType, out var bits))
             {
-                using var key = RSA.Create(3072);
+                using var key = RSA.Create(bits);
                 requestPEM = BuildRequest(new CertificateRequest(Subject, key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1), dnsNames, ipAddresses);
                 keyPEM     = key.ExportPkcs8PrivateKeyPem();
             }
-            else
+
+            else if (Curves.TryGetValue(KeyType, out var curve))
             {
-                using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-                requestPEM = BuildRequest(new CertificateRequest(Subject, key, HashAlgorithmName.SHA256), dnsNames, ipAddresses);
+                using var key = ECDsa.Create(curve.Curve);
+                requestPEM = BuildRequest(new CertificateRequest(Subject, key, curve.Hash), dnsNames, ipAddresses);
                 keyPEM     = key.ExportPkcs8PrivateKeyPem();
             }
+
+            else
+                throw new ArgumentException(
+                          $"'{KeyType}' is not a key type this meter can ask for. " +
+                          $"One of: {String.Join(", ", KeyTypes)}.",
+                          nameof(KeyType));
 
             WritePrivateFile(System.IO.Path.Combine(directory, "key.pem"), keyPEM);
             File.WriteAllText(System.IO.Path.Combine(directory, "request.pem"), requestPEM);
@@ -654,7 +713,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
 
                 try
                 {
-                    withKey = entry.KeyType == "rsa3072"
+                    withKey = IsRSA(entry.KeyType)
                                   ? candidate.CopyWithPrivateKey(RSAFrom(keyPEM))
                                   : candidate.CopyWithPrivateKey(ECDsaFrom(keyPEM));
                     leaf    = candidate;
@@ -833,7 +892,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                         {
                             try
                             {
-                                using var withKey = entry.KeyType == "rsa3072"
+                                using var withKey = IsRSA(entry.KeyType)
                                                         ? candidate.CopyWithPrivateKey(RSAFrom(keyPEM))
                                                         : candidate.CopyWithPrivateKey(ECDsaFrom(keyPEM));
                                 entry.Certificate = Usable(withKey);
@@ -879,6 +938,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                    X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable
                );
 
+        /// <summary>
+        /// Whether a key type names an RSA key.
+        /// </summary>
+        /// <remarks>
+        /// By family and not by the exact name: this used to compare against
+        /// "rsa3072", which was true while that was the only RSA size on offer
+        /// and silently made every other one an elliptic curve key the moment a
+        /// second size existed.
+        /// </remarks>
+        private static Boolean IsRSA(String? KeyType)
+
+            => KeyType?.StartsWith("rsa", StringComparison.OrdinalIgnoreCase) == true;
+
         private static ECDsa ECDsaFrom(String PEM)
         {
             var key = ECDsa.Create();
@@ -894,10 +966,31 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         }
 
         private static String KeyTypeOf(X509Certificate2 Certificate)
+        {
 
-            => Certificate.GetECDsaPublicKey() is not null
-                   ? "ec256"
-                   : "rsa3072";
+            if (Certificate.GetECDsaPublicKey() is ECDsa ecdsa)
+            {
+                using (ecdsa)
+                    return ecdsa.KeySize switch {
+                               384  => "ec384",
+                               521  => "ec521",
+                               _    => "ec256"
+                           };
+            }
+
+            if (Certificate.GetRSAPublicKey() is RSA rsa)
+            {
+                using (rsa)
+                    return rsa.KeySize switch {
+                               2048  => "rsa2048",
+                               4096  => "rsa4096",
+                               _     => "rsa3072"
+                           };
+            }
+
+            return "unknown";
+
+        }
 
         private static IEnumerable<String> DNSNamesOf(X509Certificate2 Certificate)
 

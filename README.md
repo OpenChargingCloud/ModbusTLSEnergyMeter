@@ -245,6 +245,14 @@ it, grant nothing at all.
 | `DELETE /api/v1/certificates/servers/{purpose}/{id}` | throw an entry and its key away |
 | `GET/POST /api/v1/certificates/clients` | the CAs Modbus/TLS clients may chain to |
 | `PUT/DELETE /api/v1/certificates/clients/{id}` | switch one off, or remove it |
+| `GET  /api/v1/signedMeterValues?format=&key=` | one reading, signed; `ocmf` or `alfen` |
+| `GET  /api/v1/sessions` | the charging session that is running, if one is |
+| `POST /api/v1/sessions/start` | begin one; answers with the time and the public key |
+| `POST /api/v1/sessions/stop` | end it; answers with one OCMF document holding both readings |
+| `GET  /api/v1/keys` | the signing keys, without their private halves |
+| `POST /api/v1/keys` | make one: `{"algorithm": "Ed448"}` |
+| `PUT  /api/v1/keys/{id}/default` | sign with this one from now on |
+| `DELETE /api/v1/keys/{id}` | throw one away, with everything it could still prove |
 | `GET  /api/v1/accounts` | who may sign in, and the roles that can be given out |
 | `POST /api/v1/accounts` | make one; leaving out the password gets one the meter made |
 | `GET  /api/v1/accounts/roles` | what each role is called and what it grants |
@@ -421,6 +429,151 @@ startup, rather than leaving it to be discovered as a handshake that fails for
 no visible reason.
 
 
+## Signed meter values
+
+A reading over the JSON API is a number this meter says it measured. A signed
+one is a number somebody can still check in a year, against a key that was this
+meter's before the reading was taken.
+
+The documents are written here and read by [ChargyCore.NET][chargy], which is
+the same code that verifies real charging sessions under the German calibration
+law. Everything below was established by producing a document and handing it to
+that reader.
+
+### The meter's own key
+
+At the first start the meter makes itself a signing key and says so:
+
+```
+[notice signing] No signing key yet, so this meter made itself one:
+                 '20260916-084817-ce51ba' (ECDSA-P256), fingerprint 06acf9619045e01e.
+                 It is the identity of this meter and does not change.
+```
+
+It is kept under `<data>/keys`, apart from the TLS certificates and deliberately
+so. A TLS key says "this listener is this host" for the length of a connection
+and is replaced whenever a CA issues a new certificate; this one says "this
+meter measured this", and has to go on meaning that for as long as anybody may
+want to check a reading.
+
+More keys can be made, because the formats disagree about cryptography and
+cannot be talked out of it:
+
+| Algorithm | |
+|---|---|
+| `ECDSA-P256` | OCMF's own algorithm, and what a meter makes for itself |
+| `ECDSA-P384`, `ECDSA-P521`, `ECDSA-secp256k1` | the other curves OCMF names |
+| `Ed25519`, `Ed448` | Edwards curves; the payload is signed directly |
+| `ML-DSA-44`, `ML-DSA-65`, `ML-DSA-87` | lattice signatures, for a document meant to outlive a quantum computer |
+| `ECDSA-secp192r1` | only for Alfen, which parses no other curve |
+
+The last one is 192 bits and nobody should choose it for anything new; it is
+here because the Alfen format carries a 25 byte compressed point and refuses
+everything else.
+
+A key can be made, made the identity, and removed - never the last one, because
+a meter with no signing key can still measure and nothing it measures can be
+shown to have come from it.
+
+### A reading on its own
+
+```bash
+curl -b jar "http://127.0.0.1:2351/api/v1/signedMeterValues?format=ocmf"
+```
+
+```json
+{ "format":     "OCMF",
+  "timestamp":  "2026-09-16T08:48:17Z",
+  "ocmf":       "OCMF|{\"FV\":\"1.0\", ...}|{\"SD\":\"3045...\",\"SA\":\"ECDSA-secp256r1-SHA256\",\"SE\":\"hex\"}",
+  "publicKey":  { "publicKey": "3059...", "encoding": "hex", "format": "SubjectPublicKeyInfo" } }
+```
+
+`format` is `ocmf` or `alfen`, and `key` names a key other than the identity.
+OCMF calls a reading that belongs to no charging session a fiscal reading and
+counts it in a sequence of its own, which is the `"PG": "F12"` in the payload.
+
+The public key comes with the answer in the shape that format's reader wants it,
+which is not one shape: an OCMF reader hands an ECDSA key to a DER parser and
+expects a SubjectPublicKeyInfo, and hands an Ed25519 or ML-DSA key straight to
+the signature suite and expects the raw key. Getting that wrong produces a
+document that is signed correctly and reads as a forgery.
+
+### A charging session
+
+```bash
+curl -b jar -X POST http://127.0.0.1:2351/api/v1/sessions/start -H 'Content-Type: application/json' -d '{"identification":"DEADBEEF01","identificationType":"ISO14443"}'
+```
+
+```json
+{ "timestamp":   "2026-09-16T08:48:18Z",
+  "sessionId":   "20260916-084818-4e6b7b",
+  "startValue":  0.0,
+  "unit":        "kWh",
+  "publicKey":   { "publicKey": "3059...", "encoding": "hex", "format": "SubjectPublicKeyInfo" } }
+```
+
+The public key is the point of answering at all: whoever gets it now can check
+the document that comes back at the end against a key they were given before the
+session began.
+
+The start reading is kept here rather than handed out. A start reading on its
+own is a number saying a meter stood somewhere at some moment, which is not
+evidence of anything.
+
+```bash
+curl -b jar -X POST http://127.0.0.1:2351/api/v1/sessions/stop -H 'Content-Type: application/json' -d '{}'
+```
+
+```json
+{ "timestamp":   "2026-09-16T08:48:27Z",
+  "startValue":  0.0,
+  "stopValue":   0.003,
+  "energy_kWh":  0.003,
+  "ocmf":        "OCMF|{...\"RD\":[{\"TX\":\"B\",\"RV\":0.0,...},{\"TX\":\"E\",\"RV\":0.003,...}]}|{...}" }
+```
+
+One document with both readings in it, and not two documents. That is what makes
+it a charging session: two separately signed readings are two facts about a
+meter, and the energy between them is an inference somebody else has to be
+trusted to have drawn correctly. Here the subtraction is inside what was signed.
+
+One session at a time, because this meter is one measuring point. Starting a
+second while the first runs is a 409 naming the one that is open, and the key
+the session started with is the key it is signed with at the end - a document
+whose two readings were signed by different keys is not one document.
+
+### What the timestamp admits
+
+Every OCMF reading carries one letter saying how far the clock behind it can be
+trusted. This meter writes `S` only when a time server has actually answered,
+and `I` otherwise. Claiming a synchronised clock it does not have would be lying
+about the one field of a reading that cannot be checked afterwards - see
+[Name resolution and the time](#name-resolution-and-the-time).
+
+### Alfen
+
+`format=alfen` writes the format of an Alfen charging station:
+
+```
+AP;0;3;APV7E5L6WT25QCJZSAMAPNF2PXMZ46UAJKZHJNXY;IKKLQAM6WIKM...====;J23QNXYVROMEN36...===;
+```
+
+Six fields, everything after the version base32 because the whole thing has to
+survive being printed on a receipt and typed back in by hand. The data set is 82
+bytes, little endian throughout, with no separators: the layout is the
+specification.
+
+What this is not, and the answer says so: an Alfen adapter. The format has
+fields for one - an adapter identification, its firmware version and that
+firmware's checksum - and this fills them from the meter's own serial number and
+version, because leaving them empty would fail the signature they are part of.
+A record from here is an Alfen-shaped record signed by this meter, which is what
+makes it useful for exercising software that reads the format and what stops it
+being an Alfen meter value.
+
+[chargy]: https://github.com/OpenChargingCloud/ChargyCore.NET
+
+
 ## The log
 
 Everything that happens inside this meter goes into one log: **every Modbus
@@ -528,6 +681,31 @@ words.
 
 
 ## What it does not do yet
+
+* **No web page for the signing keys, the sessions or the signed values.** All
+  of it is the JSON API only. The certificate pages have no sibling yet.
+* **A certificate can be asked for on an elliptic curve or on RSA, and on
+  nothing else.** Ed25519, Ed448 and ML-DSA are the algorithms worth wanting for
+  a signature meant to outlive the device, and this meter signs readings with
+  all of them - but a certificate here is shown to a peer during a TLS
+  handshake, and .NET's SslStream authenticates a server with RSA or ECDSA. A
+  certificate over an Edwards curve or a lattice would be a perfectly good
+  certificate that neither listener could ever present. So the modern algorithms
+  are on the signing keys and the interoperable ones are on the certificates,
+  which is the honest split rather than the tidy one.
+* **An Alfen record is verified here as far as anything outside ChargyCore can
+  verify it.** It parses, every field comes back as it went in, the buffer its
+  verifier would rebuild is byte for byte the one that was signed, and the
+  signature checks out over that buffer with ChargyCore's own curve and suite.
+  The last hop through `AlfenCrypt01.VerifyMeasurement` is not asserted, because
+  it needs the back-reference from a reading to its measurement and the Alfen
+  parse path leaves that null - it answers "Not an Alfen measurement!" for every
+  freshly parsed record, whoever wrote it, and the property is internal to
+  ChargyCore.
+* **The pagination counters restart at zero if their file cannot be read.** OCMF
+  numbers every document a meter signs so that a gap is visible; a meter that
+  lost the file leaves exactly such a gap, which is the intended behaviour and
+  worth knowing about.
 
 * One meter per process. The unit identifier in the frame is not used to route,
   so several meters means several instances on several ports.

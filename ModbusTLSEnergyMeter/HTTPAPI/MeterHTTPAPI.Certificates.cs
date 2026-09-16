@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -90,7 +90,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                new JProperty("modbus",   meter.ModbusCertificates.ToJSON()),
                                new JProperty("web",      meter.WebCertificates.   ToJSON()),
                                new JProperty("clients",  meter.ClientTrust.       ToJSON()),
-                               new JProperty("https",    meter.HTTPSEnabled)
+                               new JProperty("https",    meter.HTTPSEnabled),
+
+                               // What a request may ask for, said once rather
+                               // than repeated in a page that would then have to
+                               // be changed alongside this one.
+                               new JProperty("keyTypes", new JArray(CertificateStore.KeyTypes))
                            ))
                    );
 
@@ -150,9 +155,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             var keyType = json["keyType"]?.Value<String>()?.Trim().ToLowerInvariant() ?? "ec256";
 
-            if (keyType is not "ec256" and not "rsa3072")
+            if (!CertificateStore.KeyTypes.Contains(keyType))
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 "'keyType' is 'ec256' or 'rsa3072'."));
+                                                 $"'keyType' is one of: {String.Join(", ", CertificateStore.KeyTypes)}."));
 
             try
             {

@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -256,7 +256,23 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// recent enough and close enough. Either of those failing makes the
         /// time ordinary again, and this says which.
         /// </remarks>
-        public JObject ClockJSON()
+        /// <summary>
+        /// Whether this meter's clock has ever been set from a time server.
+        /// </summary>
+        /// <remarks>
+        /// What a signed reading needs to know, and less than
+        /// <see cref="ClockJSON"/>'s "isLegalTime": a document says how far its
+        /// timestamp can be trusted with one letter, and the honest letter is
+        /// "S" only when something outside this meter has confirmed the time at
+        /// least once. Claiming a synchronised clock it does not have would be
+        /// lying about the one field of a reading that cannot be checked
+        /// afterwards.
+        /// </remarks>
+        public Boolean ClockIsSynchronised
+
+            => lastTimeCheck.HasValue;
+
+                public JObject ClockJSON()
         {
 
             var now       = TimeProvider.GetUtcNow();

@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -20,6 +20,7 @@
 using System.Runtime.InteropServices;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
+using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
 
 using MeterLogLevel = cloud.charging.open.EnergyMeters.ModbusTLS.Logging.LogLevel;
 
@@ -163,6 +164,71 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                     Log.Warning($"The {store.Purpose} certificates could not be checked: {e.Message}", "certificates", store.Purpose);
                 }
 
+            }
+
+        }
+
+        #endregion
+
+
+        #region (private) AnnounceTheSigningKeys()
+
+        /// <summary>
+        /// Make the meter's own key if it has none, and say which key it is
+        /// signing readings with.
+        /// </summary>
+        /// <remarks>
+        /// Said out loud at every start, because it is the one thing about this
+        /// meter that somebody checking a reading months from now has to have
+        /// written down. A meter that made a key quietly would be a meter whose
+        /// signatures nobody could attribute to it.
+        /// </remarks>
+        private void AnnounceTheSigningKeys()
+        {
+
+            try
+            {
+
+                if (signingKeys.EnsureIdentity() is MeterKey made)
+                    Log.Notice(
+                        $"No signing key yet, so this meter made itself one: '{made.Id}' ({made.Algorithm}), " +
+                        $"fingerprint {made.Fingerprint}. It is the identity of this meter and does not change.",
+                        "signing"
+                    );
+
+                var identity = signingKeys.Default;
+
+                if (identity is null)
+                    Log.Warning(
+                        "This meter has no signing key, so nothing it measures can be shown to have come from it.",
+                        "signing"
+                    );
+
+                else
+                {
+
+                    Log.Info(
+                        $"Readings are signed with '{identity.Id}' ({identity.Algorithm}), fingerprint {identity.Fingerprint}" +
+                        (OCMFWriter.AlgorithmFor(identity.Algorithm) is String sa ? $", written in OCMF as {sa}" : "") + ".",
+                        "signing"
+                    );
+
+                    var others = signingKeys.Keys.Count() - 1;
+
+                    if (others > 0)
+                        Log.Info($"There {(others == 1 ? "is" : "are")} {others} further signing key{(others == 1 ? "" : "s")} " +
+                                  "for the formats that ask for a different algorithm.",
+                                 "signing");
+
+                }
+
+                if (signingKeys.LastError is String problem)
+                    Log.Warning(problem, "signing");
+
+            }
+            catch (Exception e)
+            {
+                Log.Error($"The signing keys could not be prepared: {e.Message}", "signing");
             }
 
         }

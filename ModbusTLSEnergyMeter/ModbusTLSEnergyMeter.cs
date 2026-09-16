@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -32,6 +32,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
+using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
 using cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Logging;
@@ -113,6 +114,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private readonly  CertificateStore                modbusCertificates;
         private readonly  CertificateStore                webCertificates;
         private readonly  ClientTrustStore                clientTrust;
+        private readonly  MeterKeyStore                   signingKeys;
+        private readonly  ChargingSessions                sessions;
         private           ITimer?                         certificateTimer;
 
         private readonly  DNSClient                       dnsClient;
@@ -223,6 +226,28 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// </summary>
         public ClientTrustStore    ClientTrust
             => clientTrust;
+
+        /// <summary>
+        /// The keys this meter puts its name to a reading with.
+        /// </summary>
+        /// <remarks>
+        /// A third store, apart from the two above and for the same reason they
+        /// are apart from each other: a TLS key says "this listener is this
+        /// host" for the length of a connection, and is replaced whenever a CA
+        /// issues a new certificate. These say "this meter measured this", and
+        /// have to go on meaning it for as long as anybody may want to check a
+        /// reading - years after the connection, and after the certificate it
+        /// was taken under has expired.
+        /// </remarks>
+        public MeterKeyStore       SigningKeys
+            => signingKeys;
+
+        /// <summary>
+        /// The charging session this meter is measuring, and the counters its
+        /// signed documents are numbered with.
+        /// </summary>
+        public ChargingSessions    Sessions
+            => sessions;
 
         /// <summary>
         /// Whether the web interface is served over TLS.
@@ -541,6 +566,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             this.webCertificates    = new CertificateStore(Path.Combine(certificatesPath, "web"),    "web",    this.TimeProvider);
             this.clientTrust        = new ClientTrustStore(Path.Combine(certificatesPath, "trust"),            this.TimeProvider);
 
+            // Beside the certificates rather than among them: these are not
+            // certificates, nobody issues them, and they outlive every
+            // certificate this meter will ever show.
+            this.signingKeys        = new MeterKeyStore   (Path.Combine(this.DataPath, "keys"),                 this.TimeProvider);
+            this.sessions           = new ChargingSessions(Path.Combine(this.DataPath, "sessions"),             this.TimeProvider);
+
             foreach (var problem in new[] { modbusCertificates.LastError, webCertificates.LastError, clientTrust.LastError })
                 if (problem is not null)
                     this.Log.Warning(problem, "meter", "certificates");
@@ -769,6 +800,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             StartCheckingTheClock();
 
             StartWatchingTheCertificates();
+            AnnounceTheSigningKeys();
 
             runTask = frontend.RunAsync(cts.Token);
 

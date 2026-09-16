@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of the Modbus/TLS Energy Meter <https://github.com/OpenChargingCloud/ModbusTLSEnergyMeter>
  *
@@ -162,6 +162,86 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+
+
+        #region EveryKeyType_MakesAUsableRequest(KeyType, Bits)
+
+        /// <summary>
+        /// Every key type on offer makes a signing request a CA would accept,
+        /// over a key of the size it promised.
+        /// </summary>
+        /// <remarks>
+        /// The size is checked and not only the fact that something came out:
+        /// a table that silently fell back to P-256 for every name it did not
+        /// recognise would pass a test that only asked whether a request
+        /// appeared, and would hand somebody a 256 bit key when they asked for
+        /// 521.
+        /// </remarks>
+        [TestCase("ec256",    256)]
+        [TestCase("ec384",    384)]
+        [TestCase("ec521",    521)]
+        [TestCase("rsa2048",  2048)]
+        [TestCase("rsa3072",  3072)]
+        [TestCase("rsa4096",  4096)]
+        public void EveryKeyType_MakesAUsableRequest(String KeyType, Int32 Bits)
+        {
+
+            var store = NewStore(TimeProvider.System, storePath);
+            var entry = store.CreateRequest("CN=meter.example", ["meter.example"], null, KeyType);
+
+            Assert.That(entry.RequestPEM, Is.Not.Null);
+            Assert.That(entry.KeyType,    Is.EqualTo(KeyType));
+
+            var request = CertificateRequest.LoadSigningRequestPem(
+                              entry.RequestPEM!,
+                              HashAlgorithmName.SHA256,
+                              CertificateRequestLoadOptions.UnsafeLoadCertificateExtensions
+                          );
+
+            Assert.Multiple(() => {
+
+                Assert.That(request.SubjectName.Name, Does.Contain("meter.example"));
+
+                Assert.That(KeyType.StartsWith("rsa")
+                                ? request.PublicKey.GetRSAPublicKey()!.KeySize
+                                : request.PublicKey.GetECDsaPublicKey()!.KeySize,
+                            Is.EqualTo(Bits),
+                            $"'{KeyType}' should ask for a {Bits} bit key");
+
+                // The names a peer will dial have to be in the request, or the
+                // certificate that comes back is for a host nobody connects to.
+                Assert.That(request.CertificateExtensions.
+                                OfType<X509SubjectAlternativeNameExtension>().
+                                SelectMany(extension => extension.EnumerateDnsNames()),
+                            Does.Contain("meter.example"));
+
+            });
+
+        }
+
+        #endregion
+
+        #region AnUnknownKeyType_IsRefused()
+
+        /// <summary>
+        /// A key type this meter does not know is refused rather than quietly
+        /// becoming the default one.
+        /// </summary>
+        [Test]
+        public void AnUnknownKeyType_IsRefused()
+        {
+
+            var store = NewStore(TimeProvider.System, storePath);
+
+            var problem = Assert.Throws<ArgumentException>(
+                              () => store.CreateRequest("CN=meter.example", null, null, "ed448")
+                          );
+
+            Assert.That(problem!.Message, Does.Contain("ec521"), "and says what it does know");
+
+        }
+
+        #endregion
 
         #region ARequestKeepsItsKeyAndGivesOutOnlyTheRequest()
 
