@@ -17,9 +17,6 @@
 
 #region Usings
 
-using System.Reflection;
-using System.Text;
-
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 
@@ -29,15 +26,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 {
 
     /// <summary>
-    /// The page a person opens: one HTML document, embedded in this assembly
-    /// and served at "/".
+    /// The page a person opens: the bundle built from Frontend/, embedded in
+    /// this assembly and served at "/".
     /// </summary>
     /// <remarks>
-    /// One file, with its stylesheet and its script inside it, and no build
-    /// step of its own. A meter is one screen's worth of things - what it is
-    /// measuring, what it is configured as, and what has been asked of it -
-    /// and a toolchain that has to be installed and kept working before that
-    /// screen can be changed would cost more than it saves.
+    /// The stylesheet is SCSS and the page is TypeScript, both bundled by
+    /// webpack into Frontend/dist and embedded by the project file - the same
+    /// arrangement an OpenChargingCloud charging station uses, so that the two
+    /// web interfaces can share a shape without sharing a copy of it.
+    ///
+    /// Every URL that is not one of the APIs and does not look like a file of
+    /// the bundle gets the stub with status 200, which is what makes a reload
+    /// on a deep link and a bookmark to one work. A URL that does look like a
+    /// file and is not one gets a real 404: a mistyped script tag must not
+    /// hand the browser HTML to execute.
     ///
     /// Nothing is rendered here. The page signs in against the account API and
     /// reads everything else from the meter's JSON API, so there is one set of
@@ -50,12 +52,35 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #region Data
 
         /// <summary>
-        /// Where the page lives inside this assembly.
+        /// Where the bundle lives inside this assembly.
         /// </summary>
-        public const String  IndexResource  = "cloud.charging.open.EnergyMeters.ModbusTLS.HTTPRoot.index.html";
+        public const String  ResourcePrefix  = "cloud.charging.open.EnergyMeters.ModbusTLS.HTTPRoot.";
 
-        private readonly Byte[]  index;
-        private readonly String  eTag;
+        /// <summary>
+        /// The stub within the bundle, served for every page URL.
+        /// </summary>
+        public const String  IndexFile       = "index.html";
+
+        /// <summary>
+        /// What a browser asks for whatever the page says.
+        /// </summary>
+        public const String  FaviconSVG      = "favicon.svg";
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// Where the files of the web interface come from.
+        /// </summary>
+        public IStaticContentSource  Frontend       { get; }
+
+        /// <summary>
+        /// Whether there is a web interface to serve at all. False for an
+        /// assembly built without the bundle, and then the JSON API is all
+        /// there is.
+        /// </summary>
+        public Boolean               IsAvailable    { get; }
 
         #endregion
 
@@ -65,9 +90,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// Serve the web interface of a meter from its HTTP server.
         /// </summary>
         /// <param name="HTTPServer">The HTTP server.</param>
+        /// <param name="Version">The version of the meter, shown on the page.</param>
+        /// <param name="Frontend">Where the files come from; the bundle embedded in this assembly by default.</param>
         /// <param name="RootPath">Where the page is served, "/" by default.</param>
-        public MeterWebInterface(HTTPServer  HTTPServer,
-                                 HTTPPath?   RootPath   = null)
+        public MeterWebInterface(HTTPServer             HTTPServer,
+                                 String                 Version,
+                                 IStaticContentSource?  Frontend   = null,
+                                 HTTPPath?              RootPath   = null)
 
             : base(HTTPServer,
                    RootPath:     RootPath ?? HTTPPath.Root,
@@ -75,91 +104,43 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         {
 
-            index  = LoadIndex();
+            this.Frontend     = Frontend ?? new EmbeddedContentSource(
+                                                ResourcePrefix,
+                                                typeof(MeterWebInterface).Assembly
+                                            );
 
-            // The hash of the page itself, and not the version of the assembly
-            // carrying it: the version stays at 1.0.0 across every change made
-            // while developing one, and a browser told the page had not changed
-            // believes it. A page is its own identity.
-            eTag   = $"\"{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(index))[..16]}\"";
+            this.IsAvailable  = this.Frontend.TryGet(IndexFile, out _);
 
-            AddHandler(HTTPPath.Root,                Index,    HTTPMethod.GET);
-            AddHandler(HTTPPath.Root,                Index,    HTTPMethod.HEAD);
-            AddHandler(HTTPPath.Root + "{path..}",   Index,    HTTPMethod.GET);
+            if (!IsAvailable)
+                return;
 
-        }
+            this.MapSinglePageApplication(
+                this.Frontend,
+                new SinglePageAppOptions {
+                    IndexFile       = IndexFile,
+                    // The one thing the page cannot know by itself: which
+                    // meter it was served by. Everything else it asks for.
+                    IndexTransform  = html => html.Replace("{{ServerVersion}}", Version, StringComparison.Ordinal)
+                }
+            );
 
-        #endregion
-
-
-        #region (private) Index(Request)
-
-        /// <summary>
-        /// The page, for "/" and for every path that is not one of the APIs.
-        /// </summary>
-        /// <remarks>
-        /// The same document for every path rather than a 404, so that a reload
-        /// on a deep link and a bookmark to one both work. Hermod dispatches to
-        /// the most specific HTTPAPI first, so "/api" and the accounts are
-        /// answered by their own APIs and never reach this.
-        /// </remarks>
-        private Task<HTTPResponse> Index(HTTPRequest Request)
-        {
-
-            if (Request.GetHeaderField("If-None-Match") == eTag)
-                return Task.FromResult(
-                           new HTTPResponse.Builder(Request) {
-                               HTTPStatusCode  = HTTPStatusCode.NotModified,
-                               ETag            = eTag,
-                               CacheControl    = "no-cache"
-                           }.AsImmutable
-                       );
-
-            return Task.FromResult(
-                       new HTTPResponse.Builder(Request) {
-                           HTTPStatusCode  = HTTPStatusCode.OK,
-                           ContentType     = HTTPContentType.Text.HTML_UTF8,
-                           Content         = index,
-                           ETag            = eTag,
-
-                           // Revalidated rather than cached blind: an operator
-                           // who updates the meter should get the new page on
-                           // the next reload, not when the browser feels like it.
-                           CacheControl    = "no-cache"
-                       }.AsImmutable
-                   );
-
-        }
-
-        #endregion
-
-        #region (private static) LoadIndex()
-
-        /// <summary>
-        /// The page out of this assembly, or a short one saying it is missing.
-        /// </summary>
-        /// <remarks>
-        /// A meter whose web interface did not get embedded should still start
-        /// and still serve Modbus - so this says what is wrong on the page
-        /// itself rather than throwing, which would take the whole meter down
-        /// over a build that forgot a resource.
-        /// </remarks>
-        private static Byte[] LoadIndex()
-        {
-
-            using var stream = typeof(MeterWebInterface).Assembly.GetManifestResourceStream(IndexResource);
-
-            if (stream is null)
-                return Encoding.UTF8.GetBytes(
-                           "<!DOCTYPE html><meta charset=\"utf-8\"><title>Energy meter</title>" +
-                           "<p>This meter was built without its web interface. " +
-                           "The JSON API below <code>/api/v1</code> is unaffected."
-                       );
-
-            using var memory = new MemoryStream();
-            stream.CopyTo(memory);
-
-            return memory.ToArray();
+            // Browsers ask for /favicon.ico whatever the page says, and a
+            // bundle built by webpack carries an SVG. A literal route wins over
+            // the catch-all, so this answers before the stub would - and beats
+            // a 404 on every visit, which is a line in the log and a broken
+            // icon in the tab.
+            if (this.Frontend.TryGet(FaviconSVG, out _))
+                AddHandler(
+                    HTTPPath.Parse("/favicon.ico"),
+                    request => Task.FromResult(
+                                   new HTTPResponse.Builder(request) {
+                                       HTTPStatusCode  = HTTPStatusCode.TemporaryRedirect,
+                                       Location        = Location.From(HTTPPath.Parse("/" + FaviconSVG)),
+                                       CacheControl    = "public, max-age=3600"
+                                   }.AsImmutable
+                               ),
+                    HTTPMethod.GET
+                );
 
         }
 

@@ -323,10 +323,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <param name="HandshakeTimeout">How long a peer has to get through the TLS handshake.</param>
         /// <param name="IdleTimeout">How long a connection may ask nothing before it is closed.</param>
         /// <param name="WriteTimeout">How long a peer may refuse to read an answer before it is closed.</param>
+        /// <param name="MeterMode">Where this meter sits in the simulated site, and therefore which way energy flows through it (default: at the grid connection point).</param>
+        /// <param name="SimulatedDayLength">How much real time one simulated day takes (default: a day). Only the load and the sun run faster; the energy counters always count real seconds.</param>
         /// <param name="HTTPHostname">The address the web interface listens on (default: loopback).</param>
         /// <param name="HTTPPort">The port the web interface listens on.</param>
         /// <param name="HTTPAPIPath">Where the account API is mounted (default: "/accounts").</param>
         /// <param name="MeterAPIPath">Where this meter's own JSON API is mounted (default: "/api").</param>
+        /// <param name="Frontend">Where the files of the web interface come from (default: the bundle embedded in this assembly).</param>
         /// <param name="DataPath">Where accounts and their log are written (default: beside the process).</param>
         /// <param name="ConfigFile">Where the name servers and the time server are read from.</param>
         /// <param name="DNSClient">A ready-made DNS client, for tests and for hosts that share one.</param>
@@ -346,11 +349,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                     TimeSpan?         HandshakeTimeout   = null,
                                     TimeSpan?         IdleTimeout        = null,
                                     TimeSpan?         WriteTimeout       = null,
+                                    SunSpecMeterMode? MeterMode          = null,
+                                    TimeSpan?         SimulatedDayLength = null,
 
                                     IIPAddress?       HTTPHostname       = null,
                                     IPPort?           HTTPPort           = null,
                                     HTTPPath?         HTTPAPIPath        = null,
                                     HTTPPath?         MeterAPIPath       = null,
+                                    IStaticContentSource? Frontend       = null,
                                     String?           DataPath           = null,
 
                                     MeterConfigFile?  ConfigFile         = null,
@@ -476,7 +482,22 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             this.ClientCA          = X509CertificateLoader.LoadCertificateFromFile(ClientCACertPath);
 
-            this.device            = new SunSpecMeterDevice(SerialNumber);
+            this.device            = new SunSpecMeterDevice(
+                                         SerialNumber,
+                                         MeterMode ?? SunSpecMeterMode.Net,
+                                         SimulatedDayLength
+                                     );
+
+            // What kind of meter this is can be changed through either door -
+            // a Modbus client writing register 40094, or a person on the web
+            // page - so it is written down where both of them end up rather
+            // than at either of them.
+            this.device.OnModeChanged += (before, after) =>
+                this.Log.Notice(
+                    $"The meter is now {after.Description()}, and was {before.Description()}.",
+                    "meter",
+                    "simulation"
+                );
 
             this.frontend          = new ModbusTlsFrontend(
                                          new ModbusTlsFrontendOptions(
@@ -557,7 +578,21 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // Last, and at the root: it answers for every path the two APIs
             // above did not claim, which is what lets a reload on a deep link
             // work.
-            this.WebInterface     = new MeterWebInterface(httpServer);
+            this.WebInterface     = new MeterWebInterface(
+                                        httpServer,
+                                        Version,
+                                        Frontend
+                                    );
+
+            // A meter whose web interface did not get built still starts, still
+            // serves Modbus and still answers its JSON API. Said once, here,
+            // rather than left for somebody to work out from a blank browser.
+            if (!this.WebInterface.IsAvailable)
+                this.Log.Error(
+                    $"No web interface to serve ({this.WebInterface.Frontend.Description}): the JSON API answers, " +
+                     "the browser gets nothing. Build it with 'npm run build' in the Frontend directory.",
+                    "web"
+                );
 
             #endregion
 

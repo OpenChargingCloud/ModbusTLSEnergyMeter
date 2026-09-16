@@ -294,8 +294,22 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.InternalServerError,
                                                  "The register block of this meter could not be read."));
 
+            var readings = ReadingsJSON(registers);
+
+            // What the simulated site is doing, which is in no register: the
+            // load and the generation are what the mode selects BETWEEN, so a
+            // page that shows only the result cannot say why a meter in front
+            // of a generator is reading zero at three in the morning.
+            readings.Add("simulation",
+                         new JObject(
+                             new JProperty("load_W",        meter.Device.LoadW),
+                             new JProperty("generation_W",  meter.Device.GenerationW),
+                             new JProperty("timeOfDay",     meter.Device.SimulatedTime.ToString("o")),
+                             new JProperty("dayLength_s",   meter.Device.SimulatedDayLength.TotalSeconds)
+                         ));
+
             return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK, ReadingsJSON(registers))
+                       JSONResponse(Request, HTTPStatusCode.OK, readings)
                    );
 
         }
@@ -347,7 +361,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #region (private) PutMeterMode    (Request)
 
         /// <summary>
-        /// PUT /api/v1/meter/mode with {"mode": 0|1|2}: the meter mode register.
+        /// PUT /api/v1/meter/mode with {"mode": 0|1|2} or {"mode": "net"|"import"|"export"}:
+        /// the meter mode register.
         /// </summary>
         private Task<HTTPResponse> PutMeterMode(HTTPRequest Request)
         {
@@ -358,23 +373,29 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return Task.FromResult(errorResponse);
 
-            var mode = json["mode"]?.Value<UInt16>();
+            var requested = json["mode"];
 
-            if (mode is null)
+            if (requested is null)
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "A 'mode' is required."));
 
-            if (mode > 2)
+            // The number a Modbus client would write, or the word a person
+            // would type. The same three things either way.
+            if (!SunSpecMeterModeExtensions.TryParse(requested.Value<String>(), out var mode))
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 "'mode' is 0 (net), 1 (import only) or 2 (export only)."));
+                                                 "'mode' is 0/'net', 1/'import' or 2/'export'."));
 
-            if (!meter.Device.WriteHolding(SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterMeterMode), mode.Value))
+            if (!meter.Device.WriteHolding(SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterMeterMode), (UInt16) mode))
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.InternalServerError,
                                                  "The meter mode register refused the write."));
 
-            meter.Log.Notice($"'{user.Id}' set the meter mode of this meter to {mode.Value}.", "meter", "web");
+            // What it now is rather than what was asked for: the device has
+            // the last word on that, and this is where it says so.
+            var now = meter.Device.Mode;
+
+            meter.Log.Notice($"'{user.Id}' set the mode of this meter to {now.AsText()} ({(UInt16) now}).", "meter", "web");
 
             return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK, new JObject(new JProperty("mode", mode.Value)))
+                       JSONResponse(Request, HTTPStatusCode.OK, ModeJSON(now))
                    );
 
         }
@@ -1124,11 +1145,24 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                            new JProperty("imported_Wh",  Scaled((Int64) UInt32At(Registers, SunSpecMeterMap.OffMeterTotWhImp), energySF))
                        )),
 
-                       new JProperty("meterMode",     Registers[SunSpecMeterMap.OffMeterMeterMode])
+                       new JProperty("meterMode",     ModeJSON((SunSpecMeterMode) Registers[SunSpecMeterMap.OffMeterMeterMode]))
 
                    );
 
         }
+
+        /// <summary>
+        /// The mode register as a number, a word and a sentence: the number is
+        /// what a Modbus client writes, and the other two are so that nobody
+        /// reading this has to keep a table of three integers in their head.
+        /// </summary>
+        private static JObject ModeJSON(SunSpecMeterMode Mode)
+
+            => new (
+                   new JProperty("value",        (UInt16) Mode),
+                   new JProperty("name",         Mode.AsText()),
+                   new JProperty("description",  Mode.Description())
+               );
 
         private static JObject PhaseJSON(String    Name,
                                          UInt16[]  Registers,

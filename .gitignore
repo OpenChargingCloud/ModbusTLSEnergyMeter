@@ -274,3 +274,8 @@ __pycache__/
 /data/
 /logs/
 configuration.json
+
+# The frontend: what npm installs is already ignored above; this is what
+# webpack emits. Built by the project file, so a checkout needs node and not
+# a copy of the bundle.
+/ModbusTLSEnergyMeter/Frontend/dist/
