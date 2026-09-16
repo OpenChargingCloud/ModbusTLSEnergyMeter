@@ -323,18 +323,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// reads plausibly, and fails its signature.
         /// </summary>
         /// <remarks>
-        /// Four links, and a fifth deliberately absent. ChargyCore parses the
-        /// record; every field comes back as it went in; the buffer its verifier
-        /// would rebuild from those fields is byte for byte the one that was
-        /// signed; and the signature checks out over that buffer with the curve
-        /// and the suite ChargyCore itself would use.
+        /// Five links. ChargyCore parses the record; every field comes back as
+        /// it went in; the buffer its verifier would rebuild from those fields
+        /// is byte for byte the one that was signed; the signature checks out
+        /// over that buffer with the curve and the suite ChargyCore itself
+        /// would use - and then ChargyCore's own AlfenCrypt01 verifies it.
         ///
-        /// What is not asserted is the last hop through AlfenCrypt01, and not
-        /// because anything written here fails it. Its VerifyMeasurement needs
-        /// the back-reference from a reading to its measurement, which the Alfen
-        /// parse path leaves null - so it answers "Not an Alfen measurement!"
-        /// for every freshly parsed record, whoever wrote it. The property is
-        /// internal to ChargyCore, so nothing out here can set it either.
+        /// The last one used to be missing, and not because anything written
+        /// here failed it: VerifyMeasurement needs the back-reference from a
+        /// reading to its measurement, and Measurement's constructor used to
+        /// leave that null for every reading handed to it. That is fixed in
+        /// ChargyCore, so the chain can be closed here.
         /// </remarks>
         [Test]
         public void AnAlfenRecord_IsWhatTheReaderWouldRebuildAndSign()
@@ -444,6 +443,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 ),
                 Is.True
             );
+
+            #endregion
+
+            #region ... and ChargyCore says so itself
+
+            var energyMeter = ((ChargeTransparencyRecord) parsed).ChargingStations.
+                                  First().EVSEs.First().EnergyMeters.First();
+
+            var verdict     = new AlfenCrypt01(I18NDictionary.Default(), _ => energyMeter).
+                                  VerifyMeasurement(value);
+
+            Assert.That(verdict.Status, Is.EqualTo(VerificationResult.ValidSignature),
+                        String.Join("; ", verdict.Errors.Select(problem => problem.ToString())));
 
             #endregion
 

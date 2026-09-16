@@ -54,6 +54,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
     /// compressed public key and a 48 byte signature, which is secp192r1 and
     /// nothing else - 192 bits, well below what anybody should choose today,
     /// and unchangeable without ceasing to be this format.
+    ///
+    /// The base32 is Illias', which it could not be at first: its encoder was
+    /// not the inverse of the decoder every reader of this format uses, and
+    /// twenty-five bytes through the pair came back as thirty-eight. That is
+    /// fixed in Styx, with the RFC 4648 vectors pinning it, so there is one
+    /// encoder again.
     /// </remarks>
     public static class AlfenWriter
     {
@@ -177,56 +183,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
             #endregion
 
             return $"AP;{TypeOf(Transaction)};{BlobVersion};" +
-                   $"{Base32(publicKey)};{Base32(buffer)};{Base32(signature)};";
-
-        }
-
-        #endregion
-
-        #region (private static) Base32(Bytes)
-
-        /// <summary>
-        /// RFC 4648 base32, padded to a multiple of eight characters.
-        /// </summary>
-        /// <remarks>
-        /// Written out here rather than taken from Illias, whose ToBase32 is not
-        /// the inverse of the FromBASE32 every reader of this format decodes
-        /// with: twenty-five bytes through the pair come back as thirty-eight.
-        /// What matters for a record that has to be read by somebody else is
-        /// being the exact inverse of their decoder, so this is that.
-        /// </remarks>
-        private static String Base32(ReadOnlySpan<Byte> Bytes)
-        {
-
-            const String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-
-            var result    = new System.Text.StringBuilder((Bytes.Length + 4) / 5 * 8);
-            var buffer    = 0;
-            var bitsLeft  = 0;
-
-            foreach (var value in Bytes)
-            {
-
-                buffer    = (buffer << 8) | value;
-                bitsLeft += 8;
-
-                while (bitsLeft >= 5)
-                {
-                    bitsLeft -= 5;
-                    result.Append(alphabet[(buffer >> bitsLeft) & 31]);
-                }
-
-            }
-
-            // The bits of the last byte that did not fill a character, padded
-            // with zeroes on the right.
-            if (bitsLeft > 0)
-                result.Append(alphabet[(buffer << (5 - bitsLeft)) & 31]);
-
-            while (result.Length % 8 != 0)
-                result.Append('=');
-
-            return result.ToString();
+                   $"{publicKey.ToBase32()};{buffer.ToBase32()};{signature.ToBase32()};";
 
         }
 
