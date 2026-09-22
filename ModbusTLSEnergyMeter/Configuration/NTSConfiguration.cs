@@ -23,6 +23,8 @@ using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
+using org.GraphDefined.Vanaheimr.Norn.Monitoring;
+using org.GraphDefined.Vanaheimr.Norn.TimeSync;
 
 #endregion
 
@@ -54,7 +56,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Configuration
                                           TimeSpan?    CheckEvery            = null,
                                           String?      LegalTimeAuthority    = null,
                                           TimeSpan?    LegalTimeTolerance    = null,
-                                          TimeSpan?    LegalTimeMaxAge       = null)
+                                          TimeSpan?                             LegalTimeMaxAge       = null,
+                                          IEnumerable<NTSServerConfiguration>?  Servers               = null,
+                                          Byte?                                 MinServers            = null,
+                                          TimeSpan?                             MaxDeviation          = null)
     {
 
         #region Data
@@ -131,10 +136,56 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Configuration
                 !ConfigurationReader.TryReadSeconds(JSON, "checkEverySeconds", "nts", 10, 86400, out var checkEvery, out Error) ||
                 !ConfigurationReader.TryReadSeconds(JSON, "legalTimeToleranceSeconds", "nts", 0.001, 60, out var tolerance, out Error) ||
                 !ConfigurationReader.TryReadSeconds(JSON, "legalTimeMaxAgeSeconds", "nts", 10, 86400, out var maxAge, out Error) ||
-                !ConfigurationReader.TryReadString (JSON, "legalTimeAuthority", "nts", MaxAuthorityLength, out var authority, out Error))
+                !ConfigurationReader.TryReadString (JSON, "legalTimeAuthority", "nts", MaxAuthorityLength, out var authority, out Error) ||
+                !ConfigurationReader.TryReadByte   (JSON, "minServers",         "nts",                     out var minServers, out Error) ||
+                !ConfigurationReader.TryReadSeconds(JSON, "maxDeviationSeconds", "nts", 0.001, 3600,       out var maxDeviation, out Error))
             {
                 return false;
             }
+
+            #region The servers, when there is a list of them
+
+            List<NTSServerConfiguration>? servers = null;
+
+            if (JSON.TryGetValue("servers", out var serversToken))
+            {
+
+                if (serversToken is not JArray serverArray)
+                {
+                    Error = "'nts.servers' must be a list!";
+                    return false;
+                }
+
+                servers = [];
+
+                for (var i = 0; i < serverArray.Count; i++)
+                {
+
+                    if (!NTSServerConfiguration.TryParse(serverArray[i], i, out var server, out Error))
+                        return false;
+
+                    servers.Add(server);
+
+                }
+
+                // An empty list is not the same as no list: it says "ask nobody",
+                // which is what switching NTS off is for and is almost certainly
+                // a mistake here.
+                if (servers.Count == 0)
+                {
+                    Error = "'nts.servers' is empty: name a server, or set 'nts.enabled' to false.";
+                    return false;
+                }
+
+                if (minServers > servers.Count(server => server.Enabled))
+                {
+                    Error = $"'nts.minServers' is {minServers}, which is more servers than 'nts.servers' has switched on.";
+                    return false;
+                }
+
+            }
+
+            #endregion
 
             DomainName? domainName = null;
 
@@ -153,12 +204,48 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Configuration
                                 checkEvery,
                                 authority,
                                 tolerance,
-                                maxAge
+                                maxAge,
+                                servers,
+                                minServers,
+                                maxDeviation
                             );
 
             return true;
 
         }
+
+        #endregion
+
+        #region ToGroup(FallbackHostname)
+
+        /// <summary>
+        /// The time servers of this energy meter as a group that can be asked.
+        /// </summary>
+        /// <remarks>
+        /// Called "legal" after the white paper's well-known group, because this
+        /// is the clock that a signed meter reading hangs off. A meter asking a
+        /// second group for something else would name that one "local"; there is
+        /// no such group yet and inventing one now would be naming something
+        /// nobody asks for.
+        ///
+        /// A section that names a single hostname and no list becomes a group of
+        /// one. That is a worse arrangement than four servers and it is the one
+        /// every existing configuration file already has, so it keeps working
+        /// rather than becoming an error at the next start.
+        /// </remarks>
+        /// <param name="FallbackHostname">The server to use when the section names none at all.</param>
+        public TimeSourceGroup ToGroup(DomainName FallbackHostname)
+
+            => new ("legal",
+                    Servers is not null
+                        ? Servers.Select(server => server.ToEndpoint())
+                        : [ new NTSServerEndpoint(
+                                Hostname ?? FallbackHostname,
+                                NTSKEPort,
+                                NTPPort
+                            ) ],
+                    MinServers,
+                    MaxDeviation);
 
         #endregion
 
@@ -175,6 +262,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Configuration
 
             if (Enabled.HasValue)      json.Add("enabled",         Enabled.  Value);
             if (Hostname is not null)  json.Add("hostname",        Hostname. ToString());
+            if (Servers  is not null)  json.Add("servers",         new JArray(Servers.Select(server => server.ToJSON())));
+            if (MinServers.HasValue)   json.Add("minServers",      MinServers.  Value);
+            if (MaxDeviation.HasValue) json.Add("maxDeviationSeconds", MaxDeviation.Value.TotalSeconds);
             if (NTSKEPort.HasValue)    json.Add("ntsKEPort",       NTSKEPort.Value.ToUInt16());
             if (NTPPort.  HasValue)    json.Add("ntpPort",         NTPPort.  Value.ToUInt16());
             if (Timeout.  HasValue)    json.Add("timeoutSeconds",  Timeout.  Value.TotalSeconds);

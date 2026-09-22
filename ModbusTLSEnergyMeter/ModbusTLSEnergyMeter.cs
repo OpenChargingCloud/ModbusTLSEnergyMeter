@@ -30,6 +30,8 @@ using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
+using org.GraphDefined.Vanaheimr.Norn.Monitoring;
+using org.GraphDefined.Vanaheimr.Norn.TimeSync;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
@@ -121,6 +123,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         private readonly  DNSClient                       dnsClient;
         private           NTSClient                       ntsClient;
+        private           TimeSourceGroup                 timeSources;
 
         /// <summary>
         /// The name servers this meter would ask, whether or not name
@@ -339,6 +342,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             => ntsClient;
 
         /// <summary>
+        /// The time servers this meter names, in the order it would ask them.
+        /// </summary>
+        /// <remarks>
+        /// Declared rather than asked, so far: the clock is still read from the
+        /// single <see cref="NTSClient"/> above. What this carries is what the
+        /// configuration file says - which servers, in which priority bands, and
+        /// how many of them have to agree - so that the meter reports its
+        /// intent honestly and a later change can act on it without moving the
+        /// configuration format again.
+        /// </remarks>
+        public TimeSourceGroup     TimeSources
+            => timeSources;
+
+        /// <summary>
         /// Whether this meter resolves names at all.
         /// </summary>
         public Boolean             DNSEnabled          { get; private set; } = true;
@@ -520,6 +537,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                                           DNSClient:     dnsClient,
                                                           TimeProvider:  this.TimeProvider
                                                       );
+
+            // A group of one until the file says otherwise, built from the
+            // client above so that the two cannot name different servers.
+            this.timeSources           = new TimeSourceGroup(
+                                             "legal",
+                                             [ new NTSServerEndpoint(
+                                                   this.ntsClient.Hostname,
+                                                   this.ntsClient.NTSKE_Port,
+                                                   this.ntsClient.NTP_Port
+                                               ) ]
+                                         );
 
             // Last, and that is the whole precedence rule: what this
             // constructor was handed holds until the file says otherwise, and
