@@ -538,16 +538,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                                           TimeProvider:  this.TimeProvider
                                                       );
 
-            // A group of one until the file says otherwise, built from the
-            // client above so that the two cannot name different servers.
-            this.timeSources           = new TimeSourceGroup(
-                                             "legal",
-                                             [ new NTSServerEndpoint(
-                                                   this.ntsClient.Hostname,
-                                                   this.ntsClient.NTSKE_Port,
-                                                   this.ntsClient.NTP_Port
-                                               ) ]
-                                         );
+            // The four this meter asks when nobody says otherwise - but only
+            // when nobody handed it a client either. A caller that named its
+            // own server means that server, and a group naming four others
+            // beside it would be a report about somebody else's clock.
+            this.timeSources           = NTSClient is null
+                                             ? NTSConfiguration.DefaultGroup()
+                                             : new TimeSourceGroup(
+                                                   "legal",
+                                                   [ new NTSServerEndpoint(
+                                                         this.ntsClient.Hostname,
+                                                         this.ntsClient.NTSKE_Port,
+                                                         this.ntsClient.NTP_Port
+                                                     ) ]
+                                               );
 
             // Last, and that is the whole precedence rule: what this
             // constructor was handed holds until the file says otherwise, and
