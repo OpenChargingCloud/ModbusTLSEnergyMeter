@@ -170,12 +170,12 @@ a password somebody has lost, and takes an account away again; everybody else
 finds their own account there and nothing else.
 
 Three of the four roles change nothing, which is the reason the page exists.
-Watching what a meter is doing - on a night shift, over the phone, for an audit
-- should not need the account that can also clear the energy counters or replace
-the certificate. `IsMember` sees the readings and the configuration and touches
-neither; `IsGuest` sees only the readings; `IsAdminReadOnly` additionally sees
-the certificates and may ask a time server whether it answers, which sends
-traffic and is therefore not folded into reading.
+Watching what a meter is doing - on a night shift, over the phone, for an
+audit - should not need the account that can also clear the energy counters or
+replace the certificate. `IsMember` sees the readings and the configuration
+and touches neither; `IsGuest` sees only the readings; `IsAdminReadOnly`
+additionally sees the certificates and may ask a time server whether it
+answers, which sends traffic and is therefore not folded into reading.
 
 No password is asked for when an account is made: the meter makes one, shows it
 once, and keeps it nowhere it could be read back. The person it was made for
