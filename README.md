@@ -821,9 +821,10 @@ agree on, with a line for each of them. A reading is only worth what the
 timestamp on it is worth, and a timestamp is worth more when four independent
 servers agree about it than when one was available.
 
-A host name written back into this file carries the root label - `ptbtime1.ptb.de.`
-- because that is the absolute form it was parsed into, and not a stray
-character. What the meter prints for somebody to read drops it again.
+A host name written back into this file carries the root label
+(`ptbtime1.ptb.de.`) because that is the absolute form it was parsed into, and
+not a stray character. What the meter prints for somebody to read drops it
+again.
 
 "Legal time" is not a claim this meter can make on its own. It holds only while
 a check against a time source **the operator has vouched for** is both recent
