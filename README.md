@@ -766,16 +766,64 @@ LocalController uses, so one file can be written once and copied:
 ```json
 {
   "dns": { "enabled": true, "servers": [ "udp://192.168.1.1:53" ] },
-  "nts": { "enabled": true, "hostname": "ptbtime1.ptb.de", "checkEvery": "00:15:00",
+  "nts": { "enabled": true,
+           "servers": [ "ptbtime1.ptb.de", "ptbtime2.ptb.de",
+                        "ptbtime3.ptb.de", "ptbtime4.ptb.de" ],
+           "minServers": 2,
+           "checkEverySeconds": 900,
            "legalTimeAuthority": "PTB" }
 }
 ```
 
+That `nts` block is what a meter asks when the file says nothing at all: the
+PTB's four, of which two have to answer. Naming them changes nothing; it is
+written out here because a file that names its time servers is a file somebody
+can check.
+
+Every key of the section, and what it is when absent:
+
+| Key | Default | |
+|---|---|---|
+| `enabled` | `true` | whether to ask at all |
+| `servers` | the four above | a list, see below |
+| `minServers` | `2` | how many must answer for the group to have a time |
+| `maxDeviationSeconds` | `60` | how far apart they may be before it is written down |
+| `hostname` | - | one server instead of a list |
+| `ntsKEPort`, `ntpPort` | `4460`, `123` | for that one server |
+| `timeoutSeconds` | `10` | per request |
+| `checkEverySeconds` | `900` | how often the clock is checked |
+| `legalTimeAuthority` | - | who the operator says stands behind it |
+| `legalTimeToleranceSeconds` | `1` | how far off the clock may be |
+| `legalTimeMaxAgeSeconds` | `3600` | how old the last check may be |
+
+An entry of `servers` is a host name, or an object saying more than the name:
+
+```json
+{ "hostname": "time.local", "priority": 0, "ntsKEPort": 4460, "enabled": true }
+```
+
+Servers sharing a priority are **one band** and are asked together; a lower
+priority is asked first. The four above share priority 0, because they are
+peers - putting them in separate bands would say something about them that is
+not true.
+
+A section naming a single `hostname` and no list becomes a group of one, which
+is what every file written before there were groups says, and it keeps working.
+
 A section that is absent is not a section set to nothing: it means the file has
-no opinion, and what the constructor was handed stands. The clock is checked
-against the NTS server on that interval - authenticated, and without stepping
-the meter's own clock - because a reading is only worth what the timestamp on it
-is worth.
+no opinion, and what the constructor was handed stands. The same holds key by
+key - a section mentioning nothing but `enabled` leaves the servers alone
+rather than quietly reducing four to one.
+
+The whole group is asked on that interval - authenticated, and without stepping
+the meter's own clock - and what it reports is what the servers that answered
+agree on, with a line for each of them. A reading is only worth what the
+timestamp on it is worth, and a timestamp is worth more when four independent
+servers agree about it than when one was available.
+
+A host name written back into this file carries the root label - `ptbtime1.ptb.de.`
+- because that is the absolute form it was parsed into, and not a stray
+character. What the meter prints for somebody to read drops it again.
 
 "Legal time" is not a claim this meter can make on its own. It holds only while
 a check against a time source **the operator has vouched for** is both recent
