@@ -42,6 +42,19 @@ $sidebar-width:      15rem;
     box-sizing: border-box;
 }
 
+// An element that says it is hidden is hidden. The browser's own stylesheet
+// says so as well, but only at the strength of a single selector, so any rule
+// in this file that sets a display quietly overrules it - and a good many do.
+//
+// Nothing complains when that happens: the attribute and the property go on
+// reporting hidden while the element sits there in plain sight, and only a
+// screenshot or getComputedStyle says otherwise.
+//
+// The one !important in this stylesheet, and the reason it earns one.
+[hidden] {
+    display: none !important;
+}
+
 html, body {
     margin:       0;
     height:       100%;
@@ -662,6 +675,63 @@ input, textarea, select {
         padding: 0.35rem 0.5rem;
     }
 
+    // The search box grows into whatever the other filters leave, with the
+    // magnifier sitting inside it rather than beside it.
+    .filter-search {
+
+        position:  relative;
+        flex:      1;
+        min-width: 14rem;
+
+        .fa-solid {
+            position:        absolute;
+            left:            0.7rem;
+            top:             50%;
+            transform:       translateY(-50%);
+            color:           $color-muted;
+            pointer-events:  none;
+            font-size:       0.85rem;
+        }
+
+        input {
+            width:         100%;
+            padding-left:  2.1rem;
+        }
+
+    }
+
+}
+
+// The tag buttons above the list: which conversations to watch.
+.tag-filters {
+    display:        flex;
+    flex-wrap:      wrap;
+    gap:            0.35rem;
+    margin-bottom:  0.6rem;
+}
+
+.tag-button {
+
+    cursor:     pointer;
+    font:       inherit;
+    font-size:  0.72rem;
+    padding:    0.1rem 0.55rem;
+
+    &:hover {
+        border-color:  $color-accent;
+        color:         $color-accent;
+    }
+
+    &.on {
+        background:    $color-accent;
+        border-color:  $color-accent;
+        color:         #ffffff;
+    }
+
+    &.clear-tags {
+        border-style: dashed;
+    }
+
 }
 
 // The little rounded labels: the level of a log entry, its tags, and the mode
@@ -688,6 +758,12 @@ input, textarea, select {
     &.warn  { color: #92400e;      border-color: #fde68a; background: $color-warn-bg;  }
     &.bad   { color: $color-error; border-color: #fecaca; background: $color-error-bg; }
 
+    // The verdict on the log on disk. It had no colour either, so "intact"
+    // and "broken" read the same at a glance - on the one page where the
+    // difference is the whole message.
+    &.on    { color: $color-ok;    border-color: #a7f3d0; background: #ecfdf5;        }
+    &.alert { color: $color-error; border-color: #fecaca; background: $color-error-bg; }
+
     // One colour per level, used by the chip in a line and by the line itself.
     &.level.debug     { color: #64748b; border-color: #cbd5e1; background: #f1f5f9; }
     &.level.info      { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
@@ -695,6 +771,33 @@ input, textarea, select {
     &.level.warning   { color: #92400e; border-color: #fde68a; background: $color-warn-bg; }
     &.level.error     { color: $color-error; border-color: #fecaca; background: $color-error-bg; }
     &.level.critical  { color: #ffffff; border-color: #7f1d1d; background: #b91c1c; }
+
+}
+
+// The list and the button that floats over it. The button points at the top,
+// so that is where it belongs - and floating rather than in a row of its own,
+// because a button that is only there when it is needed would otherwise shove
+// the whole list down the moment it appears.
+.log-pane {
+
+    position:         relative;
+    flex:             1;
+    min-height:       0;
+    display:          flex;
+    flex-direction:   column;
+
+}
+
+.jump-newest {
+
+    position:       absolute;
+    top:            0.6rem;
+    left:           50%;
+    transform:      translateX(-50%);
+    z-index:        2;
+    border-color:   $color-accent;
+    color:          $color-accent;
+    box-shadow:     0 2px 10px rgba(15, 23, 42, 0.18);
 
 }
 
@@ -707,6 +810,13 @@ input, textarea, select {
     overflow-y:  auto;
     overflow-x:  hidden;
     padding:     0.35rem 0;
+
+    // The newest line goes in at the top, so every line already there moves
+    // down by its height. Chrome and Firefox would undo that by themselves and
+    // Safari would not, which is the worst of the three outcomes: the page
+    // cannot then know whether it still has to. So it always does, and the
+    // browser is asked to keep out of it.
+    overflow-anchor: none;
     font-family: $font-mono;
     font-size:   0.82rem;
     line-height: 1.55;
@@ -752,6 +862,40 @@ input, textarea, select {
 
     &.debug .message {
         color: $color-muted;
+    }
+
+    // The metrological page writes its own spans rather than the time and
+    // .message above, and had no styling at all for them - the columns ran
+    // into each other and the marker below was invisible.
+    .ts {
+        color:        $color-muted;
+        white-space:  nowrap;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .msg {
+        flex:        1;
+        min-width:   12rem;
+        word-break:  break-word;
+        white-space: pre-wrap;
+    }
+
+    .tags {
+        color:      $color-muted;
+        font-size:  0.72rem;
+    }
+
+    // A Modbus request that was turned away. The whole point of keeping the
+    // refused ones is being able to pick them out afterwards, so they say so
+    // rather than looking like everything else.
+    &.denied {
+        border-left-color:  $color-error;
+        background:         rgba($color-error, 0.04);
+
+        .msg {
+            color: $color-error;
+        }
+
     }
 
 }

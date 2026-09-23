@@ -61,6 +61,16 @@ export const menu: MenuEntry[] = [
         needs:  'ReadConfiguration'
     },
     {
+        // Its own entry rather than something under Logs: the live list and
+        // the record on disk answer different questions, and somebody who
+        // came to find out whether the record still holds is not looking for
+        // a filter.
+        path:   '/metrological-log',
+        label:  'Metrological log',
+        icon:   'fa-file-shield',
+        needs:  'ReadConfiguration'
+    },
+    {
         // No permission: everybody signed in can reach it, because everybody
         // signed in has a password of their own to change. What an
         // administrator additionally sees there - everybody else's account -

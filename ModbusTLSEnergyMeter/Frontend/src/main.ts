@@ -19,6 +19,7 @@ import { signingKeysPage }   from './pages/signingKeys';
 import { sessionsPage }      from './pages/sessions';
 import { accountsPage }      from './pages/accounts';
 import { logsPage }          from './pages/logs';
+import { metrologicalLogPage } from './pages/metrologicalLog';
 import { loginPage }         from './pages/login';
 import { notFoundPage }      from './pages/notFound';
 
@@ -49,6 +50,7 @@ const router = new Router({
         { path: '/sessions',                   page: sessionsPage,      guard: auth.requireSignIn },
         { path: '/configuration/keys',         page: signingKeysPage,   guard: auth.requireSignIn },
         { path: '/logs',                       page: logsPage,          guard: auth.requireSignIn },
+        { path: '/metrological-log',           page: metrologicalLogPage, guard: auth.requireSignIn },
         { path: '/login',                      page: loginPage }
     ],
     outlet:       must<HTMLElement>(root, '#page'),
