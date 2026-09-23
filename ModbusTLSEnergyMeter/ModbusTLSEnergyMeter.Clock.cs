@@ -110,7 +110,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // Named rather than counted, because this is written once at a
             // start and somebody reading it is checking that the file took
             // effect. "4 time servers" would not tell them which four.
-            var asking = timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()).ToArray();
+            // Trimmed, because this is a sentence somebody reads. The root
+            // dot belongs on a name going back into a file - see how the
+            // configuration is written - and not in the middle of a line of
+            // prose, where it reads as a typing mistake.
+            var asking = timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.Trimmed).ToArray();
 
             Log.Info(
                 $"The clock of this meter will be checked against {String.Join(", ", asking)} every {TimeCheckEvery.TotalMinutes:F0} minute(s)" +
@@ -186,6 +190,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             var group      = timeSources;
             var asked      = group.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()).ToArray();
             var stopwatch  = Stopwatch.StartNew();
+
+            var asking     = asked.Select(hostname => hostname.TrimEnd('.')).ToArray();
 
             Log.Info($"NTS: asking the {asked.Length} time server(s) of group '{group.Name}' ...", "nts", "clock");
 
@@ -264,7 +270,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                 var answer = new JObject(
                                  new JProperty("ok",          true),
-                                 new JProperty("server",      $"{group.Name}: {String.Join(", ", asked)}"),
+                                 new JProperty("server",      $"{group.Name}: {String.Join(", ", asking)}"),
                                  new JProperty("at",          TimeProvider.GetUtcNow().ToString("o")),
                                  new JProperty("runtime_ms",  stopwatch.ElapsedMilliseconds),
                                  new JProperty("offset_ms",   verdict.Offset?.TotalMilliseconds),

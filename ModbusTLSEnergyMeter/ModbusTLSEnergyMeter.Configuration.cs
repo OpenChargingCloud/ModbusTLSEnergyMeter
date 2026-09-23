@@ -252,11 +252,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 Configuration.Hostname is not null)
             {
 
-                var wasAsking  = String.Join(", ", timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()));
+                var wasAsking  = String.Join(", ", timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.Trimmed));
 
                 timeSources    = Configuration.ToGroup(Configuration.Hostname ?? ntsClient.Hostname);
 
-                var nowAsking  = String.Join(", ", timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()));
+                var nowAsking  = String.Join(", ", timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.Trimmed));
 
                 if (wasAsking != nowAsking)
                     changed.Add($"time servers = {nowAsking}");
