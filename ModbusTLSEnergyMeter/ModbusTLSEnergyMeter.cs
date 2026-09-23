@@ -152,6 +152,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private           DateTimeOffset?                 lastTimeCheck;
         private           TimeSpan?                       lastTimeCheckOffset;
         private           String?                         lastTimeCheckServer;
+        private           Int32?                          lastTimeCheckAsked;
+        private           Int32?                          lastTimeCheckAnswered;
+
+        /// <summary>
+        /// What asks the group of time servers and works out what they agree
+        /// on.
+        /// </summary>
+        private readonly  MeasurementEngine               timeEngine;
 
         /// <summary>
         /// The clock that makes this meter check its own, when NTS is on.
@@ -542,6 +550,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // when nobody handed it a client either. A caller that named its
             // own server means that server, and a group naming four others
             // beside it would be a report about somebody else's clock.
+            this.timeEngine            = new MeasurementEngine(
+                                             new MonitoringConfig {
+                                                 DroneId       = "energyMeter",
+                                                 NTPTimeout    = TimeSpan.FromSeconds(5),
+                                                 NTSKETimeout  = TimeSpan.FromSeconds(10)
+                                             },
+                                             this.TimeProvider
+                                         );
+
             this.timeSources           = NTSClient is null
                                              ? NTSConfiguration.DefaultGroup()
                                              : new TimeSourceGroup(

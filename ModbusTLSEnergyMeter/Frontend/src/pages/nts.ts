@@ -73,7 +73,7 @@ export const ntsPage: Page = {
                             </label>
 
                             <label>Host name
-                                <input type="text" name="hostname" value="${nts.hostname ?? time.server}"
+                                <input type="text" name="hostname" value="${nts.hostname ?? time.server ?? time.servers[0] ?? ''}"
                                        placeholder="ptbtime1.ptb.de" ${mayChange ? '' : html`disabled`} />
                             </label>
 
@@ -122,7 +122,14 @@ export const ntsPage: Page = {
 
                         <table class="kv">
                             <tr><td>Now</td><td>${new Date(time.now).toLocaleString()}</td></tr>
-                            <tr><td>Server</td><td>${time.server}</td></tr>
+                            <tr><td>${time.servers.length > 1 ? 'Servers' : 'Server'}</td>
+                                <td>${time.servers.join(', ')}${time.servers.length > 1
+                                         ? html` <span class="muted">- at least ${time.minServers} must answer</span>`
+                                         : ''}</td></tr>
+                            ${time.lastCheckAnswered !== null
+                                  ? html`<tr><td>Last check answered by</td>
+                                             <td>${time.lastCheckAnswered} of ${time.lastCheckAsked}</td></tr>`
+                                  : ''}
                             <tr><td>Last check</td><td>${time.lastCheck ? new Date(time.lastCheck).toLocaleString() : 'never'}</td></tr>
                             <tr><td>Offset</td><td>${time.lastCheckOffset_ms === null ? '-' : `${formatNumber(time.lastCheckOffset_ms, 1)} ms`}</td></tr>
                             <tr><td>Authority</td><td>${time.legalAuthority ?? 'none configured'}</td></tr>

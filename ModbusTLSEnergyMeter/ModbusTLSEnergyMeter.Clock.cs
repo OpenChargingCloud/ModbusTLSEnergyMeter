@@ -23,6 +23,8 @@ using Microsoft.Extensions.Logging;
 
 using Newtonsoft.Json.Linq;
 
+using org.GraphDefined.Vanaheimr.Norn.TimeSync;
+
 using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
 
 #endregion
@@ -105,8 +107,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                  TimeCheckEvery
                              );
 
+            // Named rather than counted, because this is written once at a
+            // start and somebody reading it is checking that the file took
+            // effect. "4 time servers" would not tell them which four.
+            var asking = timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()).ToArray();
+
             Log.Info(
-                $"The clock of this meter will be checked against {ntsClient.Hostname} every {TimeCheckEvery.TotalMinutes:F0} minute(s)" +
+                $"The clock of this meter will be checked against {String.Join(", ", asking)} every {TimeCheckEvery.TotalMinutes:F0} minute(s)" +
+                (asking.Length > 1 ? $", at least {timeSources.MinServers} of which must answer" : "") +
                 (LegalTimeAuthority is not null ? $", which the operator says is {LegalTimeAuthority}." : "."),
                 "nts", "clock"
             );
@@ -153,15 +161,21 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         #region SyncTimeAsync(CancellationToken = default)
 
         /// <summary>
-        /// Ask the time server what time it is: the key exchange first, then
-        /// one authenticated NTP request.
+        /// Ask this meter's group of time servers what the time is.
         /// </summary>
         /// <remarks>
-        /// The clock of this meter is not set from the answer, and that is
-        /// deliberate: this says whether the time source can be reached and
-        /// what it thinks of the local clock. Stepping the clock of a running
-        /// meter is a different thing - every reading it hands out is stamped
-        /// from here - and not something a check does by surprise.
+        /// The group and not a single client, because a clock that a signed
+        /// reading is stamped from should not be believed on the word of one
+        /// server. What comes back is the group's verdict: the offset the
+        /// servers that answered and authenticated agree on, how many there
+        /// were, and how far apart they were, with a line for each server -
+        /// because a log book records what was asked and what each one said,
+        /// not only the conclusion.
+        ///
+        /// The clock of this meter is still not set from the answer, and that
+        /// is deliberate and unchanged: every reading this meter hands out is
+        /// stamped from that clock, and stepping it by surprise is a different
+        /// thing from finding out that it is off.
         /// </remarks>
         public async Task<JObject> SyncTimeAsync(CancellationToken CancellationToken = default)
         {
@@ -169,66 +183,98 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             if (!NTSEnabled)
                 return Failed("NTS is switched off on this energy meter.");
 
-            var client     = ntsClient;
+            var group      = timeSources;
+            var asked      = group.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()).ToArray();
             var stopwatch  = Stopwatch.StartNew();
+
+            Log.Info($"NTS: asking the {asked.Length} time server(s) of group '{group.Name}' ...", "nts", "clock");
 
             try
             {
 
-                #region NTS-KE
-
-                var keyExchange = await client.GetNTSKERecords(CancellationToken: CancellationToken);
-
-                if (!keyExchange.Success || keyExchange.Response is null)
-                    return Failed($"The key exchange failed: {keyExchange.ErrorMessage}",
-                                  new JProperty("step",           "ntske"),
-                                  new JProperty("errorCategory",  keyExchange.ErrorCategory.ToString()));
-
-                var response = keyExchange.Response;
-
-                foreach (var warning in response.WarningMessages)
-                    Log.Warning($"NTS: the key exchange with {client.Hostname} warned: {warning}", "nts", "ntske");
-
-                // The cookies are what the NTP request below spends, so they go
-                // into the pool before it is sent and not after.
-                client.SeedCookies(response);
-
-                #endregion
-
-                #region NTP over NTS
-
-                var query = await client.QueryTime(CancellationToken: CancellationToken);
+                var verdict = await group.Measure(timeEngine, dnsClient, CancellationToken);
 
                 stopwatch.Stop();
 
-                if (!query.Success || query.Response is null)
-                    return Failed($"The NTP request failed: {query.ErrorMessage}",
-                                  new JProperty("step",           "ntp"),
-                                  new JProperty("errorCategory",  query.ErrorCategory.ToString()));
+                #region What the group concluded, and what each server said
+
+                var servers = new JArray(
+                                  verdict.Results.Select(result => new JObject(
+                                      new JProperty("hostname",       result.ServerHostname.ToString()),
+                                      new JProperty("ok",             TimeSyncVerdict.CanBeTrusted(result)),
+                                      new JProperty("offset_ms",      result.NTP?.Offset.TotalMilliseconds),
+                                      new JProperty("roundTrip_ms",   result.NTP?.RoundTripDelay.TotalMilliseconds),
+                                      new JProperty("authenticated",  result.NTP?.NTSAuthenticationValid),
+                                      new JProperty("keyExchange",    result.NTSKEFromCache ? "reused" : "new"),
+                                      new JProperty("error",          result.ErrorMessage?.ToString())
+                                  ))
+                              );
+
+                var groupJSON = new JObject(
+                                    new JProperty("name",               group.Name),
+                                    new JProperty("answered",           verdict.Answered),
+                                    new JProperty("required",           verdict.Required),
+                                    new JProperty("offset_ms",          verdict.Offset?.TotalMilliseconds),
+                                    new JProperty("spread_ms",          verdict.Spread?.TotalMilliseconds),
+                                    new JProperty("deviationExceeded",  verdict.DeviationExceeded)
+                                );
 
                 #endregion
 
-                // What the exchange was actually for: the difference between
-                // what this meter believes and what a server that knows was
-                // saying at the same moment.
-                var offset = query.Response.ClockOffset;
+                if (!verdict.IsUsable)
+                {
 
-                lastTimeCheck        = TimeProvider.GetUtcNow();
-                lastTimeCheckOffset  = offset;
-                lastTimeCheckServer  = client.Hostname.ToString();
+                    Log.Error($"NTS: group '{group.Name}' produced no time after {stopwatch.ElapsedMilliseconds} ms: {verdict}.", "nts", "clock");
+
+                    return Failed(
+                               verdict.Outcome == TimeSyncOutcome.NothingAnswered
+                                   ? "No time server answered."
+                                   : $"Only {verdict.Answered} of {verdict.Required} time server(s) answered.",
+                               new JProperty("runtime_ms",  stopwatch.ElapsedMilliseconds),
+                               new JProperty("group",       groupJSON),
+                               new JProperty("servers",     servers)
+                           );
+
+                }
+
+                // What the asking was actually for: the difference between what
+                // this meter believes and what servers that know were saying at
+                // the same moment.
+                lastTimeCheck          = TimeProvider.GetUtcNow();
+                lastTimeCheckOffset    = verdict.Offset;
+                lastTimeCheckAsked     = asked.Length;
+                lastTimeCheckAnswered  = verdict.Answered;
+
+                // A name only where naming one is the truth. Four servers
+                // answering is not "checked against ptbtime1", and picking one
+                // of them to print would be the nicer-looking lie.
+                lastTimeCheckServer    = asked.Length == 1
+                                             ? asked[0]
+                                             : null;
+
+                // Written down rather than acted on: the disagreement belongs
+                // in the log, and the time is still a time.
+                if (verdict.DeviationExceeded)
+                    Log.Warning(
+                        $"NTS: the time servers of group '{group.Name}' disagree by " +
+                        $"{verdict.Spread!.Value.TotalMilliseconds:F1} ms, which reaches the agreed deviation of " +
+                        $"{group.MaxDeviation.TotalSeconds:F0} s.",
+                        "nts", "clock"
+                    );
 
                 var answer = new JObject(
                                  new JProperty("ok",          true),
-                                 new JProperty("server",      client.Hostname.ToString()),
+                                 new JProperty("server",      $"{group.Name}: {String.Join(", ", asked)}"),
                                  new JProperty("at",          TimeProvider.GetUtcNow().ToString("o")),
                                  new JProperty("runtime_ms",  stopwatch.ElapsedMilliseconds),
-                                 new JProperty("offset_ms",   offset?.TotalMilliseconds)
+                                 new JProperty("offset_ms",   verdict.Offset?.TotalMilliseconds),
+                                 new JProperty("group",       groupJSON),
+                                 new JProperty("servers",     servers)
                              );
 
                 Log.Log(
                     Logging.LogLevel.Notice,
-                    $"NTS: {client.Hostname} answered in {stopwatch.ElapsedMilliseconds} ms" +
-                    (offset.HasValue ? $", this meter's clock is {offset.Value.TotalMilliseconds:+0.0;-0.0;0} ms off." : "."),
+                    $"NTS: group '{group.Name}' answered in {stopwatch.ElapsedMilliseconds} ms - {verdict}.",
                     answer,
                     "nts", "clock"
                 );
@@ -238,6 +284,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             }
             catch (Exception e)
             {
+                stopwatch.Stop();
+                Log.Error($"NTS: asking group '{group.Name}' failed after {stopwatch.ElapsedMilliseconds} ms: {e.Message}", "nts", "clock");
                 return Failed(e.Message);
             }
 
@@ -276,6 +324,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         {
 
             var now       = TimeProvider.GetUtcNow();
+            var asking    = timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()).ToArray();
             var age       = lastTimeCheck.HasValue ? now - lastTimeCheck.Value : (TimeSpan?) null;
 
             var isRecent  = age.HasValue && age.Value <= LegalTimeMaxAge;
@@ -286,11 +335,18 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                        new JProperty("now",                 now.ToString("o")),
                        new JProperty("ntsEnabled",          NTSEnabled),
-                       new JProperty("server",              ntsClient.Hostname.ToString()),
+                       // A name where naming one is the truth, and null where it
+                       // is not: four servers are not "the server". The list
+                       // beside it is what a page should draw.
+                       new JProperty("server",              asking.Length == 1 ? asking[0] : null),
+                       new JProperty("servers",             new JArray(asking)),
+                       new JProperty("minServers",          timeSources.MinServers),
                        new JProperty("checkEvery_s",        TimeCheckEvery.TotalSeconds),
 
                        new JProperty("lastCheck",           lastTimeCheck?.ToString("o")),
                        new JProperty("lastCheckServer",     lastTimeCheckServer),
+                       new JProperty("lastCheckAsked",      lastTimeCheckAsked),
+                       new JProperty("lastCheckAnswered",   lastTimeCheckAnswered),
                        new JProperty("lastCheckAge_s",      age?.TotalSeconds),
                        new JProperty("lastCheckOffset_ms",  lastTimeCheckOffset?.TotalMilliseconds),
 

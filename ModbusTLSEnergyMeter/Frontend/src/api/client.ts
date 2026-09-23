@@ -355,10 +355,17 @@ export interface NTSUpdate {
 export interface Clock {
     now:                  string;
     ntsEnabled:           boolean;
-    server:               string;
+    /** The one server, where naming one is the truth - null for a group. */
+    server:               string | null;
+    /** Every server of the group, in the order they are asked. */
+    servers:              string[];
+    /** How many of them have to answer. */
+    minServers:           number;
     checkEvery_s:         number;
     lastCheck:            string | null;
     lastCheckServer:      string | null;
+    lastCheckAsked:       number | null;
+    lastCheckAnswered:    number | null;
     lastCheckAge_s:       number | null;
     lastCheckOffset_ms:   number | null;
     legalAuthority:       string | null;
