@@ -765,7 +765,7 @@ LocalController uses, so one file can be written once and copied:
 
 ```json
 {
-  "dns": { "enabled": true, "servers": [ "udp://192.168.1.1:53" ] },
+  "dns": { "enabled": true, "servers": [ "192.168.1.1" ] },
   "nts": { "enabled": true,
            "servers": [ "ptbtime1.ptb.de", "ptbtime2.ptb.de",
                         "ptbtime3.ptb.de", "ptbtime4.ptb.de" ],
@@ -774,6 +774,17 @@ LocalController uses, so one file can be written once and copied:
            "legalTimeAuthority": "PTB" }
 }
 ```
+
+That `dns` block is one name server, asked over UDP on port 53. An entry of its
+`servers` is an address or a host name, or an object saying more than that -
+the form the DNS page writes the list back in:
+
+```json
+{ "address": "192.168.1.1", "port": 53, "transport": "UDP", "queryTimeoutSeconds": 2 }
+```
+
+A name server written as a URL - `udp://192.168.1.1:53` - is not a form the
+file takes, and a meter given one does not start.
 
 That `nts` block is what a meter asks when the file says nothing at all: the
 PTB's four, of which two have to answer. Naming them changes nothing; it is
