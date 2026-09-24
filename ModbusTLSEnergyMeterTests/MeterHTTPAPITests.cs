@@ -322,6 +322,43 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+        #region ATimeServerTest_SaysWhoAskedAndWhereItGotTo()
+
+        /// <summary>
+        /// The Test of one time server, as the NTS page sends it: the answer is
+        /// the steps, and the log says who asked, before anything is asked.
+        /// </summary>
+        /// <remarks>
+        /// With a host that is neither a name nor an address, so that the test
+        /// ends at its first step and nothing leaves the machine.
+        /// </remarks>
+        [Test]
+        public async Task ATimeServerTest_SaysWhoAskedAndWhereItGotTo()
+        {
+
+            using var browser  = await SignInAsAdministrator();
+
+            var before         = meter!.Log.LastId;
+            var (status, json) = await browser.Call(HttpMethod.Post, "api/v1/configuration/nts/test", new { host = "not a host at all" });
+            var said           = meter.Log.Recent(50, before, "test").ToArray();
+
+            Assert.Multiple(() => {
+
+                Assert.That(status,                                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(json?["ok"]?.Value<Boolean>(),             Is.False);
+                Assert.That(json?["host"]?.ToString(),                 Is.EqualTo("not a host at all"));
+                Assert.That(json?["steps"]?[0]?["text"]?.ToString(),   Is.EqualTo("'not a host at all' is neither a name nor an address that can be asked."));
+                Assert.That(json?["steps"]?[0]?["level"]?.ToString(),  Is.EqualTo("error"));
+
+                Assert.That(said.Select(entry => entry.Message),       Is.EqualTo(new[] { "'admin' asked this meter to test the time server 'not a host at all'." }));
+                Assert.That(said.Select(entry => entry.Tags),          Has.All.EquivalentTo(new[] { "nts", "test", "web" }));
+
+            });
+
+        }
+
+        #endregion
+
         #region TheRoleTable_SaysWhatEachRoleGrants()
 
         /// <summary>
@@ -456,6 +493,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/configuration/nts/sync", new { }),
                             Is.EqualTo(HttpStatusCode.Forbidden),           "may not make the meter send anything");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/configuration/nts/test", new { host = "ptbtime2.ptb.de" }),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "nor ask one time server everything");
 
                 Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/certificates/servers/web/requests",
                                                 new { subject = "CN=whoever" }),

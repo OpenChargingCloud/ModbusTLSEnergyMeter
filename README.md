@@ -241,6 +241,7 @@ sentence and none of them should need a second request to translate one word.
 | `GET/PUT /api/v1/configuration/dns` | how it resolves names |
 | `GET/PUT /api/v1/configuration/nts` | where it reads the time |
 | `POST /api/v1/configuration/nts/sync` | check the clock now |
+| `POST /api/v1/configuration/nts/test` | `{"host": "ptbtime2.ptb.de"}`: ask one time server everything, step by step |
 | `GET  /api/v1/configuration/time` | what time it is, and what that is worth |
 | `GET  /api/v1/configuration/certificates` | which certificates it was started with |
 | `GET  /api/v1/certificates` | both server stores and the accepted client CAs, in one answer |
@@ -326,16 +327,18 @@ Pages: the meter and what it is measuring, the DNS client, the NTS client with
 the state of the clock, a page each for the two certificate stores and one for
 the accepted client CAs, the signing keys, the charging sessions, the accounts,
 the log as it happens, and the metrological log. On the DNS page name servers
-can be added and removed and timeouts changed. The NTS page is the group of
-time servers: each one is added, changed, switched off or deleted on its own, in
-a dialog, and the rules the group is held to, who stands behind legal time and
-the clock as it stands have a card each; **Check the clock now** asks them all.
-Each save writes the configuration file before the change takes effect, and
-sends only what its form shows - the rest of the section stays as it was. Accounts is the one page everybody signed in can reach,
-because everybody has a password of their own to change; what an administrator
-additionally sees there is everybody else's account. What somebody may not do is not offered: the controls
-are absent rather than disabled-and-refused, though every request is checked
-again on arrival, so a browser that puts them back gains nothing but a 403.
+can be added and removed and timeouts changed. The NTS page is the group of time
+servers: each one is added, changed, switched off or deleted on its own, in a
+dialog, and tested on its own in another, step by step; the rules the group is
+held to, who stands behind legal time and the clock as it stands have a card
+each; **Check the clock now** asks them all. Each save writes the configuration
+file before the change takes effect, and sends only what its form shows - the
+rest of the section stays as it was. Accounts is the one page everybody signed
+in can reach, because everybody has a password of their own to change; what an
+administrator additionally sees there is everybody else's account. What somebody
+may not do is not offered: the controls are absent rather than
+disabled-and-refused, though every request is checked again on arrival, so a
+browser that puts them back gains nothing but a 403.
 
 Every URL that is not one of the APIs and does not look like a file of the
 bundle gets the stub with status 200, which is what makes a reload on a deep
@@ -820,7 +823,7 @@ Every key of the section, and what it is when absent:
 | `maxDeviationSeconds` | `60` | how far apart they may be before it is written down |
 | `hostname` | - | one server instead of a list |
 | `ntsKEPort`, `ntpPort` | `4460`, `123` | for that one server |
-| `timeoutSeconds` | `10` | the single client's; the group asks with timeouts of its own |
+| `timeoutSeconds` | `10` | the single client's, and what a server's Test allows each step; the group asks with timeouts of its own |
 | `checkEverySeconds` | `900` | how often the clock is checked |
 | `legalTimeAuthority` | - | who the operator says stands behind it; `null` takes it away |
 | `legalTimeToleranceSeconds` | `1` | how far off the clock may be |
@@ -859,6 +862,23 @@ the meter's own clock - and what it reports is what the servers that answered
 agree on, with a line for each of them. A reading is only worth what the
 timestamp on it is worth, and a timestamp is worth more when four independent
 servers agree about it than when one was available.
+
+One server can also be asked on its own, which is what somebody does when the
+group did not answer: the **Test** in its row of the NTS page,
+`POST /api/v1/configuration/nts/test`, or `syncNTS <server>` at the command line
+of ModbusTLSEnergyMeterCLI. Every step is written down with when it happened -
+the name and its addresses, the TCP connection, the TLS handshake, the key
+exchange with its algorithm, its cookies and the NTP servers it names, the
+authenticated request and the offset it found - so that a server which fails is
+seen failing at one of them. The TLS certificate is part of it: every
+certificate of the chain this machine built, the root's as much as the
+server's, with both ends of its validity and the days it has left, the root's
+SHA-256 fingerprint, and whether the whole held up, with the reasons in words
+where it did not. A server of the group is asked on its own ports; an address
+among those the single client's key exchange named is asked with that
+exchange's cookies, because an address cannot have a key exchange of its own.
+The test asks with a client of its own and leaves what the group last did - and
+the clock - as they were.
 
 A host name written back into this file carries the root label
 (`ptbtime1.ptb.de.`) because that is the absolute form it was parsed into, and

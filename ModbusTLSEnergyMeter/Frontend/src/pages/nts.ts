@@ -1,4 +1,4 @@
-import { api, type Clock, type NTSConfiguration, type NTSServerEntry, type NTSServerResult, type NTSSyncResult, type NTSTimeSource, type NTSUpdate } from '../api/client';
+import { api, type Clock, type NTSConfiguration, type NTSServerEntry, type NTSServerResult, type NTSSyncResult, type NTSTimeSource, type NTSUpdate, type TimeServerTest } from '../api/client';
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
@@ -15,8 +15,8 @@ import { entryOf, nameTaken, readable, withServer, withoutServer, type UsualPort
  * for whatever reason, told the meter a lone host name, which the meter read as
  * a group of one: the PTB's four went down to the one in the form, and the
  * legal time authority went with them until the next start. Now each server is
- * a row with an Edit of its own, the group is added to at the end of its list,
- * and what the group is held to is a form of its own below it.
+ * a row with a Test and an Edit of its own, the group is added to at the end of
+ * its list, and what the group is held to is a form of its own below it.
  *
  * The cards stand one under the other, read from the top down: whether, who,
  * by which rules, whose time counts as legal - then this meter's clock as it
@@ -226,6 +226,15 @@ export const ntsPage: Page = {
                                value="${settings.checkEverySeconds}" ${off} />
                     </label>
 
+                    <label>Timeout of a test in seconds
+                        <input type="number" name="timeoutSeconds" step="0.1" min="0.1" max="${limits.maxTimeout}"
+                               value="${settings.timeoutSeconds ?? ''}" ${off} />
+                        <span class="hint">
+                            What a server's Test allows each of its two steps, the key exchange and the time request.
+                            "Check the clock now" asks the way the clock check does, with timeouts of its own.
+                        </span>
+                    </label>
+
                     <div class="form-actions">
                         <button type="submit" class="btn primary" ${off}>Save</button>
                         <span id="policy-note"  class="form-notice" role="status"></span>
@@ -421,6 +430,10 @@ export const ntsPage: Page = {
                     </div>
 
                     <div class="actions">
+                        <button type="button" class="btn small" data-test="${index}"
+                                title="Ask this server, and only this one" ${mayTest ? '' : html`disabled`}>
+                            <i class="fa-solid fa-list-check"></i> Test
+                        </button>
                         <button type="button" class="btn small" data-edit="${index}" ${mayChange ? '' : html`disabled`}>
                             <i class="fa-solid fa-pen"></i> Edit
                         </button>
@@ -643,6 +656,89 @@ export const ntsPage: Page = {
 
 
         /**
+         * Ask one time server everything, in a dialog, line by line.
+         *
+         * "Check the clock now" answers whether the group has a time; this
+         * answers where one server got to, which is the question somebody has
+         * when it did not. The steps are the ones the exchange actually has -
+         * the name, the TCP connection, the TLS handshake and what the
+         * certificate claims, the key exchange, the authenticated request -
+         * and each is timed, so a server that is merely slow can be told from
+         * one that is refusing.
+         *
+         * @param host  which server, asked on the ports it is configured with.
+         *              Sent as it is read, without the root's dot, because the
+         *              meter writes it into the log as it was sent.
+         */
+        async function testServer(host: string): Promise<void> {
+
+            const dialog = document.createElement('dialog');
+
+            dialog.className = 'test-dialog';
+
+            render(dialog, html`
+                <h2>Asking ${readable(host)}</h2>
+                <div class="test-steps" id="test-steps">
+                    <div class="loading">Name, key exchange, authenticated time request ...</div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" id="test-close" disabled>Close</button>
+                </div>
+            `);
+
+            document.body.appendChild(dialog);
+            dialog.showModal();
+
+            // Shut it and take it away, as the server's dialog does: one that
+            // is only closed stays in the document.
+            const dismiss = (): void => { dialog.close(); dialog.remove(); };
+
+            dialog.addEventListener('close',  dismiss);
+            dialog.addEventListener('cancel', dismiss);
+
+            const close = must<HTMLButtonElement>(dialog, '#test-close');
+
+            close.addEventListener('click', dismiss);
+
+            let result: TimeServerTest;
+
+            try
+            {
+                result = await api.nts.test(host);
+            }
+            catch (problem)
+            {
+                render(must<HTMLElement>(dialog, '#test-steps'), html`
+                    <div class="error-box">The test could not be run: ${errorMessage(problem)}</div>
+                `);
+                close.disabled = false;
+                close.focus();
+                return;
+            }
+
+            render(must<HTMLElement>(dialog, '#test-steps'), html`
+                <div class="${result.ok ? 'notice' : 'error-box'}">
+                    ${result.ok
+                          ? html`${readable(result.host)} answered. ${result.runtime_ms} ms altogether.`
+                          : html`${readable(result.host)} did not answer. ${result.runtime_ms} ms altogether.`}
+                </div>
+                <ol class="test-log">
+                    ${result.steps.map(step => html`
+                        <li class="level-${step.level}">
+                            <span class="at">+${step.at_ms} ms</span>
+                            <span class="text">${step.text}</span>
+                        </li>
+                    `)}
+                </ol>
+            `);
+
+            close.disabled = false;
+            close.focus();
+
+        }
+
+
+        /**
          * Listen on the parts rather than on what is in them, because the parts
          * are redrawn one at a time and a listener on a button that was redrawn
          * away would be listening to nothing.
@@ -671,6 +767,15 @@ export const ntsPage: Page = {
                 else if (button.dataset['edit'] !== undefined)
                     editServer(Number(button.dataset['edit']));
 
+                else if (button.dataset['test'] !== undefined) {
+
+                    const source = current?.timeSources[Number(button.dataset['test'])];
+
+                    if (source !== undefined)
+                        void testServer(readable(source.hostname));
+
+                }
+
             });
 
             must<HTMLElement>(content, '#nts-sync').addEventListener('click', event => {
@@ -686,13 +791,22 @@ export const ntsPage: Page = {
 
                 event.preventDefault();
 
-                const data = new FormData(event.target as HTMLFormElement);
+                const data     = new FormData(event.target as HTMLFormElement);
+                const timeout  = String(data.get('timeoutSeconds') ?? '').trim();
 
-                void saveForm('#nts-policy', '#policy-note', '#policy-error', {
+                const update: NTSUpdate = {
                     minServers:           Number(data.get('minServers')),
                     maxDeviationSeconds:  Number(data.get('maxDeviationSeconds')),
                     checkEverySeconds:    Number(data.get('checkEverySeconds'))
-                }, () => { drawPolicy(); drawServers(); });
+                };
+
+                // An empty field leaves the timeout as it is, rather than
+                // making it nothing at all.
+                if (timeout.length > 0)
+                    update.timeoutSeconds = Number(timeout);
+
+                void saveForm('#nts-policy', '#policy-note', '#policy-error', update,
+                              () => { drawPolicy(); drawServers(); });
 
             });
 

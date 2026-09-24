@@ -173,6 +173,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             AddHandler(HTTPPath.Root + "v1/configuration/nts",         GetNTSConfiguration,   HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/configuration/nts",         PutNTSConfiguration,   HTTPMethod.PUT);
             AddHandler(HTTPPath.Root + "v1/configuration/nts/sync",    PostNTSSync,           HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/configuration/nts/test",    PostNTSTest,           HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/configuration/time",        GetClock,              HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/configuration/certificates", GetCertificates,      HTTPMethod.GET);
 
@@ -526,7 +527,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private) GetNTSConfiguration(Request) / PutNTSConfiguration(Request) / PostNTSSync(Request)
+        #region (private) GetNTSConfiguration(Request) / PutNTSConfiguration(Request) / PostNTSSync(Request) / PostNTSTest(Request)
 
         /// <summary>
         /// GET /api/v1/configuration/nts: where this meter reads the time.
@@ -586,6 +587,43 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                        Request,
                        HTTPStatusCode.OK,
                        await meter.SyncTimeAsync(Request.CancellationToken)
+                   );
+
+        }
+
+        /// <summary>
+        /// POST /api/v1/configuration/nts/test with an optional {"host"}: ask
+        /// one time server everything there is to ask, and say where it got
+        /// to.
+        /// </summary>
+        /// <remarks>
+        /// The host names the server to ask; left out, it is the single
+        /// client's. The page sends the host of the row whose Test was pressed,
+        /// as it is read, and the command line what was typed after syncNTS -
+        /// so that the line this writes into the log is the same line from
+        /// both, apart from who asked.
+        ///
+        /// A POST and at the diagnostics permission, for the same reasons as
+        /// the sync beside it. Like the sync, it does not step the clock.
+        /// </remarks>
+        private async Task<HTTPResponse> PostNTSTest(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, MeterPermissions.RunDiagnostics, true, out var user, out var refused))
+                return refused;
+
+            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
+                return errorResponse;
+
+            var host = json.Value<String>("host")?.Trim();
+
+            meter.Log.Notice($"'{user.Id}' asked this meter to test {(host is null ? "its time server" : $"the time server '{host}'")}.",
+                             "nts", "test", "web");
+
+            return JSONResponse(
+                       Request,
+                       HTTPStatusCode.OK,
+                       await meter.TestTimeServerAsync(host, Request.CancellationToken)
                    );
 
         }

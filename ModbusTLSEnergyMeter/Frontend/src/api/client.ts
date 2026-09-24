@@ -340,6 +340,8 @@ export interface NTSServerEntry {
 export interface NTSUpdate {
     enabled?:                    boolean;
     servers?:                    NTSServerEntry[];
+    /** What a server's Test allows each of its two steps. */
+    timeoutSeconds?:             number;
     minServers?:                 number;
     maxDeviationSeconds?:        number;
     checkEverySeconds?:          number;
@@ -347,6 +349,21 @@ export interface NTSUpdate {
     legalTimeAuthority?:         string | null;
     legalTimeToleranceSeconds?:  number;
     legalTimeMaxAgeSeconds?:     number;
+}
+
+/** One line of what happened while a time server was being asked. */
+export interface TimeServerTestStep {
+    at_ms:  number;
+    level:  'info' | 'notice' | 'warning' | 'error';
+    text:   string;
+}
+
+/** What came of asking one time server everything. */
+export interface TimeServerTest {
+    host:        string;
+    ok:          boolean;
+    runtime_ms:  number;
+    steps:       TimeServerTestStep[];
 }
 
 /** How one synchronisation went. */
@@ -757,7 +774,16 @@ export const api = {
         get:   ()                   => meterAPI<NTSConfiguration>('GET',  '/configuration/nts'),
         save:  (update: NTSUpdate)  => meterAPI<NTSConfiguration>('PUT',  '/configuration/nts', update),
         /** Every server switched on, asked the way the clock check asks them, with every step in the log. */
-        sync:  ()                   => meterAPI<NTSSyncResult>   ('POST', '/configuration/nts/sync', {})
+        sync:  ()                   => meterAPI<NTSSyncResult>   ('POST', '/configuration/nts/sync', {}),
+        /**
+         * Ask one time server everything: the name, the key exchange with its
+         * certificate, the authenticated NTP request, each one written down as
+         * it happens.
+         *
+         * @param host  which server, asked on the ports it is configured with -
+         *              or undefined for the single client's.
+         */
+        test:  (host?: string)      => meterAPI<TimeServerTest>  ('POST', '/configuration/nts/test', { host })
     },
 
     clock:         () => meterAPI<Clock>       ('GET', '/configuration/time'),
