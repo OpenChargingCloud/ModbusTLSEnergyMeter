@@ -1053,6 +1053,12 @@ input, textarea, select {
         font-size:    0.9rem;
     }
 
+    // A line a filter does not want: made once, and only not shown - see
+    // applyFilters on the page.
+    .line.filtered-out {
+        display: none;
+    }
+
 }
 
 .line {

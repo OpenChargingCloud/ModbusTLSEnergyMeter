@@ -1,5 +1,6 @@
 import { logLevels, type LogEntry, type LogLevel } from '../api/client';
 import { escapeHTML, html, must, render } from '../html';
+import { drawOrder, entryAt } from '../logs/order';
 import { logs } from '../logs/store';
 import type { Page } from '../router';
 import { shell } from '../shell';
@@ -18,6 +19,13 @@ import { formatTime, formatTimestamp, isAtLeast } from '../ui';
  * This is the page to watch while something is going wrong. Its twin under
  * /metrological-log reads the same entries as a record rather than as news,
  * and can say whether the copy on disk is still intact.
+ *
+ * A line is made once, when its entry arrives, and a filter then only tells
+ * it whether it is wanted. The store keeps its entries oldest first and is
+ * left alone: that order is what its own de-duplication and its bounded trim
+ * are written against. Only what is drawn is reversed, by drawOrder and
+ * entryAt in logs/order.ts, which every place that maps a line to an entry
+ * goes through.
  */
 export const logsPage: Page = {
 
@@ -69,7 +77,13 @@ export const logsPage: Page = {
                     Jump to the newest
                 </button>
 
-                <div id="log" class="log" role="log" aria-live="polite" tabindex="0"></div>
+                <div id="log" class="log" role="log" aria-live="polite" tabindex="0">
+                    <div id="log-error" class="line error" hidden></div>
+                    <div id="log-lines"></div>
+                    <div id="log-empty" class="log-empty" hidden>
+                        Nothing to show. The meter has been quiet, or the filters are too narrow.
+                    </div>
+                </div>
 
             </div>
 
@@ -80,6 +94,9 @@ export const logsPage: Page = {
         `);
 
         const list        = must<HTMLElement>       (content, '#log');
+        const lineBox     = must<HTMLElement>       (content, '#log-lines');
+        const emptyNote   = must<HTMLElement>       (content, '#log-empty');
+        const errorNote   = must<HTMLElement>       (content, '#log-error');
         const tagBox      = must<HTMLElement>       (content, '#tags');
         const counts      = must<HTMLElement>       (content, '#counts');
         const toTop       = must<HTMLButtonElement> (content, '#to-top');
@@ -93,6 +110,9 @@ export const logsPage: Page = {
         const chosenTags = new Set<string>();
 
         let renderedTags = '';
+
+        /** How many lines the filters are letting through, for the count below. */
+        let shown = 0;
 
         /**
          * What the last correction still owes the view.
@@ -144,8 +164,9 @@ export const logsPage: Page = {
         }
 
 
-        function lineHTML(entry: LogEntry): string {
-            return `<div class="line ${entry.level}" data-id="${entry.id}">` +
+        /** One line, made once; a filter only ever toggles its last class. */
+        function lineHTML(entry: LogEntry, filteredOut = false): string {
+            return `<div class="line ${entry.level}${filteredOut ? ' filtered-out' : ''}" data-id="${entry.id}">` +
                        `<time datetime="${escapeHTML(entry.timestamp)}" title="${escapeHTML(formatTimestamp(entry.timestamp))}">${escapeHTML(formatTime(entry.timestamp))}</time>` +
                        `<span class="chip level ${entry.level}">${escapeHTML(entry.level)}</span>` +
                        entry.tags.map(tag => `<span class="chip tag">${escapeHTML(tag)}</span>`).join('') +
@@ -165,7 +186,13 @@ export const logsPage: Page = {
             toTop.hidden   = true;
         }
 
-        /** Everything again: after a reload, or when a filter changed. */
+        /**
+         * Everything from the store, drawn once.
+         *
+         * Only for the two moments when what is held has actually changed
+         * underneath: a snapshot loaded from the meter, and "Clear view".
+         * Changing a filter is not one of them - see applyFilters below.
+         */
         function redraw(): void {
 
             // Everything is drawn again, so nothing is owed from before.
@@ -173,63 +200,132 @@ export const logsPage: Page = {
 
             // The store keeps its entries oldest first, because that is the
             // order their ids come in and the order the next batch continues;
-            // only what is shown is turned around. Reversing the copy that
-            // filter() just made, never the store itself.
-            list.innerHTML = logs.entries.filter(matches).reverse().map(lineHTML).join('') ||
-                             '<div class="log-empty">Nothing to show. The meter has been quiet, or the filters are too narrow.</div>';
+            // only what is drawn is turned around, by drawOrder, which makes a
+            // copy and leaves the store alone.
+            lineBox.innerHTML = drawOrder(logs.entries).map(entry => lineHTML(entry)).join('');
+
+            applyFilters();
 
             if (follow.checked)
                 scrollToTop();
 
-            updateCounts();
             drawTags();
+
+        }
+
+        /**
+         * Which of the lines already drawn are wanted.
+         *
+         * A filter used to rebuild the whole list, the lines it did not want
+         * left out: one keystroke in the search box took 217 to 586 ms at 2014
+         * entries, the layout that follows included, and it grows with the
+         * log - which, on a meter that writes down every Modbus request, grows
+         * fast. Most of that was work already done: the same lines built again
+         * from the same entries.
+         *
+         * A line is now made once and then only told whether it is wanted, as
+         * the charging station's page has done since its 0ace6fb: one
+         * keystroke then took 22 to 135 ms at 2020 entries, the layout
+         * included as before.
+         */
+        function applyFilters(): void {
+
+            const lines = lineBox.children;
+            const many  = Math.min(lines.length, logs.entries.length);
+
+            shown = 0;
+
+            for (let index = 0; index < many; index++) {
+
+                // Line 0 is the newest entry, which is the last one the store
+                // holds. Lines and entries are kept the same length, so this
+                // pairing stays exact - and it is the same function the drawing
+                // above goes by, which is the point of it being one.
+                const wanted = matches(entryAt(logs.entries, index)!);
+
+                lines[index]!.classList.toggle('filtered-out', !wanted);
+
+                if (wanted)
+                    shown++;
+
+            }
+
+            emptyNote.hidden = shown > 0;
+
+            updateCounts();
 
         }
 
         /** Only what is new: the usual case, and the cheap one. */
         function prepend(added: LogEntry[]): void {
 
-            const wanted = added.filter(matches);
-
-            if (wanted.length > 0) {
+            if (added.length > 0) {
 
                 const stick = follow.checked && atTop();
 
-                list.querySelector('.log-empty')?.remove();
-
-                // Whatever goes in above the line that is first right now
-                // pushes that line down by its own height, so asking the line
-                // how far it moved is asking how much was added - and asking
-                // it this way answers in fractions of a pixel.
+                // Whatever goes in above the line that is first on the screen
+                // right now pushes that line down by exactly what was added,
+                // so asking the line how far it moved is asking how much was
+                // added - and asking it this way answers in fractions of a
+                // pixel. The obvious way is the difference of two
+                // scrollHeights, and that one is rounded to whole pixels: half
+                // a pixel lost per batch is invisible in any one of them and is
+                // still there after the next thousand, which on a busy log is
+                // an hour.
                 //
-                // The obvious way is the difference of two scrollHeights, and
-                // that one is rounded to whole pixels. Half a pixel lost per
-                // batch is invisible in any one of them and is still there
-                // after the next thousand, which on a busy log is an hour.
-                const anchor    = list.firstElementChild;
+                // The first line that is shown, and not merely the first line.
+                // One a filter hides has no place on the screen, before or
+                // after, and taking it as the anchor would leave the view
+                // uncorrected while the lines going in above the reader push
+                // theirs away.
+                const anchor    = lineBox.querySelector<HTMLElement>(':scope > .line:not(.filtered-out)');
                 const anchorTop = anchor?.getBoundingClientRect().top ?? 0;
 
-                // Turned around inside the batch as well: a burst that arrives
-                // in one event would otherwise sit at the top back to front.
-                list.insertAdjacentHTML('afterbegin', wanted.reverse().map(lineHTML).join(''));
+                // Newest first inside the batch as well, so that a burst of
+                // entries reads top-down the way a single one does - by the
+                // same drawOrder as the rest of the list, so that the two
+                // cannot come to disagree. Every entry gets its line, wanted or
+                // not, and only the new ones are asked about: asking the whole
+                // list again would put the cost of a filter change on every
+                // single line the meter writes.
+                const batch   = drawOrder(added);
+                const wanted  = batch.map(matches);
+
+                lineBox.insertAdjacentHTML('afterbegin', batch.map((entry, index) => lineHTML(entry, !wanted[index])).join(''));
+
+                const any = wanted.some(yes => yes);
+
+                shown += wanted.filter(yes => yes).length;
 
                 // Read before the trimming below, which takes its lines off
                 // the bottom - that moves nothing above it, but it can take
                 // the anchor itself when the store has just wrapped.
-                const grew = anchor
+                const grew = anchor?.isConnected
                                  ? anchor.getBoundingClientRect().top - anchorTop
                                  : 0;
 
                 // The meter keeps a bounded log and so does this page; what
-                // fell out of the store has to leave the list as well - and that is
-                // the oldest, which is now the last line rather than the first.
-                while (list.childElementCount > logs.entries.length)
-                    list.lastElementChild?.remove();
+                // fell out of the store has to leave the list as well - and
+                // that is the oldest, which is now the last line rather than
+                // the first. The lines and the entries stay the same length,
+                // which is what lets a filter be applied by position above.
+                while (lineBox.childElementCount > logs.entries.length) {
 
-                if (stick)
+                    if (lineBox.lastElementChild?.classList.contains('filtered-out') === false)
+                        shown--;
+
+                    lineBox.lastElementChild?.remove();
+
+                }
+
+                emptyNote.hidden = shown > 0;
+
+                // Where the filters want none of it, nothing new is shown and
+                // nothing on the screen moved.
+                if (any && stick)
                     scrollToTop();
 
-                else {
+                else if (any) {
                     // Lines going in above the viewport push everything below
                     // them down, so the older line somebody stopped to read
                     // would walk off the screen at the speed the log fills.
@@ -259,8 +355,6 @@ export const logsPage: Page = {
         }
 
         function updateCounts(): void {
-
-            const shown = list.querySelectorAll('.line').length;
 
             counts.textContent = `${shown} of ${logs.entries.length} entries` +
                                  (logs.capacity > 0 ? ` (the meter keeps the last ${logs.capacity} in memory)` : '');
@@ -319,12 +413,13 @@ export const logsPage: Page = {
                 chosenTags.add(tag);
 
             renderedTags = '';
-            redraw();
+            applyFilters();
+            drawTags();
 
         });
 
-        search  .addEventListener('input',  () => redraw());
-        level   .addEventListener('change', () => redraw());
+        search  .addEventListener('input',  () => applyFilters());
+        level   .addEventListener('change', () => applyFilters());
         follow  .addEventListener('change', () => { if (follow.checked) scrollToTop(); });
         toTop   .addEventListener('click',  () => scrollToTop());
         clear   .addEventListener('click',  () => logs.clear());
@@ -343,6 +438,7 @@ export const logsPage: Page = {
                     break;
 
                 case 'reloaded':
+                    errorNote.hidden = true;
                     redraw();
                     break;
 
@@ -351,7 +447,8 @@ export const logsPage: Page = {
                     break;
 
                 case 'error':
-                    list.insertAdjacentHTML('afterbegin', `<div class="line error"><span class="message">${escapeHTML(event.text)}</span></div>`);
+                    errorNote.innerHTML = `<span class="message">${escapeHTML(event.text)}</span>`;
+                    errorNote.hidden    = false;
                     break;
 
             }

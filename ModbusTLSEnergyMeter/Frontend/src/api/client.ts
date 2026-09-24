@@ -652,13 +652,29 @@ export interface LogVerification {
 }
 
 
+/**
+ * The meter answering, and saying no.
+ *
+ * The fields are written out rather than declared in the constructor's
+ * parameters: the tests run the client in Node, which strips the types and
+ * nothing more, and a parameter property is code that has to be generated
+ * rather than a type that can be taken away.
+ */
 export class ApiError extends Error {
 
-    constructor(public readonly status:  number,
-                message:                 string,
-                public readonly body?:   unknown) {
+    readonly status:  number;
+    readonly body?:   unknown;
+
+    constructor(status:   number,
+                message:  string,
+                body?:    unknown) {
+
         super(message);
-        this.name = 'ApiError';
+
+        this.name    = 'ApiError';
+        this.status  = status;
+        this.body    = body;
+
     }
 
     get isUnauthorized(): boolean {

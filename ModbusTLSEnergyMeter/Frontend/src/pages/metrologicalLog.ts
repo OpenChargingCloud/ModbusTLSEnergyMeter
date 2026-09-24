@@ -1,5 +1,6 @@
 import { api, logLevels, type LogEntry, type LogLevel } from '../api/client';
 import { html, must, render, type HTMLFragment } from '../html';
+import { drawOrder } from '../logs/order';
 import { logs } from '../logs/store';
 import type { Page } from '../router';
 import { shell } from '../shell';
@@ -104,7 +105,7 @@ export const metrologicalLogPage: Page = {
         /** Newest first: what just happened is what somebody came here for. */
         function drawList(): void {
 
-            const shown = logs.entries.filter(matches).reverse();
+            const shown = drawOrder(logs.entries.filter(matches));
 
             render(list, html`${shown.map(line)}`);
 
