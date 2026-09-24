@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Globalization;
 using System.Text;
 
 using Newtonsoft.Json;
@@ -48,6 +49,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Logging
     /// own, so that a line cannot be changed, removed or moved without every
     /// line after it saying so. What that is worth, and what it is not worth,
     /// is written down on <see cref="LogSigner"/>.
+    ///
+    /// A file that cannot be written does not take the meter down, and does not
+    /// bury the console under one complaint per entry either. It is said once
+    /// on stderr, every following entry is tried again, and the first one that
+    /// makes it is preceded by a line saying how many are missing, since when
+    /// and which numbers they had - a line of the chain like any other, signed
+    /// and pointing back at the last one written before the failure. Without it
+    /// the chain simply went on from there, and a log with a hole in it was
+    /// called intact.
     /// </remarks>
     public sealed class LogStore : IDisposable
     {
@@ -85,9 +95,18 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Logging
 
         private readonly Lock     padlock  = new();
 
-        private StreamWriter?     writer;
-        private DateOnly          writerDay;
+        private FileStream?       file;
+        private DateOnly          fileDay;
         private Boolean           disposed;
+
+        /// <summary>
+        /// Since when entries have not made it into a file, how many, and the
+        /// number of the first of them, while writing fails; null and zero
+        /// while it works.
+        /// </summary>
+        private DateTimeOffset?   failingSince;
+        private UInt64            missed;
+        private UInt64            firstMissed;
 
         #endregion
 
@@ -125,8 +144,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Logging
         /// </summary>
         /// <remarks>
         /// Kept rather than thrown: a meter whose disk is full must go on
-        /// measuring and go on answering Modbus. It says so once, here and in
-        /// the log it can still hold in memory, and does not die of it.
+        /// measuring and go on answering Modbus. It says so once, here and on
+        /// stderr, and does not die of it; the log itself says what it missed
+        /// once it can be written again.
         /// </remarks>
         public String?    LastError  { get; private set; }
 
@@ -264,69 +284,184 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Logging
 
                     var day = DateOnly.FromDateTime(Entry.Timestamp.UtcDateTime);
 
-                    if (writer is null || day != writerDay)
+                    if (file is null || day != fileDay)
                     {
 
-                        writer?.Dispose();
+                        Close();
 
-                        writer = new StreamWriter(
-                                     new FileStream(
-                                         System.IO.Path.Combine(this.Path, FileNameOf(day)),
-                                         FileMode.Append,
-                                         FileAccess.Write,
-                                         FileShare.Read
-                                     ),
-                                     new UTF8Encoding(false)
-                                 ) {
-                                     // Every line on the disk before the next
-                                     // one is written: the entries worth having
-                                     // afterwards are the ones written just
-                                     // before whatever went wrong.
-                                     AutoFlush = true
-                                 };
+                        // Unbuffered, so that a line is on its way to the disk
+                        // the moment it is written - the entries worth having
+                        // afterwards are the ones written just before whatever
+                        // went wrong - and so that nothing is left in a buffer
+                        // to be written later, behind the chain's back, by the
+                        // Dispose of a file that failed.
+                        file    = new FileStream(
+                                      System.IO.Path.Combine(this.Path, FileNameOf(day)),
+                                      FileMode.Append,
+                                      FileAccess.Write,
+                                      FileShare.Read,
+                                      bufferSize: 0
+                                  );
 
-                        writerDay = day;
+                        fileDay = day;
 
                         Prune();
 
                     }
 
-                    var json = Entry.ToJSON();
+                    // The gap first, where it happened: a line of the chain like
+                    // any other, signed and pointing back at the last line that
+                    // made it, and numbered as the last of the entries it stands
+                    // for - so that the numbers still only go up, somebody
+                    // reading from the top meets it exactly where the entries
+                    // stop making sense, and --verify-log walks through it.
+                    if (failingSince is DateTimeOffset since)
+                    {
 
-                    json.Add(PrevProperty, Head);
-                    json.Add(KeyProperty,  Signer.KeyId);
+                        var last = Entry.Id > 0 ? Entry.Id - 1 : 0;
 
-                    // The bytes that are hashed and signed are the bytes that
-                    // are written, less the two fields carrying the hash and the
-                    // signature themselves - spliced in as text rather than
-                    // added to the object, so that checking a line never depends
-                    // on a JSON library serialising it the same way twice.
-                    var payload    = json.ToString(Formatting.None);
-                    var payloadUTF = Encoding.UTF8.GetBytes(payload);
+                        WriteLine(new LogEntry(
+                                      last,
+                                      Entry.Timestamp,
+                                      LogLevel.Warning,
+                                      [ "meter", "log" ],
+                                      $"{missed} entr{(missed == 1 ? "y" : "ies")} since {Stamp(since)} could not be written here " +
+                                      (missed == 1 ? $"(number {firstMissed})." : $"(numbers {firstMissed} to {last}).")
+                                  ));
 
-                    var hash       = LogSigner.HashOf(payloadUTF);
-                    var signature  = Signer.Sign(payloadUTF);
+                        Console.Error.WriteLine($"The log in '{this.Path}' is being written again; " +
+                                                $"{missed} entr{(missed == 1 ? "y is" : "ies are")} missing from it, and it says so.");
 
-                    writer.WriteLine(
-                        $"{payload[..^1]},\"{HashProperty}\":\"{hash}\",\"{SignatureProperty}\":\"{signature}\"}}"
-                    );
+                        failingSince  = null;
+                        missed        = 0;
+                        LastError     = null;
 
-                    Head       = hash;
-                    LastError  = null;
+                    }
+
+                    WriteLine(Entry);
 
                 }
                 catch (Exception e)
                 {
-                    // Said once, and never again for the same reason: a disk
-                    // that is full would otherwise fill the log with the news
-                    // that the log cannot be written.
-                    LastError = $"The log could not be written to '{this.Path}': {e.Message}";
-                    writer    = null;
+
+                    // Once, and on stderr rather than through the log - going
+                    // through the log would come back here and fail again. A
+                    // disk that is full would otherwise fill the console with
+                    // the news that the log cannot be written.
+                    if (failingSince is null)
+                    {
+
+                        LastError     = $"The log could not be written to '{this.Path}': {e.Message}";
+                        failingSince  = Entry.Timestamp;
+                        firstMissed   = Entry.Id;
+
+                        Console.Error.WriteLine($"{LastError} Every following entry is tried again, and the log will say what it missed.");
+
+                    }
+
+                    missed++;
+
+                    Close();
+
                 }
 
             }
 
         }
+
+        #endregion
+
+        #region (private) WriteLine(Entry)
+
+        /// <summary>
+        /// One entry as one line of the chain: pointing back at the line before
+        /// it, hashed, signed, and on its way to the disk - or not written at
+        /// all.
+        /// </summary>
+        private void WriteLine(LogEntry Entry)
+        {
+
+            var json = Entry.ToJSON();
+
+            json.Add(PrevProperty, Head);
+            json.Add(KeyProperty,  Signer.KeyId);
+
+            // The bytes that are hashed and signed are the bytes that are
+            // written, less the two fields carrying the hash and the signature
+            // themselves - spliced in as text rather than added to the object,
+            // so that checking a line never depends on a JSON library
+            // serialising it the same way twice.
+            var payload     = json.ToString(Formatting.None);
+            var payloadUTF  = Encoding.UTF8.GetBytes(payload);
+
+            var hash        = LogSigner.HashOf(payloadUTF);
+            var signature   = Signer.Sign(payloadUTF);
+
+            var line        = Encoding.UTF8.GetBytes(
+                                  $"{payload[..^1]},\"{HashProperty}\":\"{hash}\",\"{SignatureProperty}\":\"{signature}\"}}" +
+                                  Environment.NewLine
+                              );
+
+            var before      = file!.Length;
+
+            try
+            {
+                file.Write(line);
+            }
+            catch
+            {
+
+                // And not half of it. A disk that fills up in the middle of a
+                // line leaves part of it behind, and half a line is one the
+                // chain cannot walk through: the log would be broken at the
+                // very moment it was most worth having, and stay broken after
+                // the gap was written down. Taken back while the handle still
+                // allows it; what cannot be taken back is what a power cut
+                // leaves as well.
+                try   { file.SetLength(before); }
+                catch { }
+
+                throw;
+
+            }
+
+            Head = hash;
+
+        }
+
+        #endregion
+
+        #region (private) Close()
+
+        /// <summary>
+        /// Let go of the open file, whatever state it is in.
+        /// </summary>
+        /// <remarks>
+        /// A handle that failed may throw again on its way out; what it would
+        /// have written is lost already, and a second error about it is not
+        /// worth an exception in the middle of a meter's logging.
+        /// </remarks>
+        private void Close()
+        {
+
+            try   { file?.Dispose(); }
+            catch { }
+
+            file = null;
+
+        }
+
+        #endregion
+
+        #region (private static) Stamp(Timestamp)
+
+        /// <summary>
+        /// A moment as a gap line names it: in full, in UTC, and in the same
+        /// punctuation on every machine.
+        /// </summary>
+        private static String Stamp(DateTimeOffset Timestamp)
+
+            => Timestamp.UtcDateTime.ToString("yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fff'Z'", CultureInfo.InvariantCulture);
 
         #endregion
 
@@ -466,10 +601,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Logging
 
                 disposed = true;
 
-                try   { writer?.Dispose(); }
-                catch { }
-
-                writer = null;
+                Close();
 
                 Signer.Dispose();
 
