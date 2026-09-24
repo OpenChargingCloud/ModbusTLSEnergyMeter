@@ -322,45 +322,130 @@ export interface DNSConfiguration {
 export type DNSUpdate = Partial<Omit<DNSConfiguration, 'file'>>;
 
 /**
- * Where this meter reads the time.
- *
- * Everything is optional: this is the section as it stands in the
- * configuration file, and what the meter was never told is not written.
+ * One time server as the configuration names it. Whatever is left out is the
+ * usual: priority 0, the usual ports, switched on.
  */
-export interface NTSConfiguration {
+export interface NTSServerEntry {
+    hostname:    string;
+    priority?:   number;
+    ntsKEPort?:  number;
+    ntpPort?:    number;
+    enabled?:    boolean;
+}
+
+/**
+ * What a save sends. Only what is given is changed; the rest of the section
+ * stays as it is. The list of servers is sent whole.
+ */
+export interface NTSUpdate {
     enabled?:                    boolean;
-    hostname?:                   string;
-    ntsKEPort?:                  number;
-    ntpPort?:                    number;
-    timeoutSeconds?:             number;
+    servers?:                    NTSServerEntry[];
+    minServers?:                 number;
+    maxDeviationSeconds?:        number;
     checkEverySeconds?:          number;
-    legalTimeAuthority?:         string;
+    /** Null takes the authority away. */
+    legalTimeAuthority?:         string | null;
     legalTimeToleranceSeconds?:  number;
     legalTimeMaxAgeSeconds?:     number;
 }
 
-export interface NTSUpdate {
-    enabled?:                    boolean;
-    hostname?:                   string;
-    ntsKEPort?:                  number;
-    ntpPort?:                    number;
-    timeoutSeconds?:             number;
-    checkEverySeconds?:          number;
-    legalTimeAuthority?:         string | null;
-    legalTimeToleranceSeconds?:  number;
-    legalTimeMaxAgeSeconds?:     number;
+/** How one synchronisation went. */
+export interface NTSSyncResult {
+    ok:           boolean;
+    at:           string;
+    error?:       string;
+    server?:      string;
+    runtime_ms?:  number;
+    offset_ms?:   number | null;
+
+    /** What the group concluded: the median, how many answered, how far apart. */
+    group?:       {
+        name:               string;
+        answered:           number;
+        required:           number;
+        offset_ms:          number | null;
+        spread_ms:          number | null;
+        deviationExceeded:  boolean;
+    };
+
+    /** One entry per server asked, answered or not. */
+    servers?:     NTSServerResult[];
+}
+
+/** What one time server of the group said. */
+export interface NTSServerResult {
+    hostname:       string;
+    ok:             boolean;
+    offset_ms?:     number | null;
+    roundTrip_ms?:  number | null;
+    authenticated?: boolean | null;
+    keyExchange?:   string;
+    error?:         string | null;
+}
+
+/** One server of this meter's group, and what its key exchange is doing. */
+export interface NTSTimeSource {
+    hostname:       string;
+    priority:       number;
+    ntsKEPort:      number;
+    ntpPort:        number;
+    enabled:        boolean;
+    cookies?:       number | null;
+    lastExchange?:  string | null;
+}
+
+/**
+ * Where this meter reads the time: its group of time servers, the rules for
+ * believing them, and what legal time rests on.
+ */
+export interface NTSConfiguration {
+    enabled:      boolean;
+
+    /**
+     * What may be changed, as it is in effect. The quorum is the one wanted;
+     * the group's own can be lower while it has fewer servers switched on.
+     */
+    settings:     {
+        timeoutSeconds:             number | null;
+        checkEverySeconds:          number;
+        minServers:                 number;
+        maxDeviationSeconds:        number;
+        legalTimeAuthority:         string | null;
+        legalTimeToleranceSeconds:  number;
+        legalTimeMaxAgeSeconds:     number;
+    };
+
+    /** Every server this meter has, switched on or not, in the order configured. */
+    timeSources:  NTSTimeSource[];
+    group:        { name: string; minServers: number; maxDeviationSeconds: number };
+    lastSync:     NTSSyncResult | null;
+    limits:       {
+        maxTimeout:          number;
+        minCheckEvery:       number;
+        maxCheckEvery:       number;
+        minDeviation:        number;
+        maxDeviation:        number;
+        minTolerance:        number;
+        maxTolerance:        number;
+        minMaxAge:           number;
+        maxMaxAge:           number;
+        maxAuthorityLength:  number;
+        defaultNTSKEPort:    number;
+        defaultNTPPort:      number;
+    };
+    file:         string;
 }
 
 /** What this meter's clock is, and whether anybody may call it legal time. */
 export interface Clock {
     now:                  string;
     ntsEnabled:           boolean;
-    /** The one server, where naming one is the truth - null for a group. */
-    server:               string | null;
-    /** Every server of the group, in the order they are asked. */
-    servers:              string[];
-    /** How many of them have to answer. */
-    minServers:           number;
+    /** The group the clock is checked against - null while NTS is switched off. */
+    group:                string | null;
+    /** Its servers switched on, in the order they are asked - null while switched off. */
+    servers:              string[] | null;
+    /** How many of them have to answer - null while switched off. */
+    minServers:           number | null;
     checkEvery_s:         number;
     lastCheck:            string | null;
     lastCheckServer:      string | null;
@@ -368,6 +453,9 @@ export interface Clock {
     lastCheckAnswered:    number | null;
     lastCheckAge_s:       number | null;
     lastCheckOffset_ms:   number | null;
+    /** The last synchronisation, whichever way it went - lastCheck is the last that found a time. */
+    lastSync:             string | null;
+    lastSyncResult:       string | null;
     legalAuthority:       string | null;
     legalTolerance_ms:    number;
     legalMaxAge_s:        number;
@@ -668,8 +756,8 @@ export const api = {
     nts: {
         get:   ()                   => meterAPI<NTSConfiguration>('GET',  '/configuration/nts'),
         save:  (update: NTSUpdate)  => meterAPI<NTSConfiguration>('PUT',  '/configuration/nts', update),
-        /** One key exchange and one authenticated NTP request, with every step in the log. */
-        sync:  ()                   => meterAPI<unknown>         ('POST', '/configuration/nts/sync', {})
+        /** Every server switched on, asked the way the clock check asks them, with every step in the log. */
+        sync:  ()                   => meterAPI<NTSSyncResult>   ('POST', '/configuration/nts/sync', {})
     },
 
     clock:         () => meterAPI<Clock>       ('GET', '/configuration/time'),

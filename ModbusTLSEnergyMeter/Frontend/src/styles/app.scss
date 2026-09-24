@@ -515,6 +515,21 @@ input, textarea, select {
     grid-column: 1 / -1;
 }
 
+// One card under the other, each as wide as the page: for a page that is read
+// from the top down rather than taken in at a glance. What is inside keeps to
+// a width that can be read - a form, or names beside their values, stretched
+// across a wide screen puts a label a screen away from what it labels.
+.cards.stacked {
+
+    grid-template-columns: minmax(0, 1fr);
+
+    .form-stack,
+    .kv-list {
+        max-width: 36rem;
+    }
+
+}
+
 .kv-list {
     display:         flex;
     flex-direction:  column;
@@ -632,6 +647,142 @@ input, textarea, select {
 
     input.port {
         width: 5.5rem;
+    }
+
+}
+
+// A path in a sentence, which has no spaces for a line to break at and would
+// otherwise run out of its card.
+.path {
+    overflow-wrap:  anywhere;
+}
+
+// The time servers of the NTS page.
+//
+// One row per server, with what it said the last time it was asked and what
+// can be done with it on the right; and at the end of the page, big, the
+// button that asks all of them.
+.btn.large {
+    padding:    0.65rem 1.3rem;
+    font-size:  1.05rem;
+}
+
+.sync-bar {
+
+    display:      flex;
+    align-items:  center;
+    gap:          1rem;
+    flex-wrap:    wrap;
+
+    .hint {
+        flex:  1 1 18rem;
+    }
+
+}
+
+// What came of asking: the group's verdict, under the button that asked.
+.query-result {
+
+    @include panel;
+
+    margin-top:  1rem;
+    padding:     0.85rem 1rem;
+
+    &.ok   { border-left: 3px solid $color-ok;    }
+    &.bad  { border-left: 3px solid $color-error; }
+
+}
+
+.sync-verdict {
+    margin-top:  0.75rem;
+}
+
+// Measured by its own width rather than the window's, which is what the rows
+// below lay themselves out by: the same window leaves this list more room
+// with the menu along the top than beside it.
+.time-server-list {
+    display:         flex;
+    flex-direction:  column;
+    margin:          0 0 0.25rem;
+    container-type:  inline-size;
+}
+
+.time-server-row {
+
+    display:                grid;
+    grid-template-columns:  minmax(10rem, 1fr) minmax(12rem, 1.6fr) auto;
+    grid-template-areas:    "who said actions";
+    gap:                    0.4rem 1rem;
+    align-items:            center;
+    padding:                0.6rem 0.25rem;
+
+    + .time-server-row {
+        border-top: 1px solid $color-border;
+    }
+
+    .who, .said {
+        display:         flex;
+        flex-direction:  column;
+        gap:             0.1rem;
+        min-width:       0;
+    }
+
+    .who      { grid-area: who;     }
+    .said     { grid-area: said;    }
+    .actions  { grid-area: actions; }
+
+    .name {
+        font-weight:  600;
+        word-break:   break-all;
+    }
+
+    .answer.ok  { color: $color-ok;    }
+    .answer.bad { color: $color-error; }
+
+    .actions {
+        display:  flex;
+        gap:      0.4rem;
+    }
+
+    // Still in the list, and not asked: there, but quieter.
+    &.off .name {
+        color:            $color-muted;
+        text-decoration:  line-through;
+    }
+
+}
+
+// On a phone the row stacks: name, what it said, then the button.
+@container (max-width: 34rem) {
+    .time-server-row {
+        grid-template-columns:  1fr;
+        grid-template-areas:    "who" "said" "actions";
+    }
+}
+
+// The dialog a time server is added, changed or deleted in. A dialog rather
+// than fields in the row, and modal, because the meter is told the whole list
+// when it is saved and this is where exactly one server is being changed.
+.server-dialog {
+
+    width:            min(30rem, 92vw);
+    max-height:       82vh;
+    overflow-y:       auto;
+    border:           1px solid $color-border;
+    border-radius:    $radius;
+    padding:          1.1rem 1.25rem;
+    background:       $color-surface;
+    color:            $color-text;
+    box-shadow:       0 12px 40px rgba(0, 0, 0, 0.22);
+
+    &::backdrop {
+        background:   rgba(15, 23, 42, 0.45);
+    }
+
+    h2 {
+        margin:       0 0 0.75rem;
+        font-size:    1.05rem;
+        word-break:   break-all;
     }
 
 }

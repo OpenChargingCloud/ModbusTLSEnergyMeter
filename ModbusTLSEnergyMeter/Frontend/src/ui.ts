@@ -11,6 +11,60 @@ export function safeNext(value: string | null): string | null {
                : null;
 }
 
+/**
+ * Anything on a page that can be typed into or pressed.
+ *
+ * Kept as one type because the only thing wanted of them here is that they can
+ * all be switched off and on again.
+ */
+type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement;
+
+/** What a page says while it is telling the meter. */
+export const beingSaved = 'Saving ...';
+
+/**
+ * Hold part of a page still while the meter is being told, and say so.
+ *
+ * What cannot be typed while the answer is on its way cannot be thrown away by
+ * the answer when it redraws the page - the sibling projects measured exactly
+ * that on a slow link, with a server added while an earlier save was still
+ * being answered, and gone afterwards without a word. And a page that does not
+ * react is a page people press again.
+ *
+ * Controls that were already switched off stay off afterwards: a role that may
+ * look but not change must not be handed a live form by a save that failed.
+ */
+export async function whileSaving<T>(Page:    HTMLElement,
+                                     Saying:  HTMLElement | null,
+                                     Doing:   () => Promise<T>): Promise<T> {
+
+    const controls    = [...Page.querySelectorAll<Control>('input, select, textarea, button')];
+    const alreadyOff  = new Set(controls.filter(control => control.disabled));
+
+    for (const control of controls)
+        control.disabled = true;
+
+    if (Saying !== null)
+        Saying.textContent = beingSaved;
+
+    try
+    {
+        return await Doing();
+    }
+    finally
+    {
+        for (const control of controls)
+            if (!alreadyOff.has(control))
+                control.disabled = false;
+
+        // Whatever happened, it is no longer happening. What it turned into -
+        // "Saved", or a sentence about why not - is the page's to say.
+        if (Saying !== null)
+            Saying.textContent = '';
+    }
+
+}
+
 /** Read a form field as a trimmed string. */
 export function field(form: HTMLFormElement, name: string, trim = true): string {
     const value = String(new FormData(form).get(name) ?? '');
