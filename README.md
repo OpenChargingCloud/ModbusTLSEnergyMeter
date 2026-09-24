@@ -325,10 +325,13 @@ and `-p:SkipFrontendBuild=true` leaves it alone.
 Pages: the meter and what it is measuring, the DNS client, the NTS client with
 the state of the clock, a page each for the two certificate stores and one for
 the accepted client CAs, the signing keys, the charging sessions, the accounts,
-and the log. The DNS and NTS pages are
-forms - name servers can be added and removed, timeouts and ports changed, and
-the time authority named - and each save writes the configuration file before
-the change takes effect. Accounts is the one page everybody signed in can reach,
+the log as it happens, and the metrological log. On the DNS page name servers
+can be added and removed and timeouts changed. The NTS page is the group of
+time servers: each one is added, changed, switched off or deleted on its own, in
+a dialog, and the rules the group is held to, who stands behind legal time and
+the clock as it stands have a card each; **Check the clock now** asks them all.
+Each save writes the configuration file before the change takes effect, and
+sends only what its form shows - the rest of the section stays as it was. Accounts is the one page everybody signed in can reach,
 because everybody has a password of their own to change; what an administrator
 additionally sees there is everybody else's account. What somebody may not do is not offered: the controls
 are absent rather than disabled-and-refused, though every request is checked
@@ -695,6 +698,14 @@ that is the format that survives being read by something other than this
 program: grep finds a line, jq takes it apart, and a file truncated by a power
 cut loses its last line and nothing else.
 
+The days are UTC days, as the timestamps in the files are. A file that cannot
+be written is said once on stderr rather than once per entry, every entry
+after that is tried again, and the first one that makes it is preceded by a
+line saying how many are missing, since when and which numbers they had -
+signed and chained like every other line, so that a check walks through it and
+a log with a hole in it no longer calls itself whole. A line the disk took only
+half of is taken back rather than left for the chain to trip over.
+
 ### And it is signed
 
 Every line carries the hash of the line before it and a signature of its own:
@@ -714,8 +725,8 @@ answer different questions, and a certificate that is reissued would leave the
 old log needing the old certificate for ever.
 
 Checking it is one question, asked deliberately: `GET /api/v1/logs/verify`, the
-**Check the log** button on the Logs page, or `--verify-log` on the command
-line. Three things are checked per line, and they catch different things - the
+**Check the log** button on the Metrological log page, or `--verify-log` on the
+command line. Three things are checked per line, and they catch different things - the
 hash catches a line that was edited, the chain catches a line that was removed,
 moved or inserted, and the signature catches a line written by something that
 did not have this meter's key.
@@ -797,13 +808,13 @@ Every key of the section, and what it is when absent:
 |---|---|---|
 | `enabled` | `true` | whether to ask at all |
 | `servers` | the four above | a list, see below |
-| `minServers` | `2` | how many must answer for the group to have a time |
+| `minServers` | `2`, or all of them when fewer | how many must answer for the group to have a time |
 | `maxDeviationSeconds` | `60` | how far apart they may be before it is written down |
 | `hostname` | - | one server instead of a list |
 | `ntsKEPort`, `ntpPort` | `4460`, `123` | for that one server |
-| `timeoutSeconds` | `10` | per request |
+| `timeoutSeconds` | `10` | the single client's; the group asks with timeouts of its own |
 | `checkEverySeconds` | `900` | how often the clock is checked |
-| `legalTimeAuthority` | - | who the operator says stands behind it |
+| `legalTimeAuthority` | - | who the operator says stands behind it; `null` takes it away |
 | `legalTimeToleranceSeconds` | `1` | how far off the clock may be |
 | `legalTimeMaxAgeSeconds` | `3600` | how old the last check may be |
 
@@ -820,11 +831,20 @@ not true.
 
 A section naming a single `hostname` and no list becomes a group of one, which
 is what every file written before there were groups says, and it keeps working.
+A group of one is held to a quorum of one, and a section asking two of it is
+refused. Saved over the API, such a section replaces the list - in the file as
+well, so that the next start does not bring the list back.
 
 A section that is absent is not a section set to nothing: it means the file has
 no opinion, and what the constructor was handed stands. The same holds key by
 key - a section mentioning nothing but `enabled` leaves the servers alone
-rather than quietly reducing four to one.
+rather than quietly reducing four to one, and one mentioning nothing but
+`minServers` or `maxDeviationSeconds` holds the servers the meter already has
+to it. A quorum those servers could never reach is refused: at the start,
+before anything is asked, and over the API, before anything is written into
+the file. A save over the API is laid over what is in effect - the page's
+forms send what they show and nothing else - and the section it leaves in the
+file is read the way the next start will read it before it is written.
 
 The whole group is asked on that interval - authenticated, and without stepping
 the meter's own clock - and what it reports is what the servers that answered
