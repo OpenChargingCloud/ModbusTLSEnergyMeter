@@ -111,11 +111,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // Named rather than counted, because this is written once at a
             // start and somebody reading it is checking that the file took
             // effect. "4 time servers" would not tell them which four.
-            // Trimmed, because this is a sentence somebody reads. The root
-            // dot belongs on a name going back into a file - see how the
-            // configuration is written - and not in the middle of a line of
-            // prose, where it reads as a typing mistake.
-            var asking = timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.Trimmed).ToArray();
+            var asking = CheckedAgainst();
 
             Log.Info(
                 $"The clock of this meter will be checked against {String.Join(", ", asking)} every {TimeCheckEvery.TotalMinutes:F0} minute(s)" +
@@ -188,6 +184,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             if (!NTSEnabled)
                 return Failed("NTS is switched off on this energy meter.");
 
+            // Remembered whichever way it goes, and before it is answered:
+            // what the page shows as the last synchronisation must be this one
+            // from the moment its answer exists.
+            JObject Remember(JObject Result)
+            {
+                lastTimeSync = Result;
+                return Result;
+            }
+
             var group      = timeSources;
             var asked      = group.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()).ToArray();
             var stopwatch  = Stopwatch.StartNew();
@@ -233,14 +238,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                     Log.Error($"NTS: group '{group.Name}' produced no time after {stopwatch.ElapsedMilliseconds} ms: {verdict}.", "nts", "clock");
 
-                    return Failed(
+                    return Remember(Failed(
                                verdict.Outcome == TimeSyncOutcome.NothingAnswered
                                    ? "No time server answered."
                                    : $"Only {verdict.Answered} of {verdict.Required} time server(s) answered.",
                                new JProperty("runtime_ms",  stopwatch.ElapsedMilliseconds),
                                new JProperty("group",       groupJSON),
                                new JProperty("servers",     servers)
-                           );
+                           ));
 
                 }
 
@@ -249,14 +254,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 // the same moment.
                 lastTimeCheck          = TimeProvider.GetUtcNow();
                 lastTimeCheckOffset    = verdict.Offset;
-                lastTimeCheckAsked     = asked.Length;
+                // The servers actually asked, which is fewer than those switched
+                // on when the first band was enough: "2 of 3 answered" read as a
+                // server that failed, where the third had not been asked at all.
+                lastTimeCheckAsked     = verdict.Results.Count;
                 lastTimeCheckAnswered  = verdict.Answered;
 
                 // A name only where naming one is the truth. Four servers
                 // answering is not "checked against ptbtime1", and picking one
                 // of them to print would be the nicer-looking lie.
-                lastTimeCheckServer    = asked.Length == 1
-                                             ? asked[0]
+                lastTimeCheckServer    = asking.Length == 1
+                                             ? asking[0]
                                              : null;
 
                 // Written down rather than acted on: the disagreement belongs
@@ -281,31 +289,22 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                     "nts", "clock"
                 );
 
-                return answer;
+                return Remember(answer);
 
             }
             catch (Exception e)
             {
                 stopwatch.Stop();
                 Log.Error($"NTS: asking group '{group.Name}' failed after {stopwatch.ElapsedMilliseconds} ms: {e.Message}", "nts", "clock");
-                return Failed(e.Message);
+                return Remember(Failed(e.Message));
             }
 
         }
 
         #endregion
 
-        #region ClockJSON()
+        #region ClockIsSynchronised
 
-        /// <summary>
-        /// What time it is here, and what that is worth.
-        /// </summary>
-        /// <remarks>
-        /// "Legal" is not a claim this meter can make on its own: it holds only
-        /// while a check against a time source the operator vouches for is both
-        /// recent enough and close enough. Either of those failing makes the
-        /// time ordinary again, and this says which.
-        /// </remarks>
         /// <summary>
         /// Whether this meter's clock has ever been set from a time server.
         /// </summary>
@@ -322,11 +321,42 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             => lastTimeCheck.HasValue;
 
-                public JObject ClockJSON()
+        #endregion
+
+        #region (private) CheckedAgainst()
+
+        /// <summary>
+        /// The time servers the clock check asks: those switched on, in the
+        /// order their bands are asked in.
+        /// </summary>
+        /// <remarks>
+        /// Trimmed, because both places this goes are read by somebody: a
+        /// sentence in the log, and the clock's JSON for the NTS page. The root
+        /// dot belongs on a name going back into a file - see how the
+        /// configuration is written - and not in the middle of prose, where it
+        /// reads as a typing mistake.
+        /// </remarks>
+        private String[] CheckedAgainst()
+
+            => [.. timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.Trimmed)];
+
+        #endregion
+
+        #region ClockJSON()
+
+        /// <summary>
+        /// What time it is here, and what that is worth.
+        /// </summary>
+        /// <remarks>
+        /// "Legal" is not a claim this meter can make on its own: it holds only
+        /// while a check against a time source the operator vouches for is both
+        /// recent enough and close enough. Either of those failing makes the
+        /// time ordinary again, and this says which.
+        /// </remarks>
+        public JObject ClockJSON()
         {
 
             var now       = TimeProvider.GetUtcNow();
-            var asking    = timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.ToString()).ToArray();
             var age       = lastTimeCheck.HasValue ? now - lastTimeCheck.Value : (TimeSpan?) null;
 
             var isRecent  = age.HasValue && age.Value <= LegalTimeMaxAge;
@@ -337,12 +367,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                        new JProperty("now",                 now.ToString("o")),
                        new JProperty("ntsEnabled",          NTSEnabled),
-                       // A name where naming one is the truth, and null where it
-                       // is not: four servers are not "the server". The list
-                       // beside it is what a page should draw.
-                       new JProperty("server",              asking.Length == 1 ? asking[0] : null),
-                       new JProperty("servers",             new JArray(asking)),
-                       new JProperty("minServers",          timeSources.MinServers),
+
+                       // Against whom: the group the check asks, as the line at
+                       // the start names it - and nobody while NTS is switched
+                       // off, rather than servers that are not asked. There
+                       // used to be a "server" beside it, naming one of them
+                       // where there was only one, which the list says as well.
+                       new JProperty("group",               NTSEnabled ? timeSources.Name : null),
+                       new JProperty("servers",             NTSEnabled ? new JArray(CheckedAgainst()) : null),
+                       new JProperty("minServers",          NTSEnabled ? timeSources.MinServers : null),
                        new JProperty("checkEvery_s",        TimeCheckEvery.TotalSeconds),
 
                        new JProperty("lastCheck",           lastTimeCheck?.ToString("o")),
@@ -351,6 +384,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                        new JProperty("lastCheckAnswered",   lastTimeCheckAnswered),
                        new JProperty("lastCheckAge_s",      age?.TotalSeconds),
                        new JProperty("lastCheckOffset_ms",  lastTimeCheckOffset?.TotalMilliseconds),
+
+                       // The last synchronisation, whichever way it went, beside
+                       // the last one that found a time: the moment alone reads
+                       // as a success, and one that found no server has a
+                       // moment just as much.
+                       new JProperty("lastSync",            lastTimeSync?.Value<String>("at")),
+                       new JProperty("lastSyncResult",      LastSyncSaid(lastTimeSync)),
 
                        new JProperty("legalAuthority",      LegalTimeAuthority),
                        new JProperty("legalTolerance_ms",   LegalTimeTolerance.TotalMilliseconds),
@@ -410,14 +450,43 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         #endregion
 
-        #region (private static) Failed(Error, ...)
+        #region (private static) LastSyncSaid(Sync)
 
-        private static JObject Failed(String                 Error,
-                                      params JProperty[]  Details)
+        /// <summary>
+        /// How the last synchronisation went, in a few words: that it
+        /// succeeded and how far off the clock was, or why it did not.
+        /// </summary>
+        /// <param name="Sync">The last synchronisation, or null while there has been none.</param>
+        private static String? LastSyncSaid(JObject? Sync)
         {
 
+            if (Sync is null)
+                return null;
+
+            if (Sync.Value<Boolean>("ok"))
+                return Sync.Value<Double?>("offset_ms") is Double offset
+                           ? String.Format(CultureInfo.InvariantCulture,
+                                           "succeeded, the clock is {0:+0.0;-0.0;0.0} ms off", offset)
+                           : "succeeded";
+
+            return $"failed: {Sync.Value<String>("error") ?? "no reason was given"}";
+
+        }
+
+        #endregion
+
+        #region (private) Failed(Error, ...)
+
+        private JObject Failed(String                 Error,
+                               params JProperty[]     Details)
+        {
+
+            // With the moment, like an answer that found a time: this is what
+            // the page shows as the last synchronisation, and a failure needs
+            // to say when it happened just as much.
             var json = new JObject(
                            new JProperty("ok",     false),
+                           new JProperty("at",     TimeProvider.GetUtcNow().ToString("o")),
                            new JProperty("error",  Error)
                        );
 

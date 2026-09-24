@@ -240,6 +240,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                        new JProperty("maxDeviationSeconds",  timeSources.MaxDeviation.TotalSeconds)
                    )),
 
+                   // The last synchronisation, whichever asked for it, so that
+                   // a page opened later can say what each server said.
+                   new JProperty("lastSync",     lastTimeSync),
+
                    new JProperty("limits",       new JObject(
                        new JProperty("maxTimeout",          NTSConfiguration.MaxTimeoutSeconds),
                        new JProperty("minCheckEvery",       NTSConfiguration.MinCheckEverySeconds),

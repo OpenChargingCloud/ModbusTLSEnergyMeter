@@ -566,6 +566,79 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+        #region TheClockIsCheckedAgainstTheGroup()
+
+        /// <summary>
+        /// Against whom the clock is checked, as its JSON says it: the group,
+        /// its servers switched on in the order they are asked, and how many of
+        /// them have to answer.
+        /// </summary>
+        /// <remarks>
+        /// The names without the root's dot: the NTS page draws this list, and
+        /// drew "ptbtime1.ptb.de., ptbtime2.ptb.de., ..." - where everything
+        /// else this meter prints for somebody to read leaves the dot out.
+        /// </remarks>
+        [Test]
+        public async Task TheClockIsCheckedAgainstTheGroup()
+        {
+
+            await using var meter = Meter("""
+                                        { "nts": { "servers": [ { "hostname": "b.example", "priority": 5 },
+                                                                "a.example",
+                                                                { "hostname": "c.example", "enabled": false } ] } }
+                                        """);
+
+            var clock = meter.ClockJSON();
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(clock.Value<String>("group"),        Is.EqualTo("legal"));
+
+                Assert.That(clock["servers"]!.Values<String>(),  Is.EqualTo(new[] { "a.example", "b.example" }),
+                            "switched on, in the order their bands are asked, and without the root's dot");
+
+                Assert.That(clock.Value<Int32>("minServers"),    Is.EqualTo(2));
+
+                Assert.That(clock.ContainsKey("server"),         Is.False,  "a single server is named beside the group");
+
+                // There and empty while nothing has been synchronised, so that
+                // the page says "never" rather than leaving the line out.
+                Assert.That(clock["lastSync"]?.      Type,       Is.EqualTo(JTokenType.Null));
+                Assert.That(clock["lastSyncResult"]?.Type,       Is.EqualTo(JTokenType.Null));
+
+            });
+
+        }
+
+        #endregion
+
+        #region AClockThatIsNotCheckedNamesNobody()
+
+        /// <summary>
+        /// Switched off, the clock is checked against nobody, and says so -
+        /// rather than naming servers that are not asked.
+        /// </summary>
+        [Test]
+        public async Task AClockThatIsNotCheckedNamesNobody()
+        {
+
+            await using var meter = Meter("""{ "nts": { "enabled": false } }""");
+
+            var clock = meter.ClockJSON();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(clock.Value<Boolean>("ntsEnabled"),  Is.False);
+                Assert.That(clock["group"]?.     Type,           Is.EqualTo(JTokenType.Null));
+                Assert.That(clock["servers"]?.   Type,           Is.EqualTo(JTokenType.Null));
+                Assert.That(clock["minServers"]?.Type,           Is.EqualTo(JTokenType.Null));
+            });
+
+        }
+
+        #endregion
+
     }
 
 }

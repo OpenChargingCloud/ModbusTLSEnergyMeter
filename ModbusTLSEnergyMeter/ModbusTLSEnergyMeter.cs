@@ -24,6 +24,8 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+using Newtonsoft.Json.Linq;
+
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
@@ -174,6 +176,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private           String?                         lastTimeCheckServer;
         private           Int32?                          lastTimeCheckAsked;
         private           Int32?                          lastTimeCheckAnswered;
+
+        /// <summary>
+        /// The last synchronisation as it was answered, whichever asked for it -
+        /// the page, or the clock check - and whether or not it found a time.
+        /// </summary>
+        /// <remarks>
+        /// Beside the last check above, which is only ever a success: a
+        /// synchronisation that found no server left the page showing the one
+        /// before it, as if nothing had happened since.
+        /// </remarks>
+        private           JObject?                        lastTimeSync;
 
         /// <summary>
         /// What asks the group of time servers and works out what they agree
