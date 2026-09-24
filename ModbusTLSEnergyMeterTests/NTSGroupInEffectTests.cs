@@ -479,6 +479,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(listed?[1]?.Value<Int32>("ntsKEPort"),  Is.EqualTo(4461));
                 Assert.That(listed?[0]?.Value<Int32>("ntpPort"),    Is.EqualTo(123));
 
+                // There and empty until a key exchange has shown a chain.
+                Assert.That(listed?[0]?["rootCA"]?.Type,            Is.EqualTo(JTokenType.Null));
+                Assert.That(listed?[0]?["aeadAlgorithm"]?.Type,     Is.EqualTo(JTokenType.Null));
+
                 Assert.That(shown.ContainsKey("hostname"),          Is.False,  "the single client is described as the time server again");
 
             });

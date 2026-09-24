@@ -424,9 +424,20 @@ export const ntsPage: Page = {
                                                                                            : 'no answer')}</span>`}
                         <span class="muted small">
                             ${source.lastExchange
-                                  ? html`${source.cookies ?? 0} cookie(s), exchanged ${formatTimestamp(source.lastExchange)}`
+                                  ? html`${source.cookies ?? 0} cookie(s)${source.aeadAlgorithm ? `, ${source.aeadAlgorithm}` : ''}, exchanged ${formatTimestamp(source.lastExchange)}`
                                   : 'not asked yet'}
                         </span>
+                    </div>
+
+                    <div class="root-ca">
+                        ${source.rootCA
+                              ? html`
+                                    <span class="ca-name" title="${source.rootCA.subject}">
+                                        <span class="muted small">Root CA</span> ${source.rootCA.name}
+                                    </span>
+                                    <span class="fingerprint" title="SHA-256 fingerprint of the root CA">${fingerprintView(source.rootCA.fingerprint)}</span>
+                                `
+                              : html`<span class="muted small">Root CA: no key exchange yet</span>`}
                     </div>
 
                     <div class="actions">
@@ -442,6 +453,19 @@ export const ntsPage: Page = {
                 </div>
             `;
 
+        }
+
+
+        /**
+         * A fingerprint that breaks in the middle and nowhere else.
+         *
+         * Two halves of 32 read against a pinned fingerprint far better than a
+         * line broken wherever the column happens to end - and at every width
+         * the column has, they are the same two halves. The break is a <wbr>
+         * rather than a space, so that copying it copies the fingerprint.
+         */
+        function fingerprintView(fingerprint: string): HTMLFragment {
+            return html`${(fingerprint.match(/.{1,32}/g) ?? [fingerprint]).map(part => html`${part}<wbr>`)}`;
         }
 
 

@@ -19,6 +19,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Security.Cryptography.X509Certificates;
 
 using Microsoft.Extensions.Logging;
 
@@ -227,8 +228,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                       new JProperty("ntsKEPort",     source.NTSKEPort.ToUInt16()),
                                       new JProperty("ntpPort",       source.NTPPort.  ToUInt16()),
                                       new JProperty("enabled",       source.Enabled),
-                                      new JProperty("cookies",       held?.RemainingCookies),
-                                      new JProperty("lastExchange",  held?.LastRefreshed.ToString("o"))
+                                      new JProperty("cookies",        held?.RemainingCookies),
+                                      new JProperty("lastExchange",   held?.LastRefreshed.ToString("o")),
+                                      new JProperty("aeadAlgorithm",  held?.NTSKEResponse?.AEADAlgorithm.ToString()),
+                                      new JProperty("rootCA",         RootCAJSON(held?.NTSKEResponse?.TLSInfo))
                                   );
 
                        })
@@ -463,6 +466,57 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             {
                 StartCheckingTheClock();
             }
+
+        }
+
+        #endregion
+
+        #region (static) RootCAJSON(TLS)
+
+        /// <summary>
+        /// The root CA a key exchange's certificate chain ended at, for the NTS
+        /// page's list: a name to call it by, its whole subject, and its SHA-256
+        /// fingerprint - or null where there was no key exchange yet.
+        /// </summary>
+        /// <remarks>
+        /// The end of the chain this meter built, not of the one the server
+        /// sent, because that is the root the certificate was judged by - and
+        /// the one a pinned root would be compared with, by this fingerprint.
+        /// The name is the root's common name: "ISRG Root X1" says which root
+        /// it is, where its whole subject is mostly the organisation again.
+        ///
+        /// From the group's own exchanges - 'Check the clock now' and the clock
+        /// check - because they are what the clock is checked with. A server's
+        /// Test asks with a client of its own and leaves this alone.
+        /// </remarks>
+        /// <param name="TLS">What a key exchange kept of its TLS session.</param>
+        public static JObject? RootCAJSON(NTSKE_TLSInfo? TLS)
+        {
+
+            var root = TLS?.ValidatedChain.LastOrDefault();
+
+            return root is null
+                       ? null
+                       : new JObject(
+                             new JProperty("name",         CommonNameOf(root)),
+                             new JProperty("subject",      root.Subject),
+                             new JProperty("fingerprint",  ThumbprintOf(root))
+                         );
+
+        }
+
+        /// <summary>
+        /// What to call a certificate: its common name, or its whole subject
+        /// where it has none.
+        /// </summary>
+        private static String CommonNameOf(X509Certificate2 Certificate)
+        {
+
+            var common = Certificate.GetNameInfo(X509NameType.SimpleName, forIssuer: false);
+
+            return common is { Length: > 0 }
+                       ? common
+                       : Certificate.Subject;
 
         }
 
