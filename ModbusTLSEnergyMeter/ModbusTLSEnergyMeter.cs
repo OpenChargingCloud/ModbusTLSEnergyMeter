@@ -126,6 +126,26 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private           TimeSourceGroup                 timeSources;
 
         /// <summary>
+        /// How many of those servers this meter was told must answer: by the
+        /// last section that named "minServers", or the default of two.
+        /// </summary>
+        /// <remarks>
+        /// Kept apart from the group's own quorum, which cannot be more than the
+        /// servers it has switched on. A lone hostname holds a group to one, and
+        /// if that one were all that was remembered, a list of four arriving
+        /// afterwards would be held to one as well - where the same file, read
+        /// at the next start, holds it to two.
+        /// </remarks>
+        private           Byte                            ntsQuorum       = NTSConfiguration.DefaultMinServers;
+
+        /// <summary>
+        /// Whoever changes the time servers, one at a time: a save checks what
+        /// is in effect, then the file, then changes both, and two saves at once
+        /// could each find the other's half.
+        /// </summary>
+        private readonly  Lock                            ntsLock         = new();
+
+        /// <summary>
         /// The name servers this meter would ask, whether or not name
         /// resolution is switched on at the moment.
         /// </summary>
@@ -339,9 +359,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             => dnsClient;
 
         /// <summary>
-        /// Where this meter reads the time.
+        /// The single time client this meter was handed, or made for the first
+        /// of the default servers.
         /// </summary>
         /// <remarks>
+        /// Not what the clock is checked against - that is
+        /// <see cref="TimeSources"/>, the whole group - and not to be named as
+        /// if it were. What it still decides is the group this meter asks when
+        /// a caller hands it a client of its own: that client's server, alone.
+        ///
         /// Replaced rather than reconfigured when it is pointed at another
         /// server: an NTS client is bound to its host at construction, and the
         /// cookies and keys it holds belong to that host and to no other.
@@ -350,16 +376,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             => ntsClient;
 
         /// <summary>
-        /// The time servers this meter names, in the order it would ask them.
+        /// The time servers this meter checks its clock against: which servers,
+        /// in which priority bands, and how many of them have to answer.
         /// </summary>
-        /// <remarks>
-        /// Declared rather than asked, so far: the clock is still read from the
-        /// single <see cref="NTSClient"/> above. What this carries is what the
-        /// configuration file says - which servers, in which priority bands, and
-        /// how many of them have to agree - so that the meter reports its
-        /// intent honestly and a later change can act on it without moving the
-        /// configuration format again.
-        /// </remarks>
         public TimeSourceGroup     TimeSources
             => timeSources;
 
@@ -577,9 +596,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 ApplyDNSConfiguration(configuration.DNS);
 
             if (configuration?.NTS is not null)
+            {
+
+                // Checked here rather than when the file was read: a quorum
+                // on its own is about the servers in effect, and which those
+                // are is only known now.
+                if (!TryCheckNTSQuorum(configuration.NTS, out var quorumError))
+                    throw new InvalidOperationException($"'{this.ConfigFile.Path}': {quorumError} Repair or remove '{this.ConfigFile.Path}' and start again.");
+
                 ApplyNTSConfiguration(configuration.NTS);
 
-            this.ntsSettings           = configuration?.NTS;
+            }
 
             #endregion
 

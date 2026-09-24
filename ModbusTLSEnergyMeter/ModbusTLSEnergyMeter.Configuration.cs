@@ -17,11 +17,15 @@
 
 #region Usings
 
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+
 using Microsoft.Extensions.Logging;
 
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Norn.NTS;
+using org.GraphDefined.Vanaheimr.Norn.TimeSync;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
 
@@ -72,8 +76,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// something else, and nobody would know which of the two this meter is
         /// actually running as.
         /// </remarks>
-        public Boolean TryUpdateDNSConfiguration(JObject      JSON,
-                                                 out String?  Error)
+        public Boolean TryUpdateDNSConfiguration(JObject                           JSON,
+                                                 [NotNullWhen(false)] out String?  Error)
         {
 
             if (!DNSConfiguration.TryParse(JSON, out var configuration, out Error))
@@ -176,21 +180,84 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         #region NTSConfigurationJSON()
 
         /// <summary>
-        /// Where this meter reads the time, as it stands.
+        /// Where this meter reads the time: the group of time servers, the rules
+        /// it is held to, and what legal time rests on.
         /// </summary>
+        /// <remarks>
+        /// The group, and nothing about the single client beside it. This
+        /// answer used to be that client's host and ports - one server, which
+        /// was the one the page's form edited - while the clock has been checked
+        /// against the whole group since there were groups; and saving that
+        /// form told this meter a lone host name, which made the group that one
+        /// server.
+        /// </remarks>
         public JObject NTSConfigurationJSON()
 
-            => new NTSConfiguration(
-                   Enabled:         NTSEnabled,
-                   Hostname:        ntsClient.Hostname,
-                   NTSKEPort:       ntsClient.NTSKE_Port,
-                   NTPPort:         ntsClient.NTP_Port,
-                   Timeout:         ntsClient.Timeout,
-                   CheckEvery:          ntsSettings?.CheckEvery,
-                   LegalTimeAuthority:  ntsSettings?.LegalTimeAuthority,
-                   LegalTimeTolerance:  ntsSettings?.LegalTimeTolerance,
-                   LegalTimeMaxAge:     ntsSettings?.LegalTimeMaxAge
-               ).ToJSON();
+            => new (
+
+                   new JProperty("enabled",      NTSEnabled),
+
+                   // What may be changed, as it is in effect. The quorum is the
+                   // one this meter was told; the group's own, below, can be
+                   // lower when it has fewer servers switched on.
+                   new JProperty("settings",     new JObject(
+                       new JProperty("timeoutSeconds",             ntsClient.Timeout?.TotalSeconds),
+                       new JProperty("checkEverySeconds",          TimeCheckEvery.TotalSeconds),
+                       new JProperty("minServers",                 ntsQuorum),
+                       new JProperty("maxDeviationSeconds",        timeSources.MaxDeviation.TotalSeconds),
+                       new JProperty("legalTimeAuthority",         LegalTimeAuthority),
+                       new JProperty("legalTimeToleranceSeconds",  LegalTimeTolerance.TotalSeconds),
+                       new JProperty("legalTimeMaxAgeSeconds",     LegalTimeMaxAge.TotalSeconds)
+                   )),
+
+                   // Every server, in the order configured, the switched-off
+                   // ones included: this is the list the page edits and sends
+                   // back whole, and a server missing from it because it was
+                   // switched off would be deleted by the next save of anything
+                   // else. With the key exchange each one holds from the
+                   // group's own asking, which is what a check spends.
+                   new JProperty("timeSources",  new JArray(
+                       timeSources.Sources.Select(source => {
+
+                           var held = timeEngine.KeyExchanges.TryGetValue(source.Hostname, out var state) ? state : null;
+
+                           return new JObject(
+                                      new JProperty("hostname",      source.Hostname.ToString()),
+                                      new JProperty("priority",      source.Priority),
+                                      new JProperty("ntsKEPort",     source.NTSKEPort.ToUInt16()),
+                                      new JProperty("ntpPort",       source.NTPPort.  ToUInt16()),
+                                      new JProperty("enabled",       source.Enabled),
+                                      new JProperty("cookies",       held?.RemainingCookies),
+                                      new JProperty("lastExchange",  held?.LastRefreshed.ToString("o"))
+                                  );
+
+                       })
+                   )),
+
+                   new JProperty("group",        new JObject(
+                       new JProperty("name",                 timeSources.Name),
+                       new JProperty("minServers",           timeSources.MinServers),
+                       new JProperty("maxDeviationSeconds",  timeSources.MaxDeviation.TotalSeconds)
+                   )),
+
+                   new JProperty("limits",       new JObject(
+                       new JProperty("maxTimeout",          NTSConfiguration.MaxTimeoutSeconds),
+                       new JProperty("minCheckEvery",       NTSConfiguration.MinCheckEverySeconds),
+                       new JProperty("maxCheckEvery",       NTSConfiguration.MaxCheckEverySeconds),
+                       new JProperty("minDeviation",        NTSConfiguration.MinDeviationSeconds),
+                       new JProperty("maxDeviation",        NTSConfiguration.MaxDeviationSeconds),
+                       new JProperty("minTolerance",        NTSConfiguration.MinToleranceSeconds),
+                       new JProperty("maxTolerance",        NTSConfiguration.MaxToleranceSeconds),
+                       new JProperty("minMaxAge",           NTSConfiguration.MinMaxAgeSeconds),
+                       new JProperty("maxMaxAge",           NTSConfiguration.MaxMaxAgeSeconds),
+                       new JProperty("maxAuthorityLength",  NTSConfiguration.MaxAuthorityLength),
+                       new JProperty("defaultNTSKEPort",    NTSClient.DefaultNTSKE_Port.ToUInt16()),
+                       new JProperty("defaultNTPPort",      NTSClient.DefaultNTP_Port.  ToUInt16())
+                   )),
+
+                   new JProperty("file",         ConfigFile.Path)
+
+               );
 
         #endregion
 
@@ -199,23 +266,51 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <summary>
         /// Change where this meter reads the time, and write that down.
         /// </summary>
-        public Boolean TryUpdateNTSConfiguration(JObject      JSON,
-                                                 out String?  Error)
+        /// <remarks>
+        /// What is sent is part of the section, laid over what is in effect -
+        /// the switch sends "enabled" and nothing else. What is written into the
+        /// file is what was read of it rather than the text that was sent, so
+        /// that a key this meter does not know is not kept as if it meant
+        /// something.
+        /// </remarks>
+        public Boolean TryUpdateNTSConfiguration(JObject                           JSON,
+                                                 [NotNullWhen(false)] out String?  Error)
         {
 
             if (!NTSConfiguration.TryParse(JSON, out var configuration, out Error))
                 return false;
 
-            if (!ConfigFile.TryMergeSection(NTSConfiguration.SectionName, JSON, out Error))
-                return false;
+            lock (ntsLock)
+            {
 
-            ApplyNTSConfiguration(configuration);
+                // Before the file, so that what is refused is not written down
+                // either - and inside the lock, because the servers a quorum on
+                // its own is checked against are the ones in effect.
+                if (!TryCheckNTSQuorum(configuration, out Error))
+                    return false;
 
-            // The clock is checked on a timer that was built from the old
-            // settings, so it is rebuilt here rather than left to notice.
-            StartCheckingTheClock();
+                // And the file as the next start will read it. Each half can
+                // be fine and the two together not: the quorum the file holds
+                // and a list saved now that is shorter than it would be a
+                // section the next start refuses, and a meter that does not
+                // start because of a save that was accepted.
+                if (!ConfigFile.TryPreviewSection(NTSConfiguration.SectionName, configuration.ToJSON(), configuration.RemovedKeys, out var merged, out Error))
+                    return false;
 
-            return true;
+                if (!NTSConfiguration.TryParse(merged, out _, out var mergedError))
+                {
+                    Error = $"{mergedError} Nothing was changed.";
+                    return false;
+                }
+
+                if (!ConfigFile.TryMergeSection(NTSConfiguration.SectionName, configuration.ToJSON(), configuration.RemovedKeys, out Error))
+                    return false;
+
+                ApplyNTSConfiguration(configuration);
+
+                return true;
+
+            }
 
         }
 
@@ -234,34 +329,67 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // it, and the other half - how often to check, and what the
             // operator claims about the server - is read from elsewhere and
             // much later. See ModbusTLSEnergyMeter.Clock.cs.
-            ntsSettings = Configuration;
+            //
+            // Laid over what was kept rather than put in its place. A save sends
+            // part of the section, and replaced by that part the rest went back
+            // to its defaults until the next start read the file again: saving
+            // the time server's settings took the legal time authority away,
+            // and saving the legal time's settings put the interval back to
+            // fifteen minutes.
+            var wasCheckingEvery  = TimeCheckEvery;
+            var wasEnabled        = NTSEnabled;
+            var wasAuthority      = LegalTimeAuthority;
+
+            ntsSettings = ntsSettings?.OverriddenBy(Configuration) ?? Configuration;
 
             var changed  = new List<String>();
 
             #region The group of time servers
 
-            // Rebuilt from the section rather than patched: it is a list, and
-            // working out which entry changed in order to report it would say
-            // less than naming the servers, which is what happens below.
-            // Only when the section says something about them. That is this
-            // method's rule everywhere else, and it earns its place here now
-            // that the servers have a default worth keeping: a section
+            var wasServers    = Described(timeSources);
+            var wasQuorum     = timeSources.MinServers;
+            var wasDeviation  = timeSources.MaxDeviation;
+
+            if (Configuration.MinServers.HasValue)
+                ntsQuorum = Configuration.MinServers.Value;
+
+            // The servers only when the section says something about them. That
+            // is this method's rule everywhere else, and it earns its place here
+            // now that the servers have a default worth keeping: a section
             // mentioning nothing but "enabled" would otherwise quietly reduce
             // four servers to one.
-            if (Configuration.Servers is not null ||
-                Configuration.Hostname is not null)
-            {
+            //
+            // Rebuilt from the section rather than patched when it does: it is a
+            // list, and working out which entry changed in order to report it
+            // would say less than naming the servers, which is what happens
+            // below.
+            var sources       = Configuration.Servers  is not null ||
+                                Configuration.Hostname is not null
+                                    ? Configuration.ToGroup(Configuration.Hostname ?? ntsClient.Hostname).Sources
+                                    : timeSources.Sources;
 
-                var wasAsking  = String.Join(", ", timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.Trimmed));
+            // The quorum and the deviation by the same rule, and on their own as
+            // well. They used to count only beside a list or a hostname, so a
+            // section saying nothing but "minServers": 3 was read and changed
+            // nothing; and a list without a quorum was held to one, whatever
+            // had been agreed before.
+            timeSources       = new TimeSourceGroup(
+                                    timeSources.Name,
+                                    sources,
+                                    NTSConfiguration.QuorumFor(ntsQuorum, sources),
+                                    Configuration.MaxDeviation ?? timeSources.MaxDeviation
+                                );
 
-                timeSources    = Configuration.ToGroup(Configuration.Hostname ?? ntsClient.Hostname);
+            var nowServers    = Described(timeSources);
 
-                var nowAsking  = String.Join(", ", timeSources.Bands().SelectMany(band => band).Select(source => source.Hostname.Trimmed));
+            if (wasServers != nowServers)
+                changed.Add($"time servers = {nowServers}");
 
-                if (wasAsking != nowAsking)
-                    changed.Add($"time servers = {nowAsking}");
+            if (wasQuorum != timeSources.MinServers)
+                changed.Add($"quorum = {timeSources.MinServers}");
 
-            }
+            if (wasDeviation != timeSources.MaxDeviation)
+                changed.Add($"agreed deviation = {timeSources.MaxDeviation.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)} s");
 
             #endregion
 
@@ -290,7 +418,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 lastTimeCheckOffset  = null;
                 lastTimeCheckServer  = null;
 
-                changed.Add($"server = {hostname}:{ntsKE} (NTS-KE), :{ntp} (NTP)");
+                changed.Add($"server = {hostname.Trimmed}:{ntsKE} (NTS-KE), :{ntp} (NTP)");
 
             }
 
@@ -306,8 +434,102 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 changed.Add(NTSEnabled ? "switched on" : "switched off");
             }
 
+            if (TimeCheckEvery != wasCheckingEvery)
+                changed.Add($"clock checked every {TimeCheckEvery.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)} s");
+
+            // Who stands behind the time is what "legal time" rests on, so a
+            // change to it is written down like a change of the servers.
+            if (LegalTimeAuthority != wasAuthority)
+                changed.Add(LegalTimeAuthority is null
+                                ? "no legal time authority"
+                                : $"legal time authority = {LegalTimeAuthority}");
+
             if (changed.Count > 0)
                 Log.Notice($"NTS configuration changed: {String.Join(", ", changed)}.", "nts", "config");
+
+            // The clock is checked on a timer set when the meter started, so
+            // whether and how often it is checked has to be put into that timer
+            // here - otherwise the page says "in effect" about something that
+            // waits for the next start. Before the start there is no timer yet,
+            // and the start sets one from what this left behind; setting one
+            // here would leave a meter that was never started checking its
+            // clock, with nothing to stop it.
+            if (started &&
+               (TimeCheckEvery != wasCheckingEvery || NTSEnabled != wasEnabled))
+            {
+                StartCheckingTheClock();
+            }
+
+        }
+
+        #endregion
+
+        #region (private static) Described(Group)
+
+        /// <summary>
+        /// A group of time servers as a log line names it: every server in the
+        /// order configured, with whatever about it is not the usual.
+        /// </summary>
+        /// <remarks>
+        /// All of them, and all of that, because this is also what a change is
+        /// found by. It used to be the names of the servers switched on, in the
+        /// order they are asked: a server given another priority or a port of
+        /// its own was a change the log never heard of, and one switched off
+        /// simply went missing from the line.
+        /// </remarks>
+        private static String Described(TimeSourceGroup Group)
+
+            => String.Join(", ", Group.Sources.Select(source => {
+
+                   var unusual = new List<String>();
+
+                   if (source.Priority  != 0)                            unusual.Add($"priority {source.Priority}");
+                   if (source.NTSKEPort != NTSClient.DefaultNTSKE_Port)  unusual.Add($"NTS-KE port {source.NTSKEPort}");
+                   if (source.NTPPort   != NTSClient.DefaultNTP_Port)    unusual.Add($"NTP port {source.NTPPort}");
+                   if (!source.Enabled)                                  unusual.Add("switched off");
+
+                   return unusual.Count == 0
+                              ? source.Hostname.Trimmed
+                              : $"{source.Hostname.Trimmed} ({String.Join(", ", unusual)})";
+
+               }));
+
+        #endregion
+
+        #region (private) TryCheckNTSQuorum(Configuration, out Error)
+
+        /// <summary>
+        /// Whether a quorum named on its own can be met by the servers this
+        /// meter asks.
+        /// </summary>
+        /// <remarks>
+        /// A section naming its servers as well had its quorum checked against
+        /// them when it was read. One naming only the quorum is about the
+        /// servers in effect, which the section cannot know and this meter
+        /// does.
+        /// </remarks>
+        private Boolean TryCheckNTSQuorum(NTSConfiguration                  Configuration,
+                                          [NotNullWhen(false)] out String?  Error)
+        {
+
+            Error = null;
+
+            if (Configuration.MinServers is Byte quorum &&
+                Configuration.Servers    is null        &&
+                Configuration.Hostname   is null)
+            {
+
+                var asked = timeSources.Sources.Count(source => source.Enabled);
+
+                if (quorum > asked)
+                {
+                    Error = $"'nts.minServers' is {quorum}, which is more servers than the {asked} this meter asks.";
+                    return false;
+                }
+
+            }
+
+            return true;
 
         }
 

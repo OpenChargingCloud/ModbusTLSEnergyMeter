@@ -542,7 +542,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         }
 
         /// <summary>
-        /// PUT /api/v1/configuration/nts: point it at another time server.
+        /// PUT /api/v1/configuration/nts: change the time servers or the rules
+        /// they are held to. What is sent is laid over what is in effect, and
+        /// the answer is the whole group as it then stands.
         /// </summary>
         private Task<HTTPResponse> PutNTSConfiguration(HTTPRequest Request)
         {

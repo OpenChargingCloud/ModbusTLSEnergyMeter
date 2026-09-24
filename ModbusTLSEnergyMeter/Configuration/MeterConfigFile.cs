@@ -125,8 +125,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Configuration
         /// there, instead of quietly deleting the configuration of something it
         /// has not heard of yet.
         /// </remarks>
-        public Boolean TryLoadDocument([NotNullWhen(true)] out JObject?  Document,
-                                                           out String?   Error)
+        public Boolean TryLoadDocument([NotNullWhen(true)]  out JObject?  Document,
+                                       [NotNullWhen(false)] out String?   Error)
         {
 
             Document  = null;
@@ -223,12 +223,90 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Configuration
         public Boolean TryMergeSection(String                            Name,
                                        JObject                           Values,
                                        [NotNullWhen(false)] out String?  Error)
+
+            => TryMergeSection(Name, Values, [], out Error);
+
+
+        /// <summary>
+        /// Write the given fields into one section and take the given keys out
+        /// of it, leaving everything else alone.
+        /// </summary>
+        /// <remarks>
+        /// Taking a key out is not the same as writing a null into it: a null
+        /// is what a merge leaves alone, and what a section reads as "the file
+        /// does not say".
+        /// </remarks>
+        /// <param name="Name">The section, e.g. "nts".</param>
+        /// <param name="Values">The fields to write into it.</param>
+        /// <param name="Removed">The keys to take out of it.</param>
+        /// <param name="Error">What went wrong, when something did.</param>
+        public Boolean TryMergeSection(String                            Name,
+                                       JObject                           Values,
+                                       IEnumerable<String>               Removed,
+                                       [NotNullWhen(false)] out String?  Error)
         {
 
             if (!TryLoadDocument(out var document, out Error))
                 return false;
 
-            if (document[Name] is JObject section)
+            return TryWrite(Merged(document, Name, Values, Removed), out Error);
+
+        }
+
+        #endregion
+
+        #region TryPreviewSection(Name, Values, Removed, out Section, out Error)
+
+        /// <summary>
+        /// The section as <see cref="TryMergeSection(String, JObject, IEnumerable{String}, out String)"/>
+        /// would leave it, without writing anything.
+        /// </summary>
+        /// <remarks>
+        /// For finding out what a save would do to the next start before doing
+        /// it. A merge can put two halves that are each fine together into a
+        /// section that is not - a quorum from before and a shorter list from
+        /// now - and a file that stops the meter is worse than a save that is
+        /// refused.
+        /// </remarks>
+        /// <param name="Name">The section, e.g. "nts".</param>
+        /// <param name="Values">The fields that would be written into it.</param>
+        /// <param name="Removed">The keys that would be taken out of it.</param>
+        /// <param name="Section">The section as it would then read.</param>
+        /// <param name="Error">What went wrong, when something did.</param>
+        public Boolean TryPreviewSection(String                            Name,
+                                         JObject                           Values,
+                                         IEnumerable<String>               Removed,
+                                         [NotNullWhen(true)]  out JObject?  Section,
+                                         [NotNullWhen(false)] out String?   Error)
+        {
+
+            Section = null;
+
+            if (!TryLoadDocument(out var document, out Error))
+                return false;
+
+            Section = Merged(document, Name, Values, Removed)[Name] as JObject ?? [];
+
+            return true;
+
+        }
+
+        #endregion
+
+        #region (private static) Merged(Document, Name, Values, Removed)
+
+        /// <summary>
+        /// The document with the given fields merged into one of its sections
+        /// and the given keys taken out of it, by the rules
+        /// <see cref="TryMergeSection(String, JObject, out String)"/> describes.
+        /// </summary>
+        private static JObject Merged(JObject              Document,
+                                      String               Name,
+                                      JObject              Values,
+                                      IEnumerable<String>  Removed)
+        {
+
+            if (Document[Name] is JObject section)
             {
 
                 section.Merge(
@@ -241,9 +319,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Configuration
             }
 
             else
-                document[Name] = Values;
+                Document[Name] = Values.DeepClone();
 
-            return TryWrite(document, out Error);
+            if (Document[Name] is JObject merged)
+                foreach (var key in Removed)
+                    merged.Remove(key);
+
+            return Document;
 
         }
 
