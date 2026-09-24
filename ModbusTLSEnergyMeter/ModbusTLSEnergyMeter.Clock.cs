@@ -18,6 +18,7 @@
 #region Usings
 
 using System.Diagnostics;
+using System.Globalization;
 
 using Microsoft.Extensions.Logging;
 
@@ -261,12 +262,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 // Written down rather than acted on: the disagreement belongs
                 // in the log, and the time is still a time.
                 if (verdict.DeviationExceeded)
-                    Log.Warning(
-                        $"NTS: the time servers of group '{group.Name}' disagree by " +
-                        $"{verdict.Spread!.Value.TotalMilliseconds:F1} ms, which reaches the agreed deviation of " +
-                        $"{group.MaxDeviation.TotalSeconds:F0} s.",
-                        "nts", "clock"
-                    );
+                    Log.Warning(DisagreementLine(group, verdict), "nts", "clock");
 
                 var answer = new JObject(
                                  new JProperty("ok",          true),
@@ -280,7 +276,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                 Log.Log(
                     Logging.LogLevel.Notice,
-                    $"NTS: group '{group.Name}' answered in {stopwatch.ElapsedMilliseconds} ms - {verdict}.",
+                    AnsweredLine(group, stopwatch.ElapsedMilliseconds, verdict),
                     answer,
                     "nts", "clock"
                 );
@@ -373,6 +369,44 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    );
 
         }
+
+        #endregion
+
+        #region (internal static) AnsweredLine    (Group, Milliseconds, Verdict)
+
+        /// <summary>
+        /// What the log says when the group had a time.
+        /// </summary>
+        internal static String AnsweredLine(TimeSourceGroup  Group,
+                                            Int64            Milliseconds,
+                                            TimeSyncVerdict  Verdict)
+
+            => $"NTS: group '{Group.Name}' answered in {Milliseconds} ms - {Verdict}.";
+
+        #endregion
+
+        #region (internal static) DisagreementLine(Group, Verdict)
+
+        /// <summary>
+        /// What the log says when the servers that answered are further apart
+        /// than the group's agreed deviation.
+        /// </summary>
+        /// <remarks>
+        /// Invariant, like the verdict it is logged beside: the sentence is
+        /// English and goes into a record, whose numbers should not change
+        /// their punctuation with the machine that wrote them. And the agreed
+        /// deviation with as many places as it has - it may be set as low as a
+        /// millisecond, and a whole-second format wrote that as "0 s".
+        /// </remarks>
+        internal static String DisagreementLine(TimeSourceGroup  Group,
+                                                TimeSyncVerdict  Verdict)
+
+            => String.Format(CultureInfo.InvariantCulture,
+                             "NTS: the time servers of group '{0}' disagree by {1:F1} ms, " +
+                             "which reaches the agreed deviation of {2:0.###} s.",
+                             Group.Name,
+                             Verdict.Spread!.Value.TotalMilliseconds,
+                             Group.MaxDeviation.TotalSeconds);
 
         #endregion
 

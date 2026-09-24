@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ModbusTLSEnergyMeterTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\ChargyCore.NET\ChargyCore\ChargyCore.csproj" />
     <ProjectReference Include="..\..\Hermod\Hermod\Hermod.csproj" />
     <ProjectReference Include="..\..\Norn\Norn\Norn.csproj" />
