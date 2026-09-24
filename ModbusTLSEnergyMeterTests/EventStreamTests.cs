@@ -21,9 +21,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
+using Newtonsoft.Json.Linq;
+
 using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
@@ -264,6 +267,53 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(stopped,                                    Is.True, "the meter stopped within ten seconds");
                 Assert.That(await stream.EndsWithin(TimeSpan.FromSeconds(10)), Is.True, "and the stream ended");
             });
+
+        }
+
+        #endregion
+
+        #region ABrowserThatHasGoneIsLetGo()
+
+        /// <summary>
+        /// A browser that has gone is noticed by the next heartbeat, and its
+        /// stream ends and lets go of its subscription.
+        /// </summary>
+        /// <remarks>
+        /// A browser closing the Logs page says nothing, and a server learns
+        /// that a client has gone only by writing to it - which a stream on a
+        /// quiet meter does with its heartbeat and nothing else. Without that,
+        /// a closed page would stay subscribed until the meter stopped, with
+        /// every entry queued for it. What ends the subscription is the
+        /// enumerator being stopped once a heartbeat could not be written, so
+        /// that is what this looks at: the event source's own count of the
+        /// clients it is writing to. Parked first, after a heartbeat, as in
+        /// the test before.
+        /// </remarks>
+        [Test]
+        public async Task ABrowserThatHasGoneIsLetGo()
+        {
+
+            meter!.API.EventStreamHeartbeat = TimeSpan.FromMilliseconds(300);
+
+            var events  = (HTTPEventSource<JObject>) meter.API.Events;
+            var http    = await SignedIn();
+            var stream  = await EventStream.Open(http);
+
+            Assert.Multiple(async () => {
+                Assert.That(await stream.ReadUntil(": keep-alive"),  Is.True,        "the stream is waiting for its next entry");
+                Assert.That(events.NumberOfConnectedClients,         Is.EqualTo(1),  "and the browser is subscribed");
+            });
+
+            // The page is closed: the connection goes, and nothing is said.
+            stream.Dispose();
+            http.  Dispose();
+
+            var giveUpAt = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+
+            while (events.NumberOfConnectedClients > 0 && DateTimeOffset.UtcNow < giveUpAt)
+                await Task.Delay(50);
+
+            Assert.That(events.NumberOfConnectedClients, Is.Zero, "the subscription ended within ten seconds");
 
         }
 

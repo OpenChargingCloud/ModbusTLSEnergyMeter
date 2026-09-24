@@ -864,6 +864,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// <see cref="EventStreamHeartbeat"/>, because the 60 seconds after
         /// which nginx gives up are an ordinary pause for a meter that nothing
         /// is reading from.
+        ///
+        /// The loop that writes the events and the comments is Hermod's
+        /// WriteEvents, the one Hermod's own MapEventSource has used since
+        /// 524b3095: it waits for the next event across heartbeats rather than
+        /// asking for it again, and however it ends, it stops the enumerator
+        /// before it lets go of it.
         /// </remarks>
         private Task<HTTPResponse> StreamEvents(HTTPRequest Request)
         {
@@ -876,13 +882,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             return Task.FromResult(
                        new HTTPResponse.Builder(Request) {
 
-                           HTTPStatusCode  = HTTPStatusCode.OK,
-                           Server          = HTTPServer.HTTPServerName,
-                           ContentType     = HTTPContentType.Text.EVENTSTREAM,
-                           CacheControl    = "no-cache",
-                           Connection      = ConnectionType.KeepAlive,
+                           HTTPStatusCode    = HTTPStatusCode.OK,
+                           Server            = HTTPServer.HTTPServerName,
+                           ContentType       = HTTPContentType.Text.EVENTSTREAM,
+                           CacheControl      = "no-cache",
+                           Connection        = ConnectionType.KeepAlive,
+                           X_AccelBuffering  = "no",
 
-                           HTTPSSEWorker   = async (response, stream) => {
+                           HTTPSSEWorker     = async (response, stream) => {
 
                                // Either the browser going away or this meter
                                // shutting down ends the stream. The second one
@@ -907,68 +914,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                    // expired.
                                    await stream.FlushAsync(ending.Token);
 
-                                   var heartbeat  = EventStreamHeartbeat > TimeSpan.Zero
-                                                        ? EventStreamHeartbeat
-                                                        : Timeout.InfiniteTimeSpan;
-
-                                   await using var events = Events.GetAllEventsGreater(
-                                                                clientId,
-                                                                Request.GetHeaderField(HTTPRequestHeaderField.LastEventId),
-                                                                ending.Token
-                                                            ).GetAsyncEnumerator(ending.Token);
-
-                                   // The next event is waited for across heartbeats
-                                   // rather than asked for again: an enumerator
-                                   // takes one question at a time.
-                                   var next = events.MoveNextAsync().AsTask();
-
-                                   try
-                                   {
-
-                                       while (true)
-                                       {
-
-                                           try
-                                           {
-                                               if (!await next.WaitAsync(heartbeat, ending.Token))
-                                                   break;
-                                           }
-                                           catch (TimeoutException)
-                                           {
-                                               await stream.WriteHeartbeat(CancellationToken: ending.Token);
-                                               continue;
-                                           }
-
-                                           var httpEvent = events.Current;
-
-                                           await stream.WriteAsync(httpEvent.SerializedHeader);
-                                           await stream.WriteAsync(httpEvent.SerializedData);
-                                           await stream.WriteAsync("\n\n");
-                                           await stream.FlushAsync(ending.Token);
-
-                                           next = events.MoveNextAsync().AsTask();
-
-                                       }
-
-                                   }
-                                   finally
-                                   {
-
-                                       // However the loop ended, the enumerator may
-                                       // still be waiting for the next event - a
-                                       // heartbeat that could not be written leaves
-                                       // it so - and it cannot be disposed before
-                                       // it has stopped. Cancelling stops it.
-                                       ending.Cancel();
-
-                                       try
-                                       {
-                                           await next;
-                                       }
-                                       catch
-                                       { }
-
-                                   }
+                                   // Returns when the events end, and throws when
+                                   // the stream cannot be written - a heartbeat
+                                   // to a browser that has gone - or the meter
+                                   // stops.
+                                   await stream.WriteEvents(
+                                             Events.GetAllEventsGreater(
+                                                 clientId,
+                                                 Request.GetHeaderField(HTTPRequestHeaderField.LastEventId),
+                                                 ending.Token
+                                             ),
+                                             EventStreamHeartbeat,
+                                             ending.Token
+                                         );
 
                                }
                                catch (OperationCanceledException)
@@ -993,8 +951,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
                            }
 
-                       }.Set("X-Accel-Buffering", "no").
-                         AsImmutable
+                       }.AsImmutable
                    );
 
         }
