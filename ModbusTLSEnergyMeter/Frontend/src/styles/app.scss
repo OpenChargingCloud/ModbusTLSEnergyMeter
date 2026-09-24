@@ -518,7 +518,8 @@ input, textarea, select {
 // One card under the other, each as wide as the page: for a page that is read
 // from the top down rather than taken in at a glance. What is inside keeps to
 // a width that can be read - a form, or names beside their values, stretched
-// across a wide screen puts a label a screen away from what it labels.
+// across a wide screen puts a label a screen away from what it labels, and a
+// name server's buttons a screen away from its address.
 .cards.stacked {
 
     grid-template-columns: minmax(0, 1fr);
@@ -526,6 +527,10 @@ input, textarea, select {
     .form-stack,
     .kv-list {
         max-width: 36rem;
+    }
+
+    .server-list {
+        max-width: 44rem;
     }
 
 }

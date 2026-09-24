@@ -57,7 +57,7 @@ export const dnsPage: Page = {
                     </div>
                 `}
 
-                <div class="cards">
+                <div class="cards stacked">
 
                     <section class="card wide">
 
