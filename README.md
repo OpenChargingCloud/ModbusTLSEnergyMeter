@@ -689,6 +689,14 @@ who made it, and whatever Hermod says while doing its part. The last 2000
 entries are kept in memory, a host can mirror them to a console, and a browser
 follows the same log over `/api/v1/events`.
 
+A host that also reads commands on that console hands the log a way to write
+around the line being typed, so that an entry arriving mid-word neither lands
+inside the command nor waits for it:
+
+```csharp
+meter.ShareConsoleWith(cli.WriteBlock);   // line off, entry whole, line back
+```
+
 It survives a restart. Every entry is also written as one line of JSON to
 `<DataPath>/logs/meter-YYYY-MM-DD.jsonl`, and the newest of them are read back
 at the next start - numbering included, so that a browser following the log is
