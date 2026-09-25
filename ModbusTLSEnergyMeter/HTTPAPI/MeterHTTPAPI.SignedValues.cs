@@ -94,7 +94,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryGetSigningKey(Request, Request.QueryString.GetString("key"), format, out var key, out var noKey))
                 return Task.FromResult(noKey);
 
-            if (!TryReadEnergy(out var importedWh, out var unreadable))
+            if (!TryReadEnergy(Request, out var importedWh, out var unreadable))
                 return Task.FromResult(unreadable);
 
             var now = meter.TimeProvider.GetUtcNow();
@@ -195,7 +195,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryGetSigningKey(Request, json["key"]?.Value<String>(), "ocmf", out var key, out var noKey))
                 return Task.FromResult(noKey);
 
-            if (!TryReadEnergy(out var importedWh, out var unreadable))
+            if (!TryReadEnergy(Request, out var importedWh, out var unreadable))
                 return Task.FromResult(unreadable);
 
             if (!meter.Sessions.TryStart(
@@ -262,7 +262,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryAuthorize(Request, MeterPermissions.WriteRegisters, true, out var user, out var refused))
                 return Task.FromResult(refused);
 
-            if (!TryReadEnergy(out var importedWh, out var unreadable))
+            if (!TryReadEnergy(Request, out var importedWh, out var unreadable))
                 return Task.FromResult(unreadable);
 
             // Looked at before the session is taken away, so that a refusal
@@ -524,13 +524,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private) TryReadEnergy(out ImportedWh, out Unreadable)
+        #region (private) TryReadEnergy(Request, out ImportedWh, out Unreadable)
 
         /// <summary>
-        /// What the imported energy counter stands at, in Wh.
+        /// What the imported energy counter stands at, in Wh, or the answer
+        /// saying it could not be read - the one GET /api/v1/meter gives.
         /// </summary>
-        private Boolean TryReadEnergy(out Decimal                               ImportedWh,
-                                      [NotNullWhen(false)] out HTTPResponse?    Unreadable)
+        private Boolean TryReadEnergy(HTTPRequest                             Request,
+                                      out Decimal                             ImportedWh,
+                                      [NotNullWhen(false)] out HTTPResponse?  Unreadable)
         {
 
             ImportedWh = 0;
@@ -542,7 +544,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             if (registers is null)
             {
-                Unreadable = null;
+                Unreadable = ErrorJSON(Request, HTTPStatusCode.InternalServerError,
+                                       "The register block of this meter could not be read.");
                 return false;
             }
 
