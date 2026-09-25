@@ -473,10 +473,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             if (!await Remove(account, user))
                 return ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                 $"'{account.Id}' could not be removed. Its roles on this meter have already been taken away, " +
-                                  "so it can sign in and do nothing until it is either removed or given a role again.");
-
-            accounts.Sessions.RemoveAllForUser(account.Id);
+                                 $"'{account.Id}' could not be removed. It may have lost its roles on this meter already, " +
+                                  "and can then sign in and do nothing until it is either removed or given a role again.");
 
             meter.Log.Notice(
                 $"'{user.Id}' removed the account '{account.Id}'" +
@@ -511,9 +509,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// organization, so those memberships go first - every one of them and
         /// not only this meter's: an edge to something else would otherwise
         /// leave an account that cannot be removed for a reason nothing here
-        /// says. Its groups and its password go with it in Hermod itself, since
-        /// ce716a40; before that, an account made again under the same name
-        /// found both.
+        /// says. Its groups, its password and its sessions go with it in
+        /// Hermod itself: the groups and the password since ce716a40, the
+        /// sessions since db40ddf3. Before that, an account made again under
+        /// the same name found them.
         /// </remarks>
         private async Task<Boolean> Remove(IUser  Account,
                                            IUser  By)

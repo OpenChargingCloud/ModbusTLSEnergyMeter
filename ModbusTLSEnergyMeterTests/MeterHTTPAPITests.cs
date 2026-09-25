@@ -1013,6 +1013,58 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+        #region AnAccountMadeAgain_IsNotSignedInByTheSessionsOfTheOneRemoved()
+
+        /// <summary>
+        /// The sessions of a removed account end with it: none of them signs in
+        /// the account made again under the same name - neither straight away
+        /// nor after a restart, which a session of somebody else outlives.
+        /// </summary>
+        /// <remarks>
+        /// A session names its account by name, so one left behind signed in
+        /// whoever was given that name next. Hermod ends them itself since
+        /// db40ddf3; before that, the meter did after removing an account.
+        /// </remarks>
+        [Test]
+        public async Task AnAccountMadeAgain_IsNotSignedInByTheSessionsOfTheOneRemoved()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                        new { userId = "rory", role = "systemadmin" });
+
+            using var rory = await SignIn("rory", created?["password"]?.ToString()!);
+
+            Assert.That(await administrator.StatusOf(HttpMethod.Delete, "api/v1/accounts/rory"),
+                        Is.EqualTo(HttpStatusCode.OK));
+
+            var (status, again) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                           new { userId = "rory", role = "guest" });
+
+            Assert.That(status, Is.EqualTo(HttpStatusCode.Created), $"{again}");
+
+            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/me"),
+                        Is.EqualTo(HttpStatusCode.Unauthorized),
+                        "a session of the account removed signs in the one made again");
+
+            await RestartMeter();
+
+            using var administratorAfterwards = NewBrowser(administrator.Cookies);
+            using var roryAfterwards          = NewBrowser(rory.Cookies);
+
+            Assert.That(await administratorAfterwards.StatusOf(HttpMethod.Get, "api/v1/me"),
+                        Is.EqualTo(HttpStatusCode.OK),
+                        "a session outlives a restart - without that, the next check proves nothing");
+
+            Assert.That(await roryAfterwards.StatusOf(HttpMethod.Get, "api/v1/me"),
+                        Is.EqualTo(HttpStatusCode.Unauthorized),
+                        "and after a restart");
+
+        }
+
+        #endregion
+
         #region TheStrongestRoleFromBefore_IsTheOneKept()
 
         /// <summary>
@@ -1251,8 +1303,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    DataSource:       "test"
                );
 
-        private Browser NewBrowser()
-            => new ($"http://127.0.0.1:{httpPort}/");
+        private Browser NewBrowser(CookieContainer? Cookies = null)
+            => new ($"http://127.0.0.1:{httpPort}/", Cookies);
 
         private async Task<Browser> SignInAsAdministrator()
             => await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, meter!.GeneratedPassword!);
@@ -1292,10 +1344,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             private readonly HttpClient client;
 
-            public Browser(String BaseAddress)
+            /// <summary>
+            /// The cookies this browser holds: handed to another browser, they
+            /// carry its sessions to the meter on another port.
+            /// </summary>
+            public CookieContainer Cookies { get; }
+
+            public Browser(String            BaseAddress,
+                           CookieContainer?  Cookies = null)
             {
 
-                client = new HttpClient(new HttpClientHandler { UseCookies = true }) {
+                this.Cookies = Cookies ?? new CookieContainer();
+
+                client = new HttpClient(new HttpClientHandler { UseCookies = true, CookieContainer = this.Cookies }) {
                              BaseAddress = new Uri(BaseAddress),
                              Timeout     = TimeSpan.FromSeconds(30)
                          };
