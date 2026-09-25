@@ -246,20 +246,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                      CurrentUserId:          user.Id
                                  );
 
-            // Hermod keeps the password of an account it removes, so a new
-            // account under the name of one removed before has one already:
-            // the overload above refuses to replace it without being told it,
-            // and the one for a list of users - a reset, as below - replaces
-            // it, while refusing a user with no password at all. Hence the
-            // one, and then the other.
-            if (changed.Result == CommandResult.Error)
-                changed  = await accounts.ChangePassword(
-                                     [ newUser ],
-                                     password,
-                                     SuppressNotifications:  true,
-                                     CurrentUserId:          user.Id
-                                 );
-
             var joined   = changed.Result == CommandResult.Success
                                ? await accounts.AddUserToUserGroup(newUser, EdgeLabelOf(role), group, CurrentUserId: user.Id)
                                : null;
@@ -518,23 +504,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #region (private) Remove(Account, By)
 
         /// <summary>
-        /// Take an account out of every group and organization it is in, and
-        /// then away.
+        /// Take an account out of every organization it is in, and then away.
         /// </summary>
         /// <remarks>
-        /// Hermod will not delete a user who is still a member of anything, so
-        /// the memberships go first - every one of them and not only this
-        /// meter's: an edge to something else would otherwise leave an account
-        /// that cannot be removed for a reason nothing here says.
+        /// Hermod will not delete a user who is still a member of an
+        /// organization, so those memberships go first - every one of them and
+        /// not only this meter's: an edge to something else would otherwise
+        /// leave an account that cannot be removed for a reason nothing here
+        /// says. Its groups and its password go with it in Hermod itself, since
+        /// ce716a40; before that, an account made again under the same name
+        /// found both.
         /// </remarks>
         private async Task<Boolean> Remove(IUser  Account,
                                            IUser  By)
         {
-
-            if (Account is User person)
-                foreach (var group in accounts.UserGroups.ToArray())
-                    if (group is UserGroup userGroup && accounts.IsMember(person, userGroup.Id))
-                        await accounts.RemoveUserFromUserGroup(person, userGroup, CurrentUserId: By.Id);
 
             foreach (var edge in Account.User2Organization_OutEdges.ToArray())
                 await accounts.RemoveUserFromOrganization(Account, edge.EdgeLabel, edge.Target, CurrentUserId: By.Id);

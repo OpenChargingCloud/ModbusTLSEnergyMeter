@@ -974,10 +974,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// neither straight away nor after a restart.
         /// </summary>
         /// <remarks>
-        /// Hermod's groups hold their members by name, and removing an account
-        /// does not take it out of them. So the meter takes it out first; were
-        /// it not to, a guest made under an old administrator's name would be
-        /// an administrator.
+        /// Hermod's groups hold their members by name. Until ce716a40 removing
+        /// an account left it in them, and left its password behind: a guest
+        /// made under an old administrator's name was an administrator, and
+        /// could not be given a password of its own. The meter worked around
+        /// both; this is what says Hermod does it now.
         /// </remarks>
         [Test]
         public async Task AnAccountMadeAgain_HoldsOnlyTheRoleItIsGiven()
