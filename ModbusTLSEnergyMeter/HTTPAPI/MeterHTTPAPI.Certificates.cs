@@ -91,7 +91,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                new JProperty("modbus",   meter.ModbusCertificates.ToJSON()),
                                new JProperty("web",      meter.WebCertificates.   ToJSON()),
                                new JProperty("clients",  meter.ClientTrust.       ToJSON()),
-                               new JProperty("https",    meter.HTTPSEnabled),
+                               new JProperty("https",    meter.HTTPS),
 
                                // What a request may ask for, with what each one
                                // is called and what somebody choosing it should

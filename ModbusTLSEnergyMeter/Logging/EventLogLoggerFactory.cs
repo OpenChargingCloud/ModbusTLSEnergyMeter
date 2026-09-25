@@ -19,6 +19,8 @@
 
 using Newtonsoft.Json.Linq;
 
+using cloud.charging.open.protocols.WWCP.Node.Logging;
+
 using MSLogging = Microsoft.Extensions.Logging;
 
 #endregion
@@ -28,7 +30,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Logging
 
     /// <summary>
     /// Hands Hermod an <see cref="MSLogging.ILogger"/> that writes into this
-    /// meter's event log.
+    /// meter's event log - the node's.
     /// </summary>
     /// <remarks>
     /// Hermod's own parts - the HTTP server, the Modbus/TLS frontend - say what

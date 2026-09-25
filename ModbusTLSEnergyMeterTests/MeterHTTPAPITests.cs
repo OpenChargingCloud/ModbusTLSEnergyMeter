@@ -31,7 +31,9 @@ using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Configuration;
+
+using cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI;
 
 using NetIPAddress = System.Net.IPAddress;
 
@@ -74,27 +76,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Directory.CreateDirectory(workingDirectory);
 
-            var pkiDirectory = Path.Combine(workingDirectory, "pki");
-
-            await new ModbusPKI().BuildPKI(pkiDirectory);
+            await new ModbusPKI().BuildPKI(Path.Combine(workingDirectory, "pki"));
 
             httpPort = FreeTCPPort();
+            meter    = NewMeter();
 
-            meter = new ModbusTLSEnergyMeter(
-                        SerialNumber:       "meter-test-001",
-                        ServerPfxPath:      Path.Combine(pkiDirectory, "server.pfx"),
-                        ServerPfxPassword:  "demo",
-                        ClientCACertPath:   Path.Combine(pkiDirectory, "issuing-clients-ca.crt"),
-                        ListenAddress:      NetIPAddress.Loopback,
-                        ListenPort:         FreeTCPPort(),
-                        HTTPHostname:       IPv4Address.Localhost,
-                        HTTPPort:           IPPort.Parse(httpPort),
-                        DataPath:           Path.Combine(workingDirectory, "data"),
-                        ConfigFile:         new MeterConfigFile(Path.Combine(workingDirectory, "configuration.json")),
-                        LogToConsole:       false
-                    );
-
-            await meter.StartAsync();
+            await meter.Start();
 
         }
 
@@ -134,13 +121,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
 
-                Assert.That(me?["userId"]?.ToString(),        Is.EqualTo("admin"));
-                Assert.That(me?["organization"]?.ToString(),  Is.EqualTo(ModbusTLSEnergyMeter.MeterOrganizationId));
-                Assert.That(me?["role"]?.ToString(),          Is.EqualTo("IsAdmin"));
+                Assert.That(me?["userId"]?.ToString(),        Is.EqualTo(ModbusTLSEnergyMeter.DefaultAdminUser));
+                Assert.That(me?["organization"]?.ToString(),  Is.EqualTo(ModbusTLSEnergyMeter.MeterKind.Organization));
+                Assert.That(me?["role"]?.ToString(),          Is.EqualTo("systemadmin"));
+                Assert.That(me?["roles"]?.Values<String>(),   Is.EqualTo(new[] { "systemadmin" }));
 
                 // The readable form travels with it, because every page that
                 // tells somebody what they may not do names their role in the
-                // same sentence, and "IsAdmin" is not a thing anybody says.
+                // same sentence, and "systemadmin" is not a thing anybody says.
                 Assert.That(me?["roleTitle"]?.ToString(),        Is.EqualTo("Administrator"));
                 Assert.That(me?["roleDescription"]?.ToString(),  Does.Contain("Everything"));
 
@@ -181,7 +169,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #region AGuest_MayReadTheMeter_AndNothingElse()
 
         /// <summary>
-        /// A guest of the meter's organization sees what it is measuring, and
+        /// A guest of this meter sees what it is measuring, and
         /// is refused everything else - with a 403, which says that signing in
         /// again will not help.
         /// </summary>
@@ -189,14 +177,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         public async Task AGuest_MayReadTheMeter_AndNothingElse()
         {
 
-            await CreateUserAsync("gwen", "Correct-Horse-1", User2OrganizationEdgeLabel.IsGuest);
+            await CreateUserAsync("gwen", "Correct-Horse-1", MeterRole.Guest);
 
             using var browser = await SignIn("gwen", "Correct-Horse-1");
 
             var me = await browser.GetJSON("api/v1/me");
 
             Assert.Multiple(() => {
-                Assert.That(me?["role"]?.ToString(),                Is.EqualTo("IsGuest"));
+                Assert.That(me?["role"]?.ToString(),                Is.EqualTo("guest"));
                 Assert.That(me?["roleTitle"]?.ToString(),           Is.EqualTo("Guest"));
                 Assert.That(me?["permissions"]?.Values<String>(),   Is.EquivalentTo(new[] { "ReadMeter" }));
             });
@@ -237,7 +225,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         public async Task AReadOnlyAdministrator_MayLookButNotTouch()
         {
 
-            await CreateUserAsync("rory", "Correct-Horse-2", User2OrganizationEdgeLabel.IsAdminReadOnly);
+            await CreateUserAsync("rory", "Correct-Horse-2", MeterRole.Auditor);
 
             using var browser = await SignIn("rory", "Correct-Horse-2");
 
@@ -261,7 +249,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #region SomebodyWithNoRoleHere_IsRefusedEverything()
 
         /// <summary>
-        /// An account that belongs to no organization of this meter holds no
+        /// An account that is in none of this meter's groups holds no
         /// permission at all - not even to look.
         /// </summary>
         /// <remarks>
@@ -350,7 +338,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(json?["steps"]?[0]?["text"]?.ToString(),   Is.EqualTo("'not a host at all' is neither a name nor an address that can be asked."));
                 Assert.That(json?["steps"]?[0]?["level"]?.ToString(),  Is.EqualTo("error"));
 
-                Assert.That(said.Select(entry => entry.Message),       Is.EqualTo(new[] { "'admin' asked this meter to test the time server 'not a host at all'." }));
+                Assert.That(said.Select(entry => entry.Message),       Is.EqualTo(new[] { $"'{ModbusTLSEnergyMeter.DefaultAdminUser}' asked this meter to test the time server 'not a host at all'." }));
                 Assert.That(said.Select(entry => entry.Tags),          Has.All.EquivalentTo(new[] { "nts", "test", "web" }));
 
             });
@@ -369,7 +357,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         public async Task TheRoleTable_SaysWhatEachRoleGrants()
         {
 
-            await CreateUserAsync("gwen", "Correct-Horse-1", User2OrganizationEdgeLabel.IsGuest);
+            await CreateUserAsync("gwen", "Correct-Horse-1", MeterRole.Guest);
 
             using var browser = await SignIn("gwen", "Correct-Horse-1");
 
@@ -380,15 +368,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(rolesStatus, Is.EqualTo(HttpStatusCode.OK), "a guest may read what the roles mean");
 
                 Assert.That(roles?["roles"]?.Select(role => role["role"]?.ToString()),
-                            Is.EquivalentTo(new[] { "IsAdmin", "IsAdminReadOnly", "IsMember", "IsGuest" }));
+                            Is.EquivalentTo(new[] { "systemadmin", "auditor", "viewer", "guest" }));
 
                 // What the table promises has to be what the meter enforces,
                 // otherwise it is a sentence somebody reads and believes.
-                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "IsMember")?["permissions"]?.Values<String>(),
+                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "viewer")?["permissions"]?.Values<String>(),
                             Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration" }));
 
-                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "IsMember")?["title"]?.ToString(),
-                            Is.EqualTo("Member"));
+                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "viewer")?["title"]?.ToString(),
+                            Is.EqualTo("Viewer"));
 
             });
 
@@ -416,7 +404,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var (status, created) = await administrator.Call(
                                               HttpMethod.Post,
                                               "api/v1/accounts",
-                                              new { userId = "rory", name = "Rory", role = "IsMember" }
+                                              new { userId = "rory", name = "Rory", role = "viewer" }
                                           );
 
             var password = created?["password"]?.ToString();
@@ -425,7 +413,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(status,                                    Is.EqualTo(HttpStatusCode.Created));
                 Assert.That(created?["account"]?["userId"]?.ToString(), Is.EqualTo("rory"));
-                Assert.That(created?["account"]?["role"]?.ToString(),   Is.EqualTo("IsMember"));
+                Assert.That(created?["account"]?["role"]?.ToString(),   Is.EqualTo("viewer"));
                 Assert.That(created?["account"]?["isYou"]?.Value<Boolean>(), Is.False);
 
                 // No password was given, so the meter made one and this is the
@@ -442,7 +430,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
                 Assert.That(me?["userId"]?.ToString(),              Is.EqualTo("rory"));
-                Assert.That(me?["role"]?.ToString(),                Is.EqualTo("IsMember"));
+                Assert.That(me?["role"]?.ToString(),                Is.EqualTo("viewer"));
                 Assert.That(me?["permissions"]?.Values<String>(),   Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration" }));
             });
 
@@ -466,7 +454,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var (_, created) = await administrator.Call(
                                          HttpMethod.Post,
                                          "api/v1/accounts",
-                                         new { userId = "rory", role = "IsMember" }
+                                         new { userId = "rory", role = "viewer" }
                                      );
 
             using var rory = await SignIn("rory", created?["password"]?.ToString()!);
@@ -505,7 +493,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                             Is.EqualTo(HttpStatusCode.Forbidden),           "may not see the accounts");
 
                 Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/accounts",
-                                                new { userId = "smuggled", role = "IsAdmin" }),
+                                                new { userId = "smuggled", role = "systemadmin" }),
                             Is.EqualTo(HttpStatusCode.Forbidden),           "and may not make itself company");
 
             });
@@ -531,10 +519,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var administrator = await SignInAsAdministrator();
 
-            await administrator.Call(HttpMethod.Post, "api/v1/accounts", new { userId = "rory", role = "IsGuest" });
+            await administrator.Call(HttpMethod.Post, "api/v1/accounts", new { userId = "rory", role = "guest" });
 
             var (again,   conflict) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
-                                                               new { userId = "rory", role = "IsGuest" });
+                                                               new { userId = "rory", role = "guest" });
 
             var (unknown, refused)  = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
                                                                new { userId = "nora", role = "follows" });
@@ -548,7 +536,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(conflict?["error"]?.ToString(), Does.Contain("already"));
 
                 Assert.That(unknown,                        Is.EqualTo(HttpStatusCode.BadRequest));
-                Assert.That(refused?["error"]?.ToString(),  Does.Contain("IsMember"), "and says which roles there are");
+                Assert.That(refused?["error"]?.ToString(),  Does.Contain("viewer"), "and says which roles there are");
 
                 Assert.That(none,                           Is.EqualTo(HttpStatusCode.BadRequest));
                 Assert.That(missing?["error"]?.ToString(),  Does.Contain("role"));
@@ -572,10 +560,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var administrator = await SignInAsAdministrator();
 
-            var (demoted, why)   = await administrator.Call(HttpMethod.Put, "api/v1/accounts/admin/role",
-                                                            new { role = "IsGuest" });
+            var (demoted, why)   = await administrator.Call(HttpMethod.Put, $"api/v1/accounts/{ModbusTLSEnergyMeter.DefaultAdminUser}/role",
+                                                            new { role = "guest" });
 
-            var (removed, why2)  = await administrator.Call(HttpMethod.Delete, "api/v1/accounts/admin");
+            var (removed, why2)  = await administrator.Call(HttpMethod.Delete, $"api/v1/accounts/{ModbusTLSEnergyMeter.DefaultAdminUser}");
 
             Assert.Multiple(() => {
 
@@ -591,7 +579,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             // that half-happened would be worse than either outcome.
             var me = await administrator.GetJSON("api/v1/me");
 
-            Assert.That(me?["role"]?.ToString(), Is.EqualTo("IsAdmin"));
+            Assert.That(me?["role"]?.ToString(), Is.EqualTo("systemadmin"));
 
         }
 
@@ -610,11 +598,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var administrator = await SignInAsAdministrator();
 
             var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
-                                                        new { userId = "nora", role = "IsAdmin" });
+                                                        new { userId = "nora", role = "systemadmin" });
 
             using var nora = await SignIn("nora", created?["password"]?.ToString()!);
 
-            var (removed, json) = await nora.Call(HttpMethod.Delete, "api/v1/accounts/admin");
+            var (removed, json) = await nora.Call(HttpMethod.Delete, $"api/v1/accounts/{ModbusTLSEnergyMeter.DefaultAdminUser}");
 
             Assert.Multiple(() => {
                 Assert.That(removed,                            Is.EqualTo(HttpStatusCode.OK), $"{json}");
@@ -647,7 +635,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var administrator = await SignInAsAdministrator();
 
             var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
-                                                        new { userId = "rory", role = "IsAdminReadOnly" });
+                                                        new { userId = "rory", role = "auditor" });
 
             var password = created?["password"]?.ToString()!;
 
@@ -658,11 +646,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                         "a read-only administrator may ask a time server whether it answers");
 
             var (changed, account) = await administrator.Call(HttpMethod.Put, "api/v1/accounts/rory/role",
-                                                              new { role = "IsGuest" });
+                                                              new { role = "guest" });
 
             Assert.Multiple(() => {
                 Assert.That(changed,                            Is.EqualTo(HttpStatusCode.OK));
-                Assert.That(account?["role"]?.ToString(),       Is.EqualTo("IsGuest"));
+                Assert.That(account?["role"]?.ToString(),       Is.EqualTo("guest"));
                 Assert.That(account?["roleTitle"]?.ToString(),  Is.EqualTo("Guest"));
             });
 
@@ -677,7 +665,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var me = await again.GetJSON("api/v1/me");
 
             Assert.Multiple(() => {
-                Assert.That(me?["role"]?.ToString(),              Is.EqualTo("IsGuest"));
+                Assert.That(me?["role"]?.ToString(),              Is.EqualTo("guest"));
                 Assert.That(me?["permissions"]?.Values<String>(), Is.EquivalentTo(new[] { "ReadMeter" }));
             });
 
@@ -699,7 +687,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var administrator = await SignInAsAdministrator();
 
-            var (status, json) = await administrator.Call(HttpMethod.Put, "api/v1/accounts/admin/password", new { });
+            var (status, json) = await administrator.Call(HttpMethod.Put, $"api/v1/accounts/{ModbusTLSEnergyMeter.DefaultAdminUser}/password", new { });
 
             Assert.Multiple(() => {
                 Assert.That(status,                     Is.EqualTo(HttpStatusCode.Conflict));
@@ -729,7 +717,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var administrator = await SignInAsAdministrator();
 
             var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
-                                                        new { userId = "rory", role = "IsMember" });
+                                                        new { userId = "rory", role = "viewer" });
 
             using var rory = await SignIn("rory", created?["password"]?.ToString()!);
 
@@ -772,7 +760,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                             Is.EqualTo(HttpStatusCode.NotFound));
 
                 Assert.That(await administrator.StatusOf(HttpMethod.Put, "api/v1/accounts/nobody/role",
-                                                         new { role = "IsGuest" }),
+                                                         new { role = "guest" }),
                             Is.EqualTo(HttpStatusCode.NotFound));
 
                 Assert.That(await administrator.StatusOf(HttpMethod.Put, "api/v1/accounts/nobody/password", new { }),
@@ -792,7 +780,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// only by proving they know the current one.
         /// </summary>
         /// <remarks>
-        /// Answered by Hermod at "/accounts/auth/password" rather than by this
+        /// Answered by Hermod at "/ext/auth/password" rather than by this
         /// API, which is why it is worth a test here: the meter's web interface
         /// depends on it being there and on it asking.
         /// </remarks>
@@ -803,24 +791,344 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var administrator = await SignInAsAdministrator();
 
             var (_, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
-                                                        new { userId = "rory", role = "IsMember" });
+                                                        new { userId = "rory", role = "viewer" });
 
             var given = created?["password"]?.ToString()!;
 
             using var rory = await SignIn("rory", given);
 
-            Assert.That(await rory.StatusOf(HttpMethod.Post, "accounts/auth/password",
+            Assert.That(await rory.StatusOf(HttpMethod.Post, "ext/auth/password",
                                             new { currentPassword = "not-the-one", newPassword = "Correct-Horse-9" }),
                         Is.EqualTo(HttpStatusCode.Forbidden),
                         "not without the current one");
 
-            Assert.That(await rory.StatusOf(HttpMethod.Post, "accounts/auth/password",
+            Assert.That(await rory.StatusOf(HttpMethod.Post, "ext/auth/password",
                                             new { currentPassword = given, newPassword = "Correct-Horse-9" }),
                         Is.EqualTo(HttpStatusCode.NoContent));
 
             using var afterwards = await SignIn("rory", "Correct-Horse-9");
 
-            Assert.That((await afterwards.GetJSON("api/v1/me"))?["role"]?.ToString(), Is.EqualTo("IsMember"));
+            Assert.That((await afterwards.GetJSON("api/v1/me"))?["role"]?.ToString(), Is.EqualTo("viewer"));
+
+        }
+
+        #endregion
+
+
+        #region ARoleByItsOldName_IsTheGroupOfThatRole()
+
+        /// <summary>
+        /// A script from before the groups asks for "IsAdminReadOnly", and gets
+        /// what that always meant: an auditor.
+        /// </summary>
+        /// <remarks>
+        /// The names changed and what they grant did not, so a script that made
+        /// accounts yesterday makes the same accounts today - and is told which
+        /// group they are in, rather than having an old name echoed back.
+        /// </remarks>
+        [Test]
+        public async Task ARoleByItsOldName_IsTheGroupOfThatRole()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (status, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
+                                                             new { userId = "rory", role = "IsAdminReadOnly" });
+
+            Assert.Multiple(() => {
+
+                Assert.That(status,                                    Is.EqualTo(HttpStatusCode.Created), $"{created}");
+                Assert.That(created?["account"]?["role"]?.ToString(),  Is.EqualTo("auditor"));
+
+                Assert.That(meter!.RolesOf(meter.ExtAPI.Users.First(user => user.Id.ToString() == "rory")),
+                            Is.EqualTo(new[] { MeterRole.Auditor }),
+                            "and it is the group that says so");
+
+            });
+
+        }
+
+        #endregion
+
+        #region AnAccountFromBeforeTheGroups_KeepsItsRole()
+
+        /// <summary>
+        /// An account a meter from before the groups made - a role in its
+        /// organization, and no group - is in the group of that role once the
+        /// meter starts again, and may do what it could before.
+        /// </summary>
+        /// <remarks>
+        /// Made while the meter runs and asked after a restart, because the
+        /// start is when it is put right, before anybody can sign in. Until then
+        /// the edge grants nothing, which is the other half of what is asserted:
+        /// what somebody may do comes from the groups, and only from them.
+        /// </remarks>
+        [Test]
+        public async Task AnAccountFromBeforeTheGroups_KeepsItsRole()
+        {
+
+            await CreateUserFromBeforeTheGroupsAsync("olga", "Correct-Horse-4", User2OrganizationEdgeLabel.IsAdminReadOnly);
+
+            using (var before = await SignIn("olga", "Correct-Horse-4"))
+                Assert.That((await before.GetJSON("api/v1/me"))?["permissions"]?.Values<String>(),
+                            Is.Empty,
+                            "a role in the organization grants nothing by itself");
+
+            await RestartMeter();
+
+            using var after = await SignIn("olga", "Correct-Horse-4");
+
+            var me = await after.GetJSON("api/v1/me");
+
+            Assert.Multiple(() => {
+                Assert.That(me?["role"]?.ToString(),               Is.EqualTo("auditor"));
+                Assert.That(me?["permissions"]?.Values<String>(),  Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration", "RunDiagnostics" }));
+            });
+
+        }
+
+        #endregion
+
+        #region AnAccountAlreadyInAGroup_IsLeftAsItIs()
+
+        /// <summary>
+        /// Somebody who was given a role since - in a group - keeps that one,
+        /// whatever their old role in the organization said.
+        /// </summary>
+        [Test]
+        public async Task AnAccountAlreadyInAGroup_IsLeftAsItIs()
+        {
+
+            await CreateUserFromBeforeTheGroupsAsync("olga", "Correct-Horse-4", User2OrganizationEdgeLabel.IsAdmin);
+
+            var olga = meter!.ExtAPI.Users.First(user => user.Id.ToString() == "olga");
+
+            Assert.That(meter.ExtAPI.TryGetUserGroup(MeterRole.Guest.GroupId, out var guests) && guests is UserGroup, Is.True);
+
+            await meter.ExtAPI.AddUserToUserGroup((User) olga, User2UserGroupEdgeLabel.IsMember, (UserGroup) guests!);
+
+            await RestartMeter();
+
+            using var after = await SignIn("olga", "Correct-Horse-4");
+
+            var me = await after.GetJSON("api/v1/me");
+
+            Assert.Multiple(() => {
+                Assert.That(me?["roles"]?.Values<String>(),        Is.EqualTo(new[] { "guest" }),
+                            "an administrator of the organization from before is not made one again");
+                Assert.That(me?["permissions"]?.Values<String>(),  Is.EquivalentTo(new[] { "ReadMeter" }));
+            });
+
+        }
+
+        #endregion
+
+        #region TheAccountsOfAMeterFromBefore_AreFoundUnderTheirNewName()
+
+        /// <summary>
+        /// The accounts file of a meter from before, under the name Hermod gave
+        /// it, is found and renamed to the one every node uses - and nobody is
+        /// handed a new administrator's password in place of the one they wrote
+        /// down.
+        /// </summary>
+        [Test]
+        public async Task TheAccountsOfAMeterFromBefore_AreFoundUnderTheirNewName()
+        {
+
+            var password = meter!.GeneratedPassword!;
+
+            await meter.DisposeAsync();
+            meter = null;
+
+            var accounts = Path.Combine(workingDirectory!, "data", "UsersAPI");
+
+            // The file as a meter from before left it.
+            File.Move(Path.Combine(accounts, ModbusTLSEnergyMeter.DefaultAccountsDatabaseFile),
+                      Path.Combine(accounts, HTTPExtAPI.DefaultHTTPExtAPI_DatabaseFileName));
+
+            httpPort = FreeTCPPort();
+            meter    = NewMeter();
+
+            await meter.Start();
+
+            Assert.Multiple(() => {
+                Assert.That(meter.GeneratedPassword,                                                              Is.Null, "no new administrator was made");
+                Assert.That(File.Exists(Path.Combine(accounts, ModbusTLSEnergyMeter.DefaultAccountsDatabaseFile)),  Is.True);
+                Assert.That(File.Exists(Path.Combine(accounts, HTTPExtAPI.DefaultHTTPExtAPI_DatabaseFileName)),     Is.False);
+            });
+
+            using var administrator = await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, password);
+
+            Assert.That((await administrator.GetJSON("api/v1/me"))?["role"]?.ToString(), Is.EqualTo("systemadmin"));
+
+        }
+
+        #endregion
+
+
+        #region AnAccountMadeAgain_HoldsOnlyTheRoleItIsGiven()
+
+        /// <summary>
+        /// An account removed and made again under the same name holds the
+        /// role it is given now, and not the one the account before it held -
+        /// neither straight away nor after a restart.
+        /// </summary>
+        /// <remarks>
+        /// Hermod's groups hold their members by name, and removing an account
+        /// does not take it out of them. So the meter takes it out first; were
+        /// it not to, a guest made under an old administrator's name would be
+        /// an administrator.
+        /// </remarks>
+        [Test]
+        public async Task AnAccountMadeAgain_HoldsOnlyTheRoleItIsGiven()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            await administrator.Call(HttpMethod.Post, "api/v1/accounts", new { userId = "rory", role = "systemadmin" });
+
+            Assert.That(await administrator.StatusOf(HttpMethod.Delete, "api/v1/accounts/rory"),
+                        Is.EqualTo(HttpStatusCode.OK));
+
+            var (status, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts", new { userId = "rory", role = "guest" });
+            var password          = created?["password"]?.ToString()!;
+
+            Assert.That(status, Is.EqualTo(HttpStatusCode.Created), $"{created}");
+
+            using (var rory = await SignIn("rory", password))
+                Assert.That((await rory.GetJSON("api/v1/me"))?["roles"]?.Values<String>(),
+                            Is.EqualTo(new[] { "guest" }),
+                            "the account made again holds the role of the one removed");
+
+            await RestartMeter();
+
+            using var afterwards = await SignIn("rory", password);
+
+            Assert.That((await afterwards.GetJSON("api/v1/me"))?["roles"]?.Values<String>(),
+                        Is.EqualTo(new[] { "guest" }),
+                        "and after a restart");
+
+        }
+
+        #endregion
+
+        #region TheStrongestRoleFromBefore_IsTheOneKept()
+
+        /// <summary>
+        /// Somebody who was made both a member and an administrator of the
+        /// organization before the groups was an administrator, and is one
+        /// afterwards - in whichever order the two were given.
+        /// </summary>
+        [Test]
+        public async Task TheStrongestRoleFromBefore_IsTheOneKept()
+        {
+
+            await CreateUserFromBeforeTheGroupsAsync("olga", "Correct-Horse-4",
+                                                     User2OrganizationEdgeLabel.IsMember,
+                                                     User2OrganizationEdgeLabel.IsAdmin);
+
+            await RestartMeter();
+
+            using var after = await SignIn("olga", "Correct-Horse-4");
+
+            Assert.That((await after.GetJSON("api/v1/me"))?["roles"]?.Values<String>(),
+                        Is.EqualTo(new[] { "systemadmin" }));
+
+        }
+
+        #endregion
+
+        #region SomebodyInTwoGroups_IsNamedByTheStronger()
+
+        /// <summary>
+        /// An account in two of the meter's groups holds both roles, and is
+        /// called by the stronger one wherever a single name is asked for.
+        /// </summary>
+        [Test]
+        public async Task SomebodyInTwoGroups_IsNamedByTheStronger()
+        {
+
+            await CreateUserAsync("gwen", "Correct-Horse-1", MeterRole.Guest);
+
+            var gwen = meter!.ExtAPI.Users.First(user => user.Id.ToString() == "gwen");
+
+            Assert.That(meter.ExtAPI.TryGetUserGroup(MeterRole.Auditor.GroupId, out var auditors) && auditors is UserGroup, Is.True);
+
+            await meter.ExtAPI.AddUserToUserGroup((User) gwen, User2UserGroupEdgeLabel.IsMember, (UserGroup) auditors!);
+
+            using var browser = await SignIn("gwen", "Correct-Horse-1");
+
+            var me = await browser.GetJSON("api/v1/me");
+
+            Assert.Multiple(() => {
+                Assert.That(me?["role"]?.ToString(),               Is.EqualTo("auditor"));
+                Assert.That(me?["roleTitle"]?.ToString(),          Is.EqualTo("Auditor"));
+                Assert.That(me?["roles"]?.Values<String>(),        Is.EqualTo(new[] { "auditor", "guest" }));
+                Assert.That(me?["permissions"]?.Values<String>(),  Is.EquivalentTo(new[] { "ReadMeter", "ReadConfiguration", "RunDiagnostics" }));
+            });
+
+        }
+
+        #endregion
+
+        #region ARefusal_SaysWhichRolesMay()
+
+        /// <summary>
+        /// A 403 names the roles that may do what was refused, so that whoever
+        /// reads it knows whom to ask - and not only that the answer was no.
+        /// </summary>
+        [Test]
+        public async Task ARefusal_SaysWhichRolesMay()
+        {
+
+            await CreateUserAsync("gwen", "Correct-Horse-1", MeterRole.Guest);
+
+            using var browser = await SignIn("gwen", "Correct-Horse-1");
+
+            var (changing, notChanged) = await browser.Call(HttpMethod.Put, "api/v1/configuration/dns", new { enabled = false });
+            var (reading,  notRead)    = await browser.Call(HttpMethod.Get, "api/v1/configuration");
+
+            Assert.Multiple(() => {
+
+                Assert.That(changing,                                     Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(notChanged?["role"]?.ToString(),              Is.EqualTo("guest"));
+                Assert.That(notChanged?["rolesThatMay"]?.Values<String>(), Is.EqualTo(new[] { "systemadmin" }));
+
+                Assert.That(reading,                                      Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(notRead?["rolesThatMay"]?.Values<String>(),    Is.EqualTo(new[] { "systemadmin", "auditor", "viewer" }));
+
+            });
+
+        }
+
+        #endregion
+
+        #region TheLogBook_CanBeCheckedFromTheBrowser()
+
+        /// <summary>
+        /// The check of the log book on the Logs page walks the node's
+        /// metrological log - the files the meter signs - and says so.
+        /// </summary>
+        [Test]
+        public async Task TheLogBook_CanBeCheckedFromTheBrowser()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (status, json) = await administrator.Call(HttpMethod.Get, "api/v1/logs/verify");
+
+            Assert.Multiple(() => {
+
+                Assert.That(status,                                  Is.EqualTo(HttpStatusCode.OK), $"{json}");
+                Assert.That(json?["persisted"]?.Value<Boolean>(),    Is.True);
+                Assert.That(json?["intact"]?.Value<Boolean>(),       Is.True,  $"{json?["firstProblem"]}");
+                Assert.That(json?["metrological"]?.Value<Boolean>(), Is.True);
+
+                Assert.That(json?["path"]?.ToString(),               Is.EqualTo(meter!.MetrologicalLog!.Path));
+                Assert.That(json?["keyId"]?.ToString(),              Is.EqualTo(meter.MetrologicalLog.Signer.KeyId));
+                Assert.That(json?["publicKey"]?.ToString(),          Is.EqualTo(meter.MetrologicalLog.Signer.PublicKeyPem));
+
+            });
 
         }
 
@@ -830,51 +1138,129 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #region (private) Helpers
 
         /// <summary>
-        /// Make a user with the given role in the meter's organization, or with
-        /// no membership at all when the role is null.
+        /// The meter under test, on the working directory and the HTTP port
+        /// of this test: the same at the start and after a restart.
         /// </summary>
-        private async Task CreateUserAsync(String                       UserId,
-                                           String                       Password,
-                                           User2OrganizationEdgeLabel?  Role)
+        private ModbusTLSEnergyMeter NewMeter()
+
+            => new (
+                   SerialNumber:       "meter-test-001",
+                   ServerPfxPath:      Path.Combine(workingDirectory!, "pki", "server.pfx"),
+                   ServerPfxPassword:  "demo",
+                   ClientCACertPath:   Path.Combine(workingDirectory!, "pki", "issuing-clients-ca.crt"),
+                   ListenAddress:      NetIPAddress.Loopback,
+                   ListenPort:         FreeTCPPort(),
+                   HTTPHostname:       IPv4Address.Localhost,
+                   HTTPPort:           IPPort.Parse(httpPort),
+                   DataPath:           Path.Combine(workingDirectory!, "data"),
+                   ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
+                   LogToConsole:       false
+               );
+
+        /// <summary>
+        /// Stop the meter and start another on the same data directory - what
+        /// happens when the program is started again after an update.
+        /// </summary>
+        /// <remarks>
+        /// On a port of its own rather than the old one again: that one may
+        /// still be held by connections winding down, and what is under test is
+        /// the data directory, not how soon a port is given back.
+        /// </remarks>
+        private async Task RestartMeter()
         {
 
-            var api  = meter!.HTTPExtAPI;
+            await meter!.DisposeAsync();
 
-            var user = new User(
-                           User_Id.Parse(UserId),
-                           I18NString.Create(UserId),
-                           SimpleEMailAddress.Parse($"{UserId}@example.test"),
-                           IsAuthenticated:  true,
-                           DataSource:       "test"
-                       );
+            httpPort = FreeTCPPort();
+            meter    = NewMeter();
 
-            if (Role.HasValue &&
-                api.TryGetOrganization(Organization_Id.Parse(ModbusTLSEnergyMeter.MeterOrganizationId), out var organization) &&
-                organization is not null)
-            {
-                await api.AddUser(user, Role.Value, organization,
-                                  SkipNewUserEMail: true, SkipNewUserNotifications: true);
-            }
+            await meter.Start();
 
-            else
-                await api.AddUser(user,
-                                  SkipNewUserEMail: true, SkipNewUserNotifications: true);
+        }
+
+        /// <summary>
+        /// Make a user in the group of the given role, or in none of this
+        /// meter's groups when the role is null.
+        /// </summary>
+        private async Task CreateUserAsync(String      UserId,
+                                           String      Password,
+                                           MeterRole?  Role)
+        {
+
+            var api  = meter!.ExtAPI;
+            var user = NewUser(UserId);
+
+            await api.AddUser(user,
+                              SkipNewUserEMail: true, SkipNewUserNotifications: true);
+
+            await api.ChangePassword(user, Password, SuppressNotifications: true);
+
+            if (Role is null)
+                return;
+
+            Assert.That(api.TryGetUserGroup(Role.GroupId, out var group) && group is UserGroup, Is.True,
+                        $"There is no {Role.Name} group.");
+
+            var joined = await api.AddUserToUserGroup(user,
+                                                      Role == MeterRole.SystemAdmin
+                                                          ? User2UserGroupEdgeLabel.IsAdmin
+                                                          : User2UserGroupEdgeLabel.IsMember,
+                                                      (UserGroup) group!);
+
+            Assert.That(joined.IsSuccess, Is.True, $"'{UserId}' could not be put in the {Role.Name} group.");
+
+        }
+
+        /// <summary>
+        /// Make a user the way a meter from before the groups did: with roles
+        /// in its organization, in the order given, and in none of its groups.
+        /// </summary>
+        private async Task CreateUserFromBeforeTheGroupsAsync(String                               UserId,
+                                                              String                               Password,
+                                                              params User2OrganizationEdgeLabel[]  Roles)
+        {
+
+            var api = meter!.ExtAPI;
+
+            Assert.That(api.TryGetOrganization(Organization_Id.Parse(ModbusTLSEnergyMeter.MeterKind.Organization), out var organization) &&
+                        organization is not null,
+                        Is.True,
+                        "The meter has no organization to hold a role in.");
+
+            var user = NewUser(UserId);
+
+            await api.AddUser(user, Roles[0], organization!,
+                              SkipNewUserEMail: true, SkipNewUserNotifications: true);
+
+            foreach (var role in Roles.Skip(1))
+                Assert.That((await api.AddUserToOrganization(user, role, organization!)).IsSuccess,
+                            Is.True);
 
             await api.ChangePassword(user, Password, SuppressNotifications: true);
 
         }
 
+        private static User NewUser(String UserId)
+
+            => new (
+                   User_Id.Parse(UserId),
+                   I18NString.Create(UserId),
+                   SimpleEMailAddress.Parse($"{UserId}@example.test"),
+                   IsAuthenticated:  true,
+                   DataSource:       "test"
+               );
+
         private Browser NewBrowser()
             => new ($"http://127.0.0.1:{httpPort}/");
 
         private async Task<Browser> SignInAsAdministrator()
-            => await SignIn("admin", meter!.GeneratedPassword!);
+            => await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, meter!.GeneratedPassword!);
 
         private async Task<Browser> SignIn(String UserId, String Password)
         {
 
             var browser        = NewBrowser();
-            var (status, json) = await browser.Call(HttpMethod.Post, "accounts/auth/login",
+            var (status, json) = await browser.Call(HttpMethod.Post, "ext/auth/login",
                                                     new { login = UserId, password = Password });
 
             Assert.That(status, Is.EqualTo(HttpStatusCode.OK), $"'{UserId}' could not sign in: {json}");

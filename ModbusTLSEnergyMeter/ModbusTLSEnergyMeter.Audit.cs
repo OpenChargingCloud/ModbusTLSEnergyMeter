@@ -21,7 +21,7 @@ using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.Logging;
+using cloud.charging.open.protocols.WWCP.Node.Logging;
 
 #endregion
 
@@ -37,6 +37,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
     /// question it is usually opened for - who was turned away, how often, and
     /// with which certificate - and a refusal that leaves no trace is
     /// indistinguishable, afterwards, from a request nobody made.
+    ///
+    /// A request that writes, and every one that was refused, goes into the log
+    /// book as well: a write changes what this meter is or counts, and a
+    /// refusal is somebody who tried. A read that was allowed does not - a
+    /// charging station polling once a second would bury the log book under
+    /// eighty thousand lines a day that say nothing about what was measured.
     /// </remarks>
     public partial class ModbusTLSEnergyMeter
     {
@@ -72,39 +78,38 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                                : $"{role} {Describe(Info)} -> refused: {Info.DenyReason}";
 
-            Log.Log(
+            var data     = new JObject(
 
-                level,
-                message,
+                               new JProperty("connectionId",   Info.ConnectionId),
+                               new JProperty("peer",           Info.Peer),
+                               new JProperty("role",           Info.Role),
+                               new JProperty("unitId",         Info.UnitId),
+                               new JProperty("transactionId",  Info.TransactionId),
 
-                new JObject(
+                               new JProperty("functionCode",   Info.FunctionCodeLabel),
+                               new JProperty("function",       Info.FunctionCode.ToString()),
+                               new JProperty("address",        Info.Address),
+                               new JProperty("quantity",       Info.Quantity),
 
-                    new JProperty("connectionId",   Info.ConnectionId),
-                    new JProperty("peer",           Info.Peer),
-                    new JProperty("role",           Info.Role),
-                    new JProperty("unitId",         Info.UnitId),
-                    new JProperty("transactionId",  Info.TransactionId),
+                               new JProperty("allowed",        Info.Allowed),
+                               new JProperty("denyReason",     Info.DenyReason),
+                               new JProperty("exceptionCode",  Info.ExceptionCode?.ToString()),
+                               new JProperty("responseBytes",  Info.ResponseLength),
+                               new JProperty("duration_ms",    Info.Duration.TotalMilliseconds)
 
-                    new JProperty("functionCode",   Info.FunctionCodeLabel),
-                    new JProperty("function",       Info.FunctionCode.ToString()),
-                    new JProperty("address",        Info.Address),
-                    new JProperty("quantity",       Info.Quantity),
+                           );
 
-                    new JProperty("allowed",        Info.Allowed),
-                    new JProperty("denyReason",     Info.DenyReason),
-                    new JProperty("exceptionCode",  Info.ExceptionCode?.ToString()),
-                    new JProperty("responseBytes",  Info.ResponseLength),
-                    new JProperty("duration_ms",    Info.Duration.TotalMilliseconds)
+            // "denied" as a tag of its own, because "show me everything that
+            // was refused" is the one query this log exists for.
+            String[] tags  = Info.Allowed
+                                 ? [ "modbus", "request" ]
+                                 : [ "modbus", "request", "denied" ];
 
-                ),
+            if (!Info.Allowed || Info.FunctionCode.IsWrite())
+                Log.Metrological(level, message, data, tags);
 
-                // "denied" as a tag of its own, because "show me everything that
-                // was refused" is the one query this log exists for.
-                Info.Allowed
-                    ? [ "modbus", "request" ]
-                    : [ "modbus", "request", "denied" ]
-
-            );
+            else
+                Log.Log(level, message, data, tags);
 
         }
 

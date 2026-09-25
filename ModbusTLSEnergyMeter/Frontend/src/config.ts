@@ -12,11 +12,11 @@ export const config = {
     apiBase:          meta('api-base')         ?? '/api/v1',
 
     /**
-     * Signing in and out, which is Hermod's own account API and not the
-     * meter's: the meter knows what a role may do, the accounts know who
-     * somebody is. Two doors because they answer two different questions.
+     * Signing in and out, which is the node's HTTPExt API and not the meter's:
+     * the meter knows what a role may do, the accounts know who somebody is.
+     * Two doors because they answer two different questions.
      */
-    accountsBase:     meta('accounts-base')    ?? '/accounts',
+    extBase:          meta('ext-base')         ?? '/ext',
 
     frontendVersion:  meta('frontend-version') ?? '?',
     serverVersion:    meta('server-version')   ?? '?'

@@ -26,7 +26,7 @@ using NUnit.Framework;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Configuration;
 
 using NetIPAddress = System.Net.IPAddress;
 
@@ -124,7 +124,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                     HTTPHostname:       IPv4Address.Localhost,
                     HTTPPort:           IPPort.Parse(FreeTCPPort()),
                     DataPath:           DataPath,
-                    ConfigFile:         new MeterConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
+                    ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                     LogToConsole:       false);
 
         #endregion
@@ -148,7 +148,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             await using (var before = NewMeter())
             {
 
-                await before.StartAsync();
+                await before.Start();
 
                 scaleFactor = before.Device.EnergyCounters.ScaleFactor;
 
@@ -169,7 +169,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var onDisk = JObject.Parse(File.ReadAllText(StatePath));
 
             await using var after = NewMeter();
-            await after.StartAsync();
+            await after.Start();
 
             var back = after.Device.EnergyCounters;
 
@@ -223,14 +223,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await using (var before = NewMeter())
             {
-                await before.StartAsync();
+                await before.Start();
                 scaleFactor = before.Device.EnergyCounters.ScaleFactor;
             }
 
             WriteState(tenTimesTooMuch, 0, (Int16) (scaleFactor + 1));
 
             await using var after = NewMeter();
-            await after.StartAsync();
+            await after.Start();
 
             Assert.Multiple(() => {
 
@@ -264,7 +264,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await using var meter = NewMeter();
 
-            Assert.DoesNotThrowAsync(async () => await meter.StartAsync(),
+            Assert.DoesNotThrowAsync(async () => await meter.Start(),
                                      "an unreadable file stopped the meter from starting");
 
             Assert.That(Said(meter, "meter"), Does.Contain("start at zero"),
@@ -285,7 +285,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         {
 
             await using var meter = NewMeter();
-            await meter.StartAsync();
+            await meter.Start();
 
             var said = Said(meter, "meter");
 

@@ -37,6 +37,27 @@ describe('a time server turned back into its entry', () => {
 
     });
 
+    it('keeps what it is held to, which the next save of anything else would otherwise delete', () => {
+
+        const certificate = 'A'.repeat(64);
+        const root        = 'B'.repeat(64);
+
+        assert.deepEqual(entryOf(shown('ptbtime1.ptb.de.', { heldTo: { certificate, root: null, onMismatch: 'refuse' } }), usual),
+                         { hostname: 'ptbtime1.ptb.de', certificateFingerprint: certificate });
+
+        assert.deepEqual(entryOf(shown('ptbtime2.ptb.de.', { heldTo: { certificate: null, root, onMismatch: 'record' } }), usual),
+                         { hostname: 'ptbtime2.ptb.de', rootFingerprint: root, onMismatch: 'record' });
+
+    });
+
+    it('holds a server to nothing it was not held to', () => {
+
+        assert.deepEqual(entryOf(shown('ptbtime3.ptb.de.', { heldTo: null, certificate: 'C'.repeat(64) }), usual),
+                         { hostname: 'ptbtime3.ptb.de' },
+                         'the certificate a server showed is not a pin');
+
+    });
+
 });
 
 

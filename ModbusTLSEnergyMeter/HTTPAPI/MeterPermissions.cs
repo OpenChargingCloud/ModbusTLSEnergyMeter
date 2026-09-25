@@ -17,9 +17,13 @@
 
 #region Usings
 
+using System.Diagnostics.CodeAnalysis;
+
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+
+using cloud.charging.open.protocols.WWCP.Node;
 
 #endregion
 
@@ -122,46 +126,215 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
 
     /// <summary>
-    /// Which permissions a role in the meter's organization carries.
+    /// A role somebody signs in to this meter as: the user group that carries
+    /// it, what it is called, and what it lets them do.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each role is a user group of the same name, as it is on every node -
+    /// the vehicle's, the charging station's - and membership of that group
+    /// is what carries the permissions here. The meter used to say it with an
+    /// edge to its organization instead, "IsAdmin" to "IsGuest"; an account
+    /// from then is put in the group of the role it had, once, at a start - see
+    /// <see cref="ModbusTLSEnergyMeter"/>'s OnAccountsReady - and
+    /// <see cref="WasOrganizationRole"/> says which that is.
+    /// </para>
+    /// <para>
+    /// A closed set: a group this meter has never heard of grants nothing,
+    /// rather than quietly granting something. Three of the four change
+    /// nothing, and that is the point of them: somebody who has to watch what
+    /// a meter is doing - an operator on a night shift, a technician on the
+    /// phone, an auditor - should not have to be given the account that can
+    /// also clear the energy counters or replace the certificate.
+    /// </para>
+    /// </remarks>
+    /// <param name="Name">The role, and the name of the user group that carries it.</param>
+    /// <param name="Title">What it is called in a sentence.</param>
+    /// <param name="Permissions">What it grants.</param>
+    /// <param name="Description">What somebody holding it may do, in the words they would use about it.</param>
+    /// <param name="WasOrganizationRole">The role in the meter's organization it was before there were groups.</param>
+    public sealed record MeterRole(String                      Name,
+                                   String                      Title,
+                                   MeterPermissions            Permissions,
+                                   String                      Description,
+                                   User2OrganizationEdgeLabel  WasOrganizationRole)
+    {
+
+        #region Properties
+
+        /// <summary>
+        /// The user group whose members hold this role.
+        /// </summary>
+        public UserGroup_Id  GroupId
+            => UserGroup_Id.Parse(Name);
+
+        #endregion
+
+        #region Data
+
+        /// <summary>
+        /// Everything: the readings, the configuration, the meter mode and the
+        /// energy counters, the certificates, and the accounts. The group every
+        /// node names its administrators by, so that an account shared with the
+        /// other programs is an administrator of this meter too.
+        /// </summary>
+        public static readonly MeterRole  SystemAdmin  = new (
+                                                             WWCPNode.AdminRole,
+                                                             "Administrator",
+                                                             MeterPermissions.ReadMeter             |
+                                                             MeterPermissions.ReadConfiguration     |
+                                                             MeterPermissions.ChangeNetworkSettings |
+                                                             MeterPermissions.RunDiagnostics        |
+                                                             MeterPermissions.WriteRegisters        |
+                                                             MeterPermissions.ManageCertificates    |
+                                                             MeterPermissions.ManageAccounts,
+                                                             "Everything: the readings, the configuration, the meter mode and the energy " +
+                                                             "counters, the certificates this meter shows and the CAs it accepts, and these " +
+                                                             "accounts.",
+                                                             User2OrganizationEdgeLabel.IsAdmin
+                                                         );
+
+        /// <summary>
+        /// Sees everything but the accounts, may ask a time server whether it
+        /// answers, and changes nothing.
+        /// </summary>
+        public static readonly MeterRole  Auditor      = new (
+                                                             "auditor",
+                                                             "Auditor",
+                                                             MeterPermissions.ReadMeter             |
+                                                             MeterPermissions.ReadConfiguration     |
+                                                             MeterPermissions.RunDiagnostics,
+                                                             "Sees the readings, the whole configuration and the certificates, and may ask a " +
+                                                             "time server whether it answers. Changes nothing, and does not see these accounts.",
+                                                             User2OrganizationEdgeLabel.IsAdminReadOnly
+                                                         );
+
+        /// <summary>
+        /// Sees the readings and how this meter is configured.
+        /// </summary>
+        /// <remarks>
+        /// The name every node gives the role that may look and nothing else.
+        /// </remarks>
+        public static readonly MeterRole  Viewer       = new (
+                                                             "viewer",
+                                                             "Viewer",
+                                                             MeterPermissions.ReadMeter             |
+                                                             MeterPermissions.ReadConfiguration,
+                                                             "Sees the readings and how this meter is configured. Changes nothing and sends " +
+                                                             "nothing from it.",
+                                                             User2OrganizationEdgeLabel.IsMember
+                                                         );
+
+        /// <summary>
+        /// Sees the readings and nothing else.
+        /// </summary>
+        public static readonly MeterRole  Guest        = new (
+                                                             "guest",
+                                                             "Guest",
+                                                             MeterPermissions.ReadMeter,
+                                                             "Sees the readings and nothing else - for somebody who was given a look at a " +
+                                                             "meter without being given the site it stands on.",
+                                                             User2OrganizationEdgeLabel.IsGuest
+                                                         );
+
+        /// <summary>
+        /// Every role this meter hands out, strongest first - which is the order
+        /// a list of them should be shown in, so that the one that grants the
+        /// most is not the one somebody picks by accident at the top of a
+        /// dropdown.
+        /// </summary>
+        public static readonly IReadOnlyList<MeterRole>  All  = [ SystemAdmin, Auditor, Viewer, Guest ];
+
+        #endregion
+
+
+        #region (static) TryParse(Text, out Role)
+
+        /// <summary>
+        /// A role by the name of its group, in any case - or by the organization
+        /// role it used to be, so that a script written against the meter before
+        /// it had groups still names a role that exists.
+        /// </summary>
+        public static Boolean TryParse(String?                             Text,
+                                       [NotNullWhen(true)] out MeterRole?  Role)
+        {
+
+            var text = Text?.Trim();
+
+            Role = All.FirstOrDefault(role => String.Equals(role.Name,                           text, StringComparison.OrdinalIgnoreCase) ||
+                                              String.Equals(role.WasOrganizationRole.ToString(), text, StringComparison.OrdinalIgnoreCase));
+
+            return Role is not null;
+
+        }
+
+        #endregion
+
+        #region (static) Of(OrganizationRole)
+
+        /// <summary>
+        /// The role an account held as a role in the meter's organization, or
+        /// null for an edge that never meant one.
+        /// </summary>
+        public static MeterRole? Of(User2OrganizationEdgeLabel OrganizationRole)
+
+            => All.FirstOrDefault(role => role.WasOrganizationRole == OrganizationRole);
+
+        #endregion
+
+        #region ToJSON()
+
+        /// <summary>
+        /// A role as a page needs it: what it is called, what it does, and the
+        /// permissions behind the words.
+        /// </summary>
+        public JObject ToJSON()
+
+            => new (
+                   new JProperty("role",         Name),
+                   new JProperty("title",        Title),
+                   new JProperty("description",  Description),
+                   new JProperty("permissions",  new JArray(Permissions.Names()))
+               );
+
+        #endregion
+
+        #region (override) ToString()
+
+        public override String ToString()
+            => Name;
+
+        #endregion
+
+    }
+
+
+    /// <summary>
+    /// What a set of roles adds up to, and what it is called.
     /// </summary>
     public static class MeterPermissionsExtensions
     {
 
+        #region PermissionsOf(this Roles)
+
         /// <summary>
-        /// What the given organization role grants.
+        /// Everything the given roles grant together.
         /// </summary>
-        /// <remarks>
-        /// A closed set: a label this meter has never heard of grants nothing,
-        /// rather than being taken for a known one because it looks similar.
-        ///
-        /// A guest sees the readings and nothing else - which is the useful
-        /// half for somebody who was given a look at a meter without being
-        /// given the site it stands on.
-        /// </remarks>
-        public static MeterPermissions PermissionsOf(this User2OrganizationEdgeLabel Role)
+        public static MeterPermissions PermissionsOf(this IEnumerable<MeterRole> Roles)
+        {
 
-            => Role switch {
+            var permissions = MeterPermissions.None;
 
-                   User2OrganizationEdgeLabel.IsAdmin           => MeterPermissions.ReadMeter             |
-                                                                   MeterPermissions.ReadConfiguration     |
-                                                                   MeterPermissions.ChangeNetworkSettings |
-                                                                   MeterPermissions.RunDiagnostics        |
-                                                                   MeterPermissions.WriteRegisters        |
-                                                                   MeterPermissions.ManageCertificates    |
-                                                                   MeterPermissions.ManageAccounts,
+            foreach (var role in Roles)
+                permissions |= role.Permissions;
 
-                   User2OrganizationEdgeLabel.IsAdminReadOnly   => MeterPermissions.ReadMeter             |
-                                                                   MeterPermissions.ReadConfiguration     |
-                                                                   MeterPermissions.RunDiagnostics,
+            return permissions;
 
-                   User2OrganizationEdgeLabel.IsMember          => MeterPermissions.ReadMeter             |
-                                                                   MeterPermissions.ReadConfiguration,
+        }
 
-                   User2OrganizationEdgeLabel.IsGuest           => MeterPermissions.ReadMeter,
+        #endregion
 
-                   _                                            => MeterPermissions.None
-
-               };
+        #region Names(this Permissions)
 
         /// <summary>
         /// The permissions, one name each, for a page that wants to grey out
@@ -176,120 +349,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         }
 
-    }
-
-
-    /// <summary>
-    /// The roles this meter hands out, and what each of them is called when a
-    /// person has to choose one.
-    /// </summary>
-    /// <remarks>
-    /// Four of Hermod's edge labels and not all of them: "follows" and
-    /// "IsFollowedBy" are about a social graph this meter does not have, and an
-    /// account given one of those would hold a role that grants nothing while
-    /// looking like it grants something.
-    ///
-    /// Three of the four change nothing. That is the point of them: somebody
-    /// who has to watch what a meter is doing - an operator on a night shift, a
-    /// technician on the phone, an auditor - should not have to be given the
-    /// account that can also clear the energy counters or replace the
-    /// certificate.
-    /// </remarks>
-    public static class MeterRoles
-    {
-
-        /// <summary>
-        /// The roles that can be given out here, strongest first - which is the
-        /// order a list of them should be shown in, so that the one that grants
-        /// the most is the one nobody picks by accident at the top of a
-        /// dropdown.
-        /// </summary>
-        public static readonly IReadOnlyList<User2OrganizationEdgeLabel> Assignable = [
-            User2OrganizationEdgeLabel.IsAdmin,
-            User2OrganizationEdgeLabel.IsAdminReadOnly,
-            User2OrganizationEdgeLabel.IsMember,
-            User2OrganizationEdgeLabel.IsGuest
-        ];
-
-        /// <summary>
-        /// What this role is called in a sentence.
-        /// </summary>
-        public static String AsText(this User2OrganizationEdgeLabel Role)
-
-            => Role switch {
-                   User2OrganizationEdgeLabel.IsAdmin          => "Administrator",
-                   User2OrganizationEdgeLabel.IsAdminReadOnly  => "Read-only administrator",
-                   User2OrganizationEdgeLabel.IsMember         => "Member",
-                   User2OrganizationEdgeLabel.IsGuest          => "Guest",
-                   _                                           => Role.ToString()
-               };
-
-        /// <summary>
-        /// What somebody holding it may do, in the words they would use about
-        /// it rather than the names of the flags.
-        /// </summary>
-        public static String Description(this User2OrganizationEdgeLabel Role)
-
-            => Role switch {
-
-                   User2OrganizationEdgeLabel.IsAdmin
-                       => "Everything: the readings, the configuration, the meter mode and the energy " +
-                          "counters, the certificates this meter shows and the CAs it accepts, and these " +
-                          "accounts.",
-
-                   User2OrganizationEdgeLabel.IsAdminReadOnly
-                       => "Sees the readings, the whole configuration and the certificates, and may ask a " +
-                          "time server whether it answers. Changes nothing, and does not see these accounts.",
-
-                   User2OrganizationEdgeLabel.IsMember
-                       => "Sees the readings and how this meter is configured. Changes nothing and sends " +
-                          "nothing from it.",
-
-                   User2OrganizationEdgeLabel.IsGuest
-                       => "Sees the readings and nothing else - for somebody who was given a look at a " +
-                          "meter without being given the site it stands on.",
-
-                   _   => "A role this meter does not know, which grants nothing."
-
-               };
-
-        /// <summary>
-        /// The role a request named, when this meter hands that one out.
-        /// </summary>
-        /// <remarks>
-        /// Only the assignable four, so that a request naming "follows" is
-        /// refused rather than quietly making an account with no rights that
-        /// somebody will later have to work out the reason for.
-        /// </remarks>
-        public static Boolean TryParse(String? Text, out User2OrganizationEdgeLabel Role)
-        {
-
-            foreach (var candidate in Assignable)
-            {
-                if (String.Equals(candidate.ToString(), Text?.Trim(), StringComparison.OrdinalIgnoreCase))
-                {
-                    Role = candidate;
-                    return true;
-                }
-            }
-
-            Role = User2OrganizationEdgeLabel.IsGuest;
-            return false;
-
-        }
-
-        /// <summary>
-        /// A role as a page needs it: what it is called, what it does, and the
-        /// permissions behind the words.
-        /// </summary>
-        public static JObject ToJSON(this User2OrganizationEdgeLabel Role)
-
-            => new (
-                   new JProperty("role",         Role.ToString()),
-                   new JProperty("title",        Role.AsText()),
-                   new JProperty("description",  Role.Description()),
-                   new JProperty("permissions",  new JArray(Role.PermissionsOf().Names()))
-               );
+        #endregion
 
     }
 

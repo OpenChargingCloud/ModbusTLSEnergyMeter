@@ -38,8 +38,7 @@ Modbus/TLS is what a charging station or a local controller speaks to this
 meter, and what a peer may do there is decided by the role in its client
 certificate - a machine-to-machine decision, made per request, with no notion of
 a person. The HTTP side is where a person signs in to see and change what the
-meter is, and what they may do is decided by their role in the meter's
-organization.
+meter is, and what they may do is decided by the groups their account is in.
 
 Neither one's rights are expressible in the other's vocabulary, which is why
 there are two ports and not one.
@@ -138,15 +137,22 @@ Modbus byte reaches the device behind it.
 ## Signing in
 
 Beside the Modbus/TLS listener there is an HTTP server, on port 2351 by default,
-where a person signs in to administer the meter. Accounts, organizations and
-sessions are Hermod's `HTTPExtAPI`, and the role somebody holds in the meter's
-organization - `IsAdmin`, `IsAdminReadOnly`, `IsMember`, `IsGuest` - is what
-separates who may change this meter from who may only watch it.
+where a person signs in to administer the meter. It is a node's: the accounts,
+the sessions, the log, the name resolution and the clock are
+[WWCP_Node](https://github.com/OpenChargingCloud/WWCP_Node)'s, as they are in
+every OpenChargingCloud program with a web interface, and the meter adds its
+registers, its certificates, its signed readings and its roles.
+
+A role is a user group of the same name - `systemadmin`, `auditor`, `viewer`,
+`guest` - and that is what separates who may change this meter from who may
+only watch it. What an account may do is asked of its groups at every request
+rather than remembered at sign-in, so that taking somebody out of a group takes
+effect on their next click and not at their next sign-in.
 
 At the first start there are no accounts, so one administrator is made and its
 password reported once, through `GeneratedUserId` and `GeneratedPassword`, for
-the host to print. That account is an `IsAdmin` of the organization
-`EnergyMeter`. Accounts live under `DataPath`.
+the host to print. That account is `root`, in the group `systemadmin`. Accounts
+live under `DataPath`, in `UsersAPI/users.db`.
 
 Three things are served, and each answers for itself because Hermod dispatches
 to the most specific of them first:
@@ -154,12 +160,25 @@ to the most specific of them first:
 | | |
 |---|---|
 | `/` | the web interface |
-| `/accounts` | signing in, users, organizations - Hermod's `HTTPExtAPI` |
+| `/ext` | signing in, users, groups - the node's `HTTPExtAPI` |
 | `/api/v1` | this meter's own JSON API |
 
-Signing in is a `POST` to `/accounts/auth/login` with
-`{"login": ..., "password": ...}`, which answers with the session cookies that
+Signing in is a `POST` to `/ext/auth/login` with
+`{"login": ..., "password": ...}`, which answers with the session cookie that
 every resource below is read with.
+
+
+### From before the groups
+
+A meter from before it was a node kept its accounts in `UsersAPI/HTTPExtAPI.db`
+and said what somebody may do with a role in its organization `EnergyMeter`.
+Started on the same `DataPath`, it renames the file to `users.db` before
+anything opens it, and puts every account that is in none of its groups into
+the group of the strongest role that account held there - `IsAdmin` into
+`systemadmin`, `IsAdminReadOnly` into `auditor`, `IsMember` into `viewer`,
+`IsGuest` into `guest` - once, before anybody can sign in. An account that is in
+one of the groups already is left as it is: somebody put it there. The roles in
+the organization stay where they are, and grant nothing any more.
 
 
 ### More than one of them
@@ -172,14 +191,14 @@ finds their own account there and nothing else.
 Three of the four roles change nothing, which is the reason the page exists.
 Watching what a meter is doing - on a night shift, over the phone, for an
 audit - should not need the account that can also clear the energy counters or
-replace the certificate. `IsMember` sees the readings and the configuration
-and touches neither; `IsGuest` sees only the readings; `IsAdminReadOnly`
-additionally sees the certificates and may ask a time server whether it
-answers, which sends traffic and is therefore not folded into reading.
+replace the certificate. `viewer` sees the readings and the configuration
+and touches neither; `guest` sees only the readings; `auditor` additionally
+sees the certificates and may ask a time server whether it answers, which sends
+traffic and is therefore not folded into reading.
 
 No password is asked for when an account is made: the meter makes one, shows it
 once, and keeps it nowhere it could be read back. The person it was made for
-replaces it at `POST /accounts/auth/password`, which asks for the current one
+replaces it at `POST /ext/auth/password`, which asks for the current one
 first - the one thing an administrator's reset cannot ask for, and the reason
 the two are different routes.
 
@@ -204,15 +223,15 @@ account back.
 ## The JSON API
 
 Everything below `/api/v1` needs the session cookie, and each resource names the
-permission it wants. What a person may do follows from their role in the
-organization `EnergyMeter`:
+permission it wants. What a person may do follows from the groups their account
+is in:
 
 | Role | read meter | read config | change DNS/NTS | diagnostics | write registers | certificates | accounts |
 |------|:----------:|:-----------:|:--------------:|:-----------:|:---------------:|:------------:|:--------:|
-| `IsAdmin`          | yes | yes | yes | yes | yes | yes | yes |
-| `IsAdminReadOnly`  | yes | yes | no  | yes | no  | no  | no  |
-| `IsMember`         | yes | yes | no  | no  | no  | no  | no  |
-| `IsGuest`          | yes | no  | no  | no  | no  | no  | no  |
+| `systemadmin` | yes | yes | yes | yes | yes | yes | yes |
+| `auditor`     | yes | yes | no  | yes | no  | no  | no  |
+| `viewer`      | yes | yes | no  | no  | no  | no  | no  |
+| `guest`       | yes | no  | no  | no  | no  | no  | no  |
 
 Managing certificates is its own permission and not part of changing network
 settings, because it is a bigger thing than any of those: which certificate this
@@ -220,18 +239,22 @@ meter shows is who it says it is, and which CAs it trusts is who may talk to it
 at all. Somebody who may repoint a name server has not thereby been handed the
 identity of the device.
 
-A role this meter does not know, and an account belonging to no organization of
-it, grant nothing at all.
+An account in several of these groups may do what any of them allows, and one
+in none of them may do nothing at all. A refusal says which roles would have
+been allowed, in `rolesThatMay`, so that it also says whom to ask.
 
 The names in that table are what the API speaks. What a page shows is the
-readable form - "Read-only administrator" rather than `IsAdminReadOnly` - and it
-travels with the role in `/api/v1/me` rather than being looked up, because every
-page that tells somebody what they may not do here names their role in the same
+readable form - "Auditor" rather than `auditor` - and it travels with the
+strongest role in `/api/v1/me` rather than being looked up, because every page
+that tells somebody what they may not do here names their role in the same
 sentence and none of them should need a second request to translate one word.
+The names of the roles in the organization from before - `IsAdmin` to
+`IsGuest` - are still taken wherever a role is given, and mean the group they
+were moved into.
 
 | Resource | |
 |----------|---|
-| `GET  /api/v1/me` | who is signed in, their role - as this meter spells it and as a person would say it - and their permissions |
+| `GET  /api/v1/me` | who is signed in, their roles - the strongest as this meter spells it and as a person would say it - and their permissions |
 | `GET  /api/v1/status` | serial, uptime, both listeners |
 | `GET  /api/v1/meter` | the readings with scale factors applied, the mode, and what the simulated site is doing |
 | `GET  /api/v1/meter/registers?start=&count=` | the raw register block |
@@ -263,11 +286,11 @@ sentence and none of them should need a second request to translate one word.
 | `GET  /api/v1/accounts` | who may sign in, and the roles that can be given out |
 | `POST /api/v1/accounts` | make one; leaving out the password gets one the meter made |
 | `GET  /api/v1/accounts/roles` | what each role is called and what it grants |
-| `PUT  /api/v1/accounts/{id}/role` | `{"role": "IsMember"}` |
+| `PUT  /api/v1/accounts/{id}/role` | `{"role": "viewer"}` |
 | `PUT  /api/v1/accounts/{id}/password` | a new password for somebody who lost theirs |
 | `DELETE /api/v1/accounts/{id}` | take an account away |
 | `GET  /api/v1/logs?limit=&after=&tag=` | what happened, newest last |
-| `GET  /api/v1/logs/verify` | walk the log on disk and check every line |
+| `GET  /api/v1/logs/verify` | walk the log book on disk and check every line |
 | `GET  /api/v1/events` | the log as a Server-Sent Events stream |
 
 A `PUT` writes the configuration file before the change takes effect, and
@@ -275,7 +298,7 @@ answers with the section as it now stands. Unknown paths below `/api` answer
 with a JSON 404 rather than falling through to the accounts.
 
 ```bash
-curl -c jar -X POST http://127.0.0.1:2351/accounts/auth/login -H 'Content-Type: application/json' -d '{"login":"admin","password":"..."}'
+curl -c jar -X POST http://127.0.0.1:2351/ext/auth/login -H 'Content-Type: application/json' -d '{"login":"root","password":"..."}'
 ```
 
 ```bash
@@ -700,14 +723,28 @@ inside the command nor waits for it:
 meter.ShareConsoleWith(cli.WriteBlock);   // line off, entry whole, line back
 ```
 
-It survives a restart. Every entry is also written as one line of JSON to
-`<DataPath>/logs/meter-YYYY-MM-DD.jsonl`, and the newest of them are read back
-at the next start - numbering included, so that a browser following the log is
-not handed entries it has already seen. One file per day, thirty days kept
-(`LogKeepDays`, `0` keeps the log in memory only). One line per entry because
-that is the format that survives being read by something other than this
-program: grep finds a line, jq takes it apart, and a file truncated by a power
-cut loses its last line and nothing else.
+On disk it is two things, side by side in `<DataPath>/logs`:
+
+* **The log files**, `meter-YYYY-MM-DD.log`: everything, one line per entry,
+  for reading. One file per day, thirty days kept (`LogKeepDays`; `0` writes no
+  files at all and keeps the log in memory only).
+* **The log book**, `meter-YYYY-MM-DD.jsonl`: the entries that are evidence -
+  every refused Modbus request and every write, every change of the meter
+  mode, every certificate taken into use, every start and stop, every check of
+  the clock and every change to where it reads the time, and what the time
+  servers' certificates were judged to be - one line of JSON each, signed and
+  chained. It is the node's metrological log, it is **kept whole**, and its
+  newest lines are read back at the next start - numbering included, so that a
+  browser following the log is not handed entries it has already seen.
+
+One line per entry because that is the format that survives being read by
+something other than this program: grep finds a line, jq takes it apart, and a
+file truncated by a power cut loses its last line and nothing else.
+
+The log book goes on where the signed log of a meter from before it was a node
+left off: the same directory, the same file names, the same key, and a first
+line pointing back at that log's last. Those older files hold everything that
+meter wrote down, not only the evidence, and are kept whole with the rest.
 
 The days are UTC days, as the timestamps in the files are. A file that cannot
 be written is said once on stderr rather than once per entry, every entry
@@ -753,8 +790,10 @@ all three of the routes above: write it down somewhere this meter cannot reach,
 and a log that no longer leads to it has been rewritten no matter how well it
 signs itself.
 
-Pruning breaks the chain on purpose: the oldest file left begins with a line
-pointing at a day that was thrown away, and a check of the whole log says so.
+The log files are thinned out after `LogKeepDays` days by the date in their
+names; the log book never is. A log book from before that was thinned out
+begins with a line pointing at a day that was thrown away, and a check of the
+whole of it says so.
 
 ```bash
 jq -r 'select(.tags | index("denied")) | "\(.timestamp) \(.data.peer) \(.data.denyReason)"' data/logs/meter-*.jsonl
@@ -835,6 +874,27 @@ An entry of `servers` is a host name, or an object saying more than the name:
 { "hostname": "time.local", "priority": 0, "ntsKEPort": 4460, "enabled": true }
 ```
 
+A server can also be held to more than the usual checks of its TLS certificate:
+to the SHA-256 fingerprint of the certificate it has to show, of the root its
+chain has to end at, or both.
+
+```json
+{ "hostname":               "ptbtime1.ptb.de",
+  "certificateFingerprint": "3F9A...64 hex digits...",
+  "rootFingerprint":        "B676...64 hex digits...",
+  "onMismatch":             "refuse" }
+```
+
+A fingerprint that does not match refuses the server - the key exchange does
+not happen - unless `onMismatch` is `"record"`, which uses it all the same and
+writes the mismatch into the log book. Either way the verdict is written there,
+once per change of verdict rather than once per key exchange, and the NTS page
+shows it beside the server with the fingerprints it is held to; the page's
+dialog for a server edits them, and shows the fingerprints its last key exchange
+saw for copying. A root the machine does not know can be put into
+`<DataPath>/certificates/roots/tls` as a PEM or DER file; the meter reads it at
+its next start, and from then on a server whose chain ends there is trusted.
+
 Servers sharing a priority are **one band** and are asked together; a lower
 priority is asked first. The four above share priority 0, because they are
 peers - putting them in separate bands would say something about them that is
@@ -913,9 +973,10 @@ words.
 * The simulated day is the same day all year: sunrise at 6, sunset at 20, one
   bell curve in between. Enough for "does this controller do the right thing
   when the site exports", not enough for a seasonal study.
-* An account is a person and a role, and that is the whole of it: there are no
-  per-resource rights, so somebody who may write the meter mode may write all of
-  it. Four roles are enough for a meter and would not be enough for much else.
+* An account is a person and the roles of the groups it is in, and that is the
+  whole of it: there are no per-resource rights, so somebody who may write the
+  meter mode may write all of it. Four roles are enough for a meter and would
+  not be enough for much else.
 * Nothing expires. An account stays until somebody takes it away, and there is
   no lockout after repeated wrong passwords beyond the rate limiting Hermod
   already does on signing in.

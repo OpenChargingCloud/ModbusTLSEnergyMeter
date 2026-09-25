@@ -22,7 +22,7 @@ using System.Runtime.InteropServices;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
 
-using MeterLogLevel = cloud.charging.open.EnergyMeters.ModbusTLS.Logging.LogLevel;
+using MeterLogLevel = cloud.charging.open.protocols.WWCP.Node.Logging.LogLevel;
 
 #endregion
 
@@ -85,7 +85,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                         "certificates", store.Purpose
                     );
 
-                else if (store.Purpose == "modbus" || HTTPSEnabled)
+                else if (store.Purpose == "modbus" || HTTPS)
                     Log.Warning(
                         $"There is no valid {store.Purpose} certificate: every handshake on that listener will fail.",
                         "certificates", store.Purpose

@@ -21,7 +21,7 @@ using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Configuration;
 
 #endregion
 
@@ -126,7 +126,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    ServerPfxPassword:  "demo",
                    ClientCACertPath:   Path.Combine(pkiDirectory, "issuing-clients-ca.crt"),
                    DataPath:           Path.Combine(directory, "data"),
-                   ConfigFile:         new MeterConfigFile(Path.Combine(directory, MeterConfigFile.DefaultFileName)),
+                   ConfigFile:         new WWCPConfigFile(Path.Combine(directory, WWCPConfigFile.DefaultFileName)),
                    LogKeepDays:        0,
                    LogToConsole:       LogToConsole
                );

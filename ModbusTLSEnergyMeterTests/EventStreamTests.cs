@@ -29,7 +29,7 @@ using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Configuration;
 
 using NetIPAddress = System.Net.IPAddress;
 
@@ -85,7 +85,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Directory.CreateDirectory(directory);
 
-            var configuration = Path.Combine(directory, MeterConfigFile.DefaultFileName);
+            var configuration = Path.Combine(directory, WWCPConfigFile.DefaultFileName);
 
             File.WriteAllText(configuration, """{ "nts": { "enabled": false } }""");
 
@@ -101,12 +101,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                            HTTPHostname:       IPv4Address.Localhost,
                            HTTPPort:           IPPort.Parse(httpPort),
                            DataPath:           Path.Combine(directory, "data"),
-                           ConfigFile:         new MeterConfigFile(configuration),
+                           ConfigFile:         new WWCPConfigFile(configuration),
                            LogKeepDays:        0,
                            LogToConsole:       false
                        );
 
-            await meter.StartAsync();
+            await meter.Start();
 
         }
 
@@ -260,7 +260,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.That(await stream.ReadUntil(": keep-alive"), Is.True, "the stream is waiting for its next entry");
 
-            var stopping      = meter.StopAsync();
+            var stopping      = meter.Stop();
             var stopped       = await Task.WhenAny(stopping, Task.Delay(TimeSpan.FromSeconds(10))) == stopping;
 
             Assert.Multiple(async () => {
@@ -334,7 +334,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                            Timeout     = Timeout.InfiniteTimeSpan
                        };
 
-            using var login = await http.PostAsync("accounts/auth/login",
+            using var login = await http.PostAsync("ext/auth/login",
                                                    new StringContent($$"""{ "login": "{{meter!.GeneratedUserId}}", "password": "{{meter.GeneratedPassword}}" }""",
                                                                      Encoding.UTF8, "application/json"));
 

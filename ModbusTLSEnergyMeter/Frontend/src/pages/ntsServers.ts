@@ -45,6 +45,16 @@ export function entryOf(source: NTSTimeSource, usual: UsualPorts): NTSServerEntr
     if (source.ntpPort   !== usual.ntp)    entry.ntpPort    = source.ntpPort;
     if (!source.enabled)                   entry.enabled    = false;
 
+    // What it is held to, which the page shows and does not always edit - and
+    // the list goes back whole, so a pin left out here is a pin deleted by
+    // the next save of anything else.
+    const pins = source.heldTo ?? null;
+
+    if (pins?.certificate)                 entry.certificateFingerprint  = pins.certificate;
+    if (pins?.root)                        entry.rootFingerprint         = pins.root;
+    if (pins && pins.onMismatch !== 'refuse')
+                                           entry.onMismatch              = pins.onMismatch;
+
     return entry;
 
 }

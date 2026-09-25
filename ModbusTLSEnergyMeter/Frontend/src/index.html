@@ -12,13 +12,13 @@
     <meta name="author"            content="Achim Friedland // GraphDefined GmbH" />
 
     <!-- Runtime configuration for the bundle: read via document.querySelector,
-         so that no inline script is needed and the CSP can stay strict. -->
-    <meta name="api-base"          content="/api/v1" />
-    <meta name="accounts-base"     content="/accounts" />
+         so that no inline script is needed and the CSP can stay strict. The
+         {{...}} placeholders are replaced by the node when it serves this
+         stub - where its JSON API and its accounts are, which moves with a
+         base path - and html-webpack-plugin leaves them untouched. -->
+    <meta name="api-base"          content="{{APIBase}}" />
+    <meta name="ext-base"          content="{{ExtBase}}" />
     <meta name="frontend-version"  content="<%= htmlWebpackPlugin.options.version %>" />
-
-    <!-- {{...}} placeholders are replaced by the C# server when it serves this
-         stub; html-webpack-plugin leaves them untouched. -->
     <meta name="server-version"    content="{{ServerVersion}}" />
 
     <!-- html-webpack-plugin injects the hashed script and stylesheet tags. -->

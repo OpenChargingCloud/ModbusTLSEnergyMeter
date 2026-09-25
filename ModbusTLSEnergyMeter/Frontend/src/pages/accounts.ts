@@ -143,14 +143,14 @@ export const accountsPage: Page = {
                             <label>Role
                                 <select name="role" id="role-choice">
                                     ${roles.map(role => html`
-                                        <option value="${role.role}" ${role.role === 'IsMember' ? html`selected` : ''}>
+                                        <option value="${role.role}" ${role.role === 'viewer' ? html`selected` : ''}>
                                             ${role.title}
                                         </option>
                                     `)}
                                 </select>
                             </label>
 
-                            <p class="hint" id="role-description">${roleOf('IsMember')?.description ?? ''}</p>
+                            <p class="hint" id="role-description">${roleOf('viewer')?.description ?? ''}</p>
 
                             <div class="form-actions">
                                 <button type="submit" class="btn primary">Add it</button>

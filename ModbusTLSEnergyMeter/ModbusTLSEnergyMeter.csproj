@@ -17,6 +17,7 @@
     <ProjectReference Include="..\..\Hermod\Hermod\Hermod.csproj" />
     <ProjectReference Include="..\..\Norn\Norn\Norn.csproj" />
     <ProjectReference Include="..\..\Styx\Styx\Styx.csproj" />
+    <ProjectReference Include="..\..\WWCP_Node\WWCP_Node\WWCP_Node.csproj" />
   </ItemGroup>
 
   <!--

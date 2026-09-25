@@ -306,36 +306,37 @@ export const ntsPage: Page = {
         /** This meter's clock as it stands, and what it is worth. */
         function drawClock(): void {
 
-            const time = clock!;
+            const time  = clock!;
+            const sync  = current?.lastSync ?? null;
 
             render(must<HTMLElement>(content, '#nts-clock'), html`
 
                 <h2>
                     <i class="fa-solid fa-hourglass-half"></i> This meter's clock
-                    <span class="chip ${time.isLegalTime ? 'on' : 'alert'}">${time.isLegalTime ? 'legal time' : 'unverified'}</span>
+                    <span class="chip ${time.legal ? 'on' : 'alert'}">${time.legal ? 'legal time' : 'unverified'}</span>
                 </h2>
 
                 <div class="kv-list">
                     ${kv('Now', formatTimestamp(time.now))}
-                    ${kv('Checked against', time.servers === null
+                    ${kv('Checked against', time.nts.servers === null
                                                 ? 'nobody - NTS is switched off'
-                                                : html`${time.servers.join(', ')}${time.servers.length > 1
-                                                                                        ? html` <span class="muted">- at least ${time.minServers} must answer</span>`
-                                                                                        : ''}`)}
-                    ${kv('Last sync', time.lastSync === null ? 'never' : formatTimestamp(time.lastSync))}
-                    ${kv('Last sync result', time.lastSyncResult ?? '-')}
-                    ${kv('Last check', time.lastCheck === null
+                                                : html`${time.nts.servers.join(', ')}${time.nts.servers.length > 1
+                                                                                            ? html` <span class="muted">- at least ${time.nts.minServers} must answer</span>`
+                                                                                            : ''}`)}
+                    ${kv('Last sync', sync === null ? 'never' : formatTimestamp(sync.at))}
+                    ${kv('Last sync result', sync === null ? '-' : sync.ok ? 'a time was found' : (sync.error ?? 'no time was found'))}
+                    ${kv('Last check', time.nts.checkedAt === null
                                            ? 'never'
-                                           : html`${formatTimestamp(time.lastCheck)}${time.lastCheckAnswered !== null
-                                                                                        ? html` <span class="muted">- ${time.lastCheckAnswered} of ${time.lastCheckAsked} answered</span>`
-                                                                                        : ''}`)}
-                    ${kv('Offset', ms(time.lastCheckOffset_ms, true))}
-                    ${kv('Authority', time.legalAuthority ?? 'none configured')}
-                    ${kv('Tolerance', `${time.legalTolerance_ms} ms`)}
-                    ${kv('Max age of a check', `${Math.round(time.legalMaxAge_s / 60)} min`)}
+                                           : html`${formatTimestamp(time.nts.checkedAt)}${time.nts.answered !== null
+                                                                                            ? html` <span class="muted">- ${time.nts.answered} of ${time.nts.asked} answered</span>`
+                                                                                            : ''}`)}
+                    ${kv('Offset', ms(time.nts.offset_ms, true))}
+                    ${kv('Authority', time.authority ?? 'none configured')}
+                    ${kv('Tolerance', `${Math.round(time.toleranceSeconds * 1000)} ms`)}
+                    ${kv('Max age of a check', `${Math.round(time.maxAgeSeconds / 60)} min`)}
                 </div>
 
-                <p class="hint">${time.why}. "Last check" is the last synchronisation that found a time;
+                <p class="hint">${verdict(time)}. "Last check" is the last synchronisation that found a time;
                                  "Last sync" is the last one, whichever way it went.</p>
 
             `);
@@ -438,6 +439,7 @@ export const ntsPage: Page = {
                                     <span class="fingerprint" title="SHA-256 fingerprint of the root CA">${fingerprintView(source.rootCA.fingerprint)}</span>
                                 `
                               : html`<span class="muted small">Root CA: no key exchange yet</span>`}
+                        ${pinsView(source)}
                     </div>
 
                     <div class="actions">
@@ -451,6 +453,40 @@ export const ntsPage: Page = {
                     </div>
 
                 </div>
+            `;
+
+        }
+
+
+        /**
+         * What a server is held to beyond the usual checks, and what its last
+         * key exchange made of it - only where there is something to say: a
+         * server held to nothing, whose certificate was accepted, says nothing
+         * here.
+         */
+        function pinsView(source: NTSTimeSource): HTMLFragment {
+
+            const pins       = source.heldTo    ?? null;
+            const judgement  = source.judgement ?? null;
+
+            return html`
+                ${pins === null
+                      ? ''
+                      : html`
+                            <span class="muted small">
+                                Held to${pins.onMismatch === 'record' ? ' - a mismatch is only written down' : ''}
+                            </span>
+                            ${pins.certificate
+                                  ? html`<span class="fingerprint" title="SHA-256 fingerprint of the certificate it has to show">certificate ${fingerprintView(pins.certificate)}</span>`
+                                  : ''}
+                            ${pins.root
+                                  ? html`<span class="fingerprint" title="SHA-256 fingerprint of the root its chain has to end at">root ${fingerprintView(pins.root)}</span>`
+                                  : ''}
+                        `}
+                ${judgement === null || judgement.outcome === 'accepted'
+                      ? ''
+                      : html`<span><span class="chip ${judgement.accepted ? 'warn' : 'alert'}"
+                                         title="At the key exchange of ${formatTimestamp(judgement.at)}">${outcomeText(judgement.outcome)}</span></span>`}
             `;
 
         }
@@ -578,6 +614,35 @@ export const ntsPage: Page = {
                         <span class="hint">Switched off, it stays in the list and is not asked.</span>
                     </label>
 
+                    <label>Certificate fingerprint <span class="muted small">(optional)</span>
+                        <input type="text" name="certificateFingerprint" autocomplete="off" spellcheck="false"
+                               value="${shown?.heldTo?.certificate ?? ''}" />
+                        <span class="hint">
+                            The SHA-256 fingerprint of the certificate this server has to show, on top of the
+                            usual checks.${shown?.certificate
+                                               ? html` At its last key exchange it showed ${fingerprintView(shown.certificate)}.`
+                                               : ''}
+                        </span>
+                    </label>
+
+                    <label>Root CA fingerprint <span class="muted small">(optional)</span>
+                        <input type="text" name="rootFingerprint" autocomplete="off" spellcheck="false"
+                               value="${shown?.heldTo?.root ?? ''}" />
+                        <span class="hint">
+                            The SHA-256 fingerprint of the root its chain has to end at - one of this meter's
+                            own certificate store will do where the machine knows none.${shown?.rootCA
+                                                                                               ? html` Its chain ended at ${fingerprintView(shown.rootCA.fingerprint)}.`
+                                                                                               : ''}
+                        </span>
+                    </label>
+
+                    <label>When a fingerprint does not match
+                        <select name="onMismatch">
+                            <option value="refuse" ${shown?.heldTo?.onMismatch !== 'record' ? html`selected` : ''}>refuse the server</option>
+                            <option value="record" ${shown?.heldTo?.onMismatch === 'record' ? html`selected` : ''}>use it, and write the mismatch into the log book</option>
+                        </select>
+                    </label>
+
                     <div class="form-actions">
                         <button type="submit" class="btn primary">Save</button>
                         <button type="button" class="btn" id="server-cancel">Cancel</button>
@@ -634,6 +699,9 @@ export const ntsPage: Page = {
                 const ntsKE     = String(data.get('ntsKEPort') ?? '').trim();
                 const ntp       = String(data.get('ntpPort')   ?? '').trim();
                 const priority  = Number(data.get('priority')  ?? 0);
+                const heldTo    = String(data.get('certificateFingerprint') ?? '').trim();
+                const rootedIn  = String(data.get('rootFingerprint')        ?? '').trim();
+                const mismatch  = String(data.get('onMismatch')             ?? 'refuse');
 
                 if (hostname.length === 0) {
                     error.textContent = 'A host name is needed.';
@@ -651,6 +719,10 @@ export const ntsPage: Page = {
                 if (ntsKE.length > 0 && Number(ntsKE) !== usual.ntsKE)  entry.ntsKEPort  = Number(ntsKE);
                 if (ntp.length   > 0 && Number(ntp)   !== usual.ntp)    entry.ntpPort    = Number(ntp);
                 if (data.get('enabled') === null)                        entry.enabled    = false;
+                if (heldTo.length   > 0)                                 entry.certificateFingerprint  = heldTo;
+                if (rootedIn.length > 0)                                 entry.rootFingerprint         = rootedIn;
+                if ((heldTo.length > 0 || rootedIn.length > 0) &&
+                    mismatch === 'record')                               entry.onMismatch              = 'record';
 
                 void tell(withServer(list, index, entry));
 
@@ -1005,6 +1077,42 @@ export const ntsPage: Page = {
 /** One name and its value, the way the other cards write them. */
 function kv(name: string, value: string | HTMLFragment): HTMLFragment {
     return html`<div class="kv"><span class="k">${name}</span><span class="v">${value}</span></div>`;
+}
+
+
+/**
+ * The clock's verdict in a sentence. Whether it is legal time is the meter's
+ * to say, and it says so as a fact; this only puts its reason into words.
+ */
+function verdict(time: Clock): string {
+
+    if (time.legal)
+        return 'Checked, recent and within tolerance';
+
+    switch (time.why) {
+        case 'notClaimed':    return 'No time authority is configured';
+        case 'ntsOff':        return 'NTS is switched off';
+        case 'neverChecked':  return 'The clock has not been checked yet';
+        case 'stale':         return 'The last check is too old';
+        case 'offBy':         return 'The clock is further off than the tolerance allows';
+        default:              return 'Not legal time';
+    }
+
+}
+
+
+/** What the meter made of a time server's certificate, in words. */
+function outcomeText(outcome: string): string {
+
+    switch (outcome) {
+        case 'recorded':       return 'fingerprint differs - used, and written down';
+        case 'pinMismatch':    return 'fingerprint differs - refused';
+        case 'untrusted':      return 'certificate not trusted - refused';
+        case 'wrongName':      return 'certificate for another name - refused';
+        case 'noCertificate':  return 'showed no certificate - refused';
+        default:               return outcome;
+    }
+
 }
 
 

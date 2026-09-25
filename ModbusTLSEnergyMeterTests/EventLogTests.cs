@@ -27,8 +27,8 @@ using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
-using cloud.charging.open.EnergyMeters.ModbusTLS.Logging;
+using cloud.charging.open.protocols.WWCP.Node.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Logging;
 
 using HermodModbusTCPClient = org.GraphDefined.Vanaheimr.Hermod.Modbus.ModbusTCPClient;
 using NetIPAddress          = System.Net.IPAddress;
@@ -89,11 +89,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                         HTTPHostname:       IPv4Address.Localhost,
                         HTTPPort:           IPPort.Parse(FreeTCPPort()),
                         DataPath:           Path.Combine(workingDirectory, "data"),
-                        ConfigFile:         new MeterConfigFile(Path.Combine(workingDirectory, "configuration.json")),
+                        ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory, "configuration.json")),
                         LogToConsole:       false
                     );
 
-            await meter.StartAsync();
+            await meter.Start();
 
         }
 
@@ -138,6 +138,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(entry!.Tags,                             Does.Contain("modbus").And.Contain("request"));
                 Assert.That(entry!.Tags,                             Does.Not.Contain("denied"));
                 Assert.That(entry!.Level,                            Is.EqualTo(LogLevel.Info));
+                Assert.That(entry!.Metrological,                     Is.False,
+                            "a read that was allowed is evidence of nothing, and stays out of the log book");
 
                 Assert.That(entry!.Data?["role"]?.ToString(),        Is.EqualTo(SunSpecRoles.ReadOnly));
                 Assert.That(entry!.Data?["allowed"]?.ToObject<Boolean>(), Is.True);
@@ -176,12 +178,63 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(entry!.Tags,                               Does.Contain("denied"));
                 Assert.That(entry!.Level,                              Is.EqualTo(LogLevel.Warning));
+                Assert.That(entry!.Metrological,                       Is.True,
+                            "a refusal is evidence, and belongs in the log book");
 
                 Assert.That(entry!.Data?["allowed"]?.ToObject<Boolean>(), Is.False);
                 Assert.That(entry!.Data?["role"]?.Type,                Is.EqualTo(Newtonsoft.Json.Linq.JTokenType.Null));
                 Assert.That(entry!.Data?["denyReason"]?.ToString(),    Does.Contain("no role"));
                 Assert.That(entry!.Data?["exceptionCode"]?.ToString(), Is.EqualTo(ModbusExceptionCode.IllegalFunction.ToString()));
                 Assert.That(entry!.Data?["peer"]?.ToString(),          Is.Not.Empty);
+
+            });
+
+        }
+
+        #endregion
+
+        #region AnAllowedWrite_IsInTheLogBook()
+
+        /// <summary>
+        /// A write that the policy permits changes what the meter is, and so is
+        /// written into the log book - signed, chained and read back - and not
+        /// only into the log files beside it.
+        /// </summary>
+        [Test]
+        public async Task AnAllowedWrite_IsInTheLogBook()
+        {
+
+            var answer = await WriteAsAsync(SunSpecRoles.SuperAdministrator,
+                                            SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterMeterMode),
+                                            (UInt16) SunSpecMeterMode.ImportOnly);
+
+            Assert.That(answer[7], Is.EqualTo(0x06), $"the meter refused the write: {Convert.ToHexString(answer)}");
+
+            // Looked for until it is there: whether the entry is written before
+            // the answer leaves or after is the frontend's business.
+            LogEntry? entry = null;
+
+            for (var attempt = 0; attempt < 50 && entry is null; attempt++)
+            {
+
+                entry = Requests().LastOrDefault(request => request.Data?["functionCode"]?.ToString() == "0x06");
+
+                if (entry is null)
+                    await Task.Delay(100);
+
+            }
+
+            Assert.That(entry, Is.Not.Null, "the write was not written down at all");
+
+            Assert.Multiple(() => {
+
+                Assert.That(entry!.Data?["allowed"]?.ToObject<Boolean>(),  Is.True);
+                Assert.That(entry!.Data?["functionCode"]?.ToString(),      Is.EqualTo("0x06"));
+                Assert.That(entry!.Data?["exceptionCode"]?.Type,           Is.EqualTo(Newtonsoft.Json.Linq.JTokenType.Null),
+                            "the write did not reach the register it was meant for");
+
+                Assert.That(entry!.Metrological,                           Is.True,
+                            "a write is evidence, and belongs in the log book");
 
             });
 
@@ -215,33 +268,50 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #endregion
 
 
-        #region TheLogSurvivesARestart()
+        #region TheLogBookSurvivesARestart()
 
         /// <summary>
-        /// What was written down before a restart is still there afterwards,
-        /// and the numbering carries on rather than beginning again.
+        /// What went into the log book before a restart is still there
+        /// afterwards, and the numbering carries on rather than beginning
+        /// again - while what went only into the log files is in those files,
+        /// and is not read back.
         /// </summary>
         /// <remarks>
+        /// A refusal, because that is what the log book is for: the entries
+        /// that are evidence are signed, chained and read back at the start.
+        /// The rest is in the day's log file, written for reading.
+        ///
         /// The numbering is half the test. A browser follows this log by asking
         /// for everything after the last number it saw; a meter that began
         /// again at 1 would hand it entries it would then decide it had already
         /// seen, and two different events would share a number in the file.
         /// </remarks>
         [Test]
-        public async Task TheLogSurvivesARestart()
+        public async Task TheLogBookSurvivesARestart()
         {
 
             await ReadAsAsync(SunSpecRoles.ReadOnly);
 
+            var allowed      = Requests().Last();
+
+            try   { await ReadAsAsync("NO-ROLE"); }
+            catch { }
+
             var before       = Requests().Last();
             var lastIdBefore = meter!.Log.LastId;
 
-            Assert.That(meter!.Log.Store, Is.Not.Null, "the log was not being written to disk at all");
+            Assert.That(meter!.MetrologicalLog,  Is.Not.Null, "the log book was not being written to disk at all");
+            Assert.That(before.Metrological,     Is.True,     "the refusal did not go into the log book");
 
             // Stopped rather than abandoned: the file has to be closed before
             // another meter reads it back.
             await meter!.DisposeAsync();
             meter = null;
+
+            // And the day's log file read now, while nothing holds it open:
+            // the meter started next writes to it again.
+            var logFiles = String.Concat(Directory.GetFiles(Path.Combine(workingDirectory!, "data", ModbusTLSEnergyMeter.LogDirectoryName), "meter-*.log").
+                                                   Select(File.ReadAllText));
 
             var restarted = new ModbusTLSEnergyMeter(
                                 SerialNumber:       "meter-log-001",
@@ -253,7 +323,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                 HTTPHostname:       IPv4Address.Localhost,
                                 HTTPPort:           IPPort.Parse(FreeTCPPort()),
                                 DataPath:           Path.Combine(workingDirectory!, "data"),
-                                ConfigFile:         new MeterConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
+                                ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                                 LogToConsole:       false
                             );
 
@@ -263,15 +333,23 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
 
-                Assert.That(after,                                  Is.Not.Null, "the request was gone after the restart");
+                Assert.That(after,                                  Is.Not.Null, "the refusal was gone after the restart");
                 Assert.That(after!.Id,                              Is.EqualTo(before.Id));
                 Assert.That(after!.Message,                         Is.EqualTo(before.Message));
                 Assert.That(after!.Tags,                            Is.EquivalentTo(before.Tags));
-                Assert.That(after!.Data?["role"]?.ToString(),       Is.EqualTo(SunSpecRoles.ReadOnly),
+                Assert.That(after!.Data?["denyReason"]?.ToString(), Is.EqualTo(before.Data?["denyReason"]?.ToString()),
                             "the data attached to the entry did not survive");
 
                 Assert.That(restarted.Log.LastId,                   Is.GreaterThanOrEqualTo(lastIdBefore),
                             "the numbering began again instead of carrying on");
+
+                Assert.That(restarted.Log.Recent(200, Tag: "request").Select(entry => entry.Id),
+                            Does.Not.Contain(allowed.Id),
+                            "the allowed read was read back as if it were evidence");
+
+                Assert.That(logFiles,
+                            Does.Contain(allowed.Message),
+                            "the allowed read is not in the log file either");
 
             });
 
@@ -299,14 +377,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                   HTTPHostname:       IPv4Address.Localhost,
                                   HTTPPort:           IPPort.Parse(FreeTCPPort()),
                                   DataPath:           Path.Combine(workingDirectory!, "quiet"),
-                                  ConfigFile:         new MeterConfigFile(Path.Combine(workingDirectory!, "quiet.json")),
+                                  ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "quiet.json")),
                                   LogKeepDays:        0,
                                   LogToConsole:       false
                               );
 
             Assert.Multiple(() => {
-                Assert.That(quiet.Log.Store,  Is.Null);
-                Assert.That(quiet.Log.Count,  Is.GreaterThan(0), "and still keeps a log in memory");
+                Assert.That(quiet.MetrologicalLog,  Is.Null, "no log book");
+                Assert.That(quiet.LogPath,          Is.Null, "and no log files");
+                Assert.That(quiet.Log.Count,        Is.GreaterThan(0), "and still keeps a log in memory");
                 Assert.That(Directory.Exists(Path.Combine(workingDirectory!, "quiet", "logs")), Is.False);
             });
 
@@ -332,6 +411,50 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         private async Task ReadAsAsync(String Role)
         {
 
+            using var client = await ConnectAsAsync(Role);
+
+            try
+            {
+                await client.ReadHoldingRegisters(
+                          SunSpecMeterMap.BaseAddress,
+                          SunSpecMeterMap.RegisterCount
+                      );
+            }
+            finally
+            {
+                await client.Close();
+            }
+
+        }
+
+        /// <summary>
+        /// Write one register with the client certificate of the given role,
+        /// and return the frame the meter answered with.
+        /// </summary>
+        private async Task<Byte[]> WriteAsAsync(String  Role,
+                                                UInt16  Address,
+                                                UInt16  Value)
+        {
+
+            using var client = await ConnectAsAsync(Role);
+
+            try
+            {
+                return await client.WriteSingleRegister(Address, [ (Byte) (Value >> 8), (Byte) Value ]);
+            }
+            finally
+            {
+                await client.Close();
+            }
+
+        }
+
+        /// <summary>
+        /// The client certificate of the given role, and the CA that issued it.
+        /// </summary>
+        private (X509Certificate2 Leaf, X509Certificate2 IssuingCA) ClientCertificatesOf(String Role)
+        {
+
             var certificates = X509CertificateLoader.LoadPkcs12CollectionFromFile(
                                    Path.Combine(pkiDirectory!, $"client-{Role}.pfx"),
                                    "demo",
@@ -340,13 +463,24 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                OfType<X509Certificate2>().
                                ToArray();
 
-            var leaf         = certificates.Single(certificate =>  certificate.HasPrivateKey &&
-                                                                  !IsCertificateAuthority(certificate));
+            return (certificates.Single(certificate =>  certificate.HasPrivateKey &&
+                                                       !IsCertificateAuthority(certificate)),
 
-            var issuingCA    = certificates.Single(certificate =>  IsCertificateAuthority(certificate) &&
-                                                                   certificate.Subject.Contains("Issuing Clients CA", StringComparison.Ordinal));
+                    certificates.Single(certificate =>  IsCertificateAuthority(certificate) &&
+                                                        certificate.Subject.Contains("Issuing Clients CA", StringComparison.Ordinal)));
 
-            using var client = new HermodModbusTCPClient(
+        }
+
+        /// <summary>
+        /// A Modbus/TLS client of this meter, connected with the client
+        /// certificate of the given role.
+        /// </summary>
+        private async Task<HermodModbusTCPClient> ConnectAsAsync(String Role)
+        {
+
+            var (leaf, issuingCA) = ClientCertificatesOf(Role);
+
+            var client       = new HermodModbusTCPClient(
                                    IPv4Address.Localhost,
                                    IPPort.Parse(modbusPort),
                                    UnitAddress:                 1,
@@ -364,17 +498,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.That(connected.IsSuccess, Is.True, $"'{Role}' could not connect");
 
-            try
-            {
-                await client.ReadHoldingRegisters(
-                          SunSpecMeterMap.BaseAddress,
-                          SunSpecMeterMap.RegisterCount
-                      );
-            }
-            finally
-            {
-                await client.Close();
-            }
+            return client;
 
         }
 

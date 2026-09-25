@@ -36,15 +36,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
     /// <remarks>
     /// An account is a person and a role, and the role is the whole of what
     /// they may do: this meter has no per-resource rights and does not want
-    /// any. Three of the four roles change nothing at all, which is the reason
-    /// this exists - watching a meter should not require the account that can
-    /// also replace its certificate.
+    /// any. A role is a user group of the same name, as on every node, and
+    /// three of the four change nothing at all, which is the reason this
+    /// exists - watching a meter should not require the account that can also
+    /// replace its certificate.
     ///
     /// Changing your own password is not here. Hermod answers that at
-    /// "/accounts/auth/password", where the current password is asked for
-    /// before the new one is taken and every other session of the account is
-    /// ended. An administrator resetting somebody else's password is a
-    /// different act with a different rule, and that one is below.
+    /// "/ext/auth/password", where the current password is asked for before
+    /// the new one is taken and every other session of the account is ended.
+    /// An administrator resetting somebody else's password is a different act
+    /// with a different rule, and that one is below.
     /// </remarks>
     public partial class MeterHTTPAPI
     {
@@ -129,7 +130,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #region (private) PostAccount       (Request)
 
         /// <summary>
-        /// POST /api/v1/accounts with {"userId": "...", "role": "IsMember",
+        /// POST /api/v1/accounts with {"userId": "...", "role": "viewer",
         /// "name": "...", "email": "...", "password": "..."}.
         /// </summary>
         /// <remarks>
@@ -138,9 +139,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// better than one somebody thought of while standing in front of a
         /// charging station.
         ///
-        /// The account and its role are made in one step. A user added first
-        /// and given a role second is, in between, an account that can sign in
-        /// and do nothing, and a crash in between leaves it that way for good.
+        /// The account is made in the meter's organization, which is what
+        /// signing in asks of it, and put in the group of its role. A failure in
+        /// between takes the account back out, rather than leave one behind that
+        /// can sign in and do nothing.
         /// </remarks>
         private async Task<HTTPResponse> PostAccount(HTTPRequest Request)
         {
@@ -168,9 +170,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             #region What it may do
 
-            if (!MeterRoles.TryParse(json["role"]?.Value<String>(), out var role))
+            if (!MeterRole.TryParse(json["role"]?.Value<String>(), out var role))
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                 $"A 'role' is required, one of: {String.Join(", ", MeterRoles.Assignable)}.");
+                                 $"A 'role' is required, one of: {String.Join(", ", MeterRole.All.Select(one => one.Name))}.");
+
+            if (!TryGetGroup(role, out var group))
+                return ErrorJSON(Request, HTTPStatusCode.InternalServerError, $"The {role.Name} group is missing.");
 
             #endregion
 
@@ -191,7 +196,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             // A meter in a car park sends no mail and nobody answers what it
             // would send, but Hermod's users have an address, so one is made up
-            // from the serial number the way the first administrator's is.
+            // from the serial number.
             var emailText = json["email"]?.Value<String>()?.Trim();
 
             if (String.IsNullOrEmpty(emailText))
@@ -204,7 +209,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             if (!TryGetMeterOrganization(out var organization))
                 return ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                 $"The organization '{ModbusTLSEnergyMeter.MeterOrganizationId}' is missing.");
+                                 $"The organization '{meter.Kind.Organization}' is missing.");
 
             var name     = json["name"]?.Value<String>()?.Trim();
 
@@ -223,7 +228,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             var added    = await accounts.AddUser(
                                      newUser,
-                                     role,
+                                     User2OrganizationEdgeLabel.IsMember,
                                      organization,
                                      SkipNewUserEMail:          true,
                                      SkipNewUserNotifications:  true,
@@ -241,21 +246,42 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                      CurrentUserId:          user.Id
                                  );
 
-            if (changed.Result != CommandResult.Success)
+            // Hermod keeps the password of an account it removes, so a new
+            // account under the name of one removed before has one already:
+            // the overload above refuses to replace it without being told it,
+            // and the one for a list of users - a reset, as below - replaces
+            // it, while refusing a user with no password at all. Hence the
+            // one, and then the other.
+            if (changed.Result == CommandResult.Error)
+                changed  = await accounts.ChangePassword(
+                                     [ newUser ],
+                                     password,
+                                     SuppressNotifications:  true,
+                                     CurrentUserId:          user.Id
+                                 );
+
+            var joined   = changed.Result == CommandResult.Success
+                               ? await accounts.AddUserToUserGroup(newUser, EdgeLabelOf(role), group, CurrentUserId: user.Id)
+                               : null;
+
+            if (changed.Result != CommandResult.Success || joined?.IsSuccess != true)
             {
 
-                // An account that exists and cannot sign in is worse than no
-                // account: it is in the list, it holds a role, and nobody can
-                // use it. Take it back out rather than leave that behind.
-                await accounts.DeleteUser(newUser, SkipUserDeletedNotifications: true, CurrentUserId: user.Id);
+                // An account that exists and cannot sign in, or signs in and may
+                // do nothing, is worse than no account: it is in the list, and
+                // nobody can use it. Take it back out rather than leave that
+                // behind.
+                await Remove(newUser, user);
 
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                 $"'{userId}' could not be given a password: {changed.Description?.FirstText() ?? changed.Result.ToString()}");
+                                 changed.Result != CommandResult.Success
+                                     ? $"'{userId}' could not be given a password: {changed.Description?.FirstText() ?? changed.Result.ToString()}"
+                                     : $"'{userId}' could not be put in the {role.Name} group: {joined?.ErrorDescription?.FirstText() ?? "no reason was given"}");
 
             }
 
             meter.Log.Notice(
-                $"'{user.Id}' made the account '{userId}' a {role.AsText().ToLowerInvariant()}.",
+                $"'{user.Id}' made the account '{userId}' {Article(role)} {role.Title.ToLowerInvariant()}.",
                 "accounts", "web"
             );
 
@@ -284,12 +310,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #region (private) PutAccountRole    (Request)
 
         /// <summary>
-        /// PUT /api/v1/accounts/{id}/role with {"role": "IsGuest"}.
+        /// PUT /api/v1/accounts/{id}/role with {"role": "guest"}.
         /// </summary>
         /// <remarks>
-        /// Every edge this account holds to the meter's organization is taken
-        /// away and the new one put in its place, so that a role is a role and
-        /// not the strongest of several that accumulated.
+        /// The account is taken out of every group of this meter's roles and put
+        /// in the new one, so that a role is a role and not the strongest of
+        /// several that accumulated.
         /// </remarks>
         private async Task<HTTPResponse> PutAccountRole(HTTPRequest Request)
         {
@@ -303,45 +329,41 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return errorResponse;
 
-            if (!MeterRoles.TryParse(json["role"]?.Value<String>(), out var role))
+            if (!MeterRole.TryParse(json["role"]?.Value<String>(), out var role))
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                 $"A 'role' is required, one of: {String.Join(", ", MeterRoles.Assignable)}.");
+                                 $"A 'role' is required, one of: {String.Join(", ", MeterRole.All.Select(one => one.Name))}.");
 
-            var was = RoleOf(account);
+            var held = meter.RolesOf(account);
+            var was  = held.FirstOrDefault();
 
-            if (was == role)
+            if (held.Count == 1 && was == role)
                 return JSONResponse(Request, HTTPStatusCode.OK, AccountJSON(account, user));
 
-            if (role != User2OrganizationEdgeLabel.IsAdmin &&
+            if (role != MeterRole.SystemAdmin &&
                 WouldLeaveNoAdministrator(account))
                 return ErrorJSON(Request, HTTPStatusCode.Conflict, OnlyAdministrator(account));
 
-            if (!TryGetMeterOrganization(out var organization))
-                return ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                 $"The organization '{ModbusTLSEnergyMeter.MeterOrganizationId}' is missing.");
+            if (account is not User person || !TryGetGroup(role, out var group))
+                return ErrorJSON(Request, HTTPStatusCode.InternalServerError, $"'{account.Id}' or the {role.Name} group cannot be changed here.");
 
-            foreach (var edge in account.User2Organization_OutEdges.
-                                         Where (edge => edge.Target.Id == organization.Id).
-                                         ToArray())
-            {
-                await accounts.RemoveUserFromOrganization(account, edge.EdgeLabel, organization, CurrentUserId: user.Id);
-            }
+            foreach (var old in held)
+                if (TryGetGroup(old, out var oldGroup))
+                    await accounts.RemoveUserFromUserGroup(person, oldGroup, CurrentUserId: user.Id);
 
-            var result = await accounts.AddUserToOrganization(account, role, organization, CurrentUserId: user.Id);
+            var result = await accounts.AddUserToUserGroup(person, EdgeLabelOf(role), group, CurrentUserId: user.Id);
 
-            // A two-entity result, which says IsSuccess rather than carrying a
-            // CommandResult the way the single-entity ones do.
             if (!result.IsSuccess)
             {
 
-                // The old role was taken away a moment ago, so failing here
+                // The old roles were taken away a moment ago, so failing here
                 // would leave an account that can sign in and do nothing. Put
                 // back what was there rather than leave that behind.
-                if (was.HasValue)
-                    await accounts.AddUserToOrganization(account, was.Value, organization, CurrentUserId: user.Id);
+                foreach (var old in held)
+                    if (TryGetGroup(old, out var oldGroup))
+                        await accounts.AddUserToUserGroup(person, EdgeLabelOf(old), oldGroup, CurrentUserId: user.Id);
 
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                 $"'{account.Id}' could not be made a {role.AsText().ToLowerInvariant()}: " +
+                                 $"'{account.Id}' could not be made {Article(role)} {role.Title.ToLowerInvariant()}: " +
                                  $"{result.ErrorDescription?.FirstText() ?? "no reason given"}");
 
             }
@@ -352,8 +374,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             accounts.Sessions.RemoveAllForUser(account.Id);
 
             meter.Log.Notice(
-                $"'{user.Id}' made '{account.Id}' a {role.AsText().ToLowerInvariant()}" +
-                (was.HasValue ? $", who was a {was.Value.AsText().ToLowerInvariant()}." : "."),
+                $"'{user.Id}' made '{account.Id}' {Article(role)} {role.Title.ToLowerInvariant()}" +
+                (was is not null ? $", who was {Article(was)} {was.Title.ToLowerInvariant()}." : "."),
                 "accounts", "web"
             );
 
@@ -463,24 +485,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (WouldLeaveNoAdministrator(account))
                 return ErrorJSON(Request, HTTPStatusCode.Conflict, OnlyAdministrator(account));
 
-            // Hermod will not delete a user who is still a member of anything,
-            // so the memberships go first. Every one of them and not only this
-            // meter's: an edge to something else would otherwise leave an
-            // account that cannot be removed for a reason nothing here says.
-            foreach (var edge in account.User2Organization_OutEdges.ToArray())
-                await accounts.RemoveUserFromOrganization(account, edge.EdgeLabel, edge.Target, CurrentUserId: user.Id);
-
-            var result = await accounts.DeleteUser(
-                                   account,
-                                   SkipUserDeletedNotifications:  true,
-                                   CurrentUserId:                 user.Id
-                               );
-
-            if (result.Result != CommandResult.Success)
+            if (!await Remove(account, user))
                 return ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                 $"'{account.Id}' could not be removed: {result.Description?.FirstText() ?? result.Result.ToString()}. " +
-                                  "Its membership of this meter has already been taken away, so it can sign in and do nothing " +
-                                  "until it is either removed or given a role again.");
+                                 $"'{account.Id}' could not be removed. Its roles on this meter have already been taken away, " +
+                                  "so it can sign in and do nothing until it is either removed or given a role again.");
 
             accounts.Sessions.RemoveAllForUser(account.Id);
 
@@ -506,6 +514,42 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
+
+        #region (private) Remove(Account, By)
+
+        /// <summary>
+        /// Take an account out of every group and organization it is in, and
+        /// then away.
+        /// </summary>
+        /// <remarks>
+        /// Hermod will not delete a user who is still a member of anything, so
+        /// the memberships go first - every one of them and not only this
+        /// meter's: an edge to something else would otherwise leave an account
+        /// that cannot be removed for a reason nothing here says.
+        /// </remarks>
+        private async Task<Boolean> Remove(IUser  Account,
+                                           IUser  By)
+        {
+
+            if (Account is User person)
+                foreach (var group in accounts.UserGroups.ToArray())
+                    if (group is UserGroup userGroup && accounts.IsMember(person, userGroup.Id))
+                        await accounts.RemoveUserFromUserGroup(person, userGroup, CurrentUserId: By.Id);
+
+            foreach (var edge in Account.User2Organization_OutEdges.ToArray())
+                await accounts.RemoveUserFromOrganization(Account, edge.EdgeLabel, edge.Target, CurrentUserId: By.Id);
+
+            var result = await accounts.DeleteUser(
+                                   Account,
+                                   SkipUserDeletedNotifications:  true,
+                                   CurrentUserId:                 By.Id
+                               );
+
+            return result.Result == CommandResult.Success;
+
+        }
+
+        #endregion
 
         #region (private) TryGetAccount(Request, out Account, out Unknown)
 
@@ -536,6 +580,40 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
+        #region (private) TryGetGroup(Role, out Group) / EdgeLabelOf(Role)
+
+        /// <summary>
+        /// The user group that carries a role - which the node makes at every
+        /// start, so that it is there unless somebody took it away since.
+        /// </summary>
+        private Boolean TryGetGroup(MeterRole                           Role,
+                                    [NotNullWhen(true)] out UserGroup?  Group)
+        {
+
+            if (accounts.TryGetUserGroup(Role.GroupId, out var group) && group is UserGroup userGroup)
+            {
+                Group = userGroup;
+                return true;
+            }
+
+            Group = null;
+            return false;
+
+        }
+
+        /// <summary>
+        /// How an account is in a role's group: as one of its administrators in
+        /// the systemadmin group, which is how the node puts its first account
+        /// there, and as a member everywhere else.
+        /// </summary>
+        private static User2UserGroupEdgeLabel EdgeLabelOf(MeterRole Role)
+
+            => Role == MeterRole.SystemAdmin
+                   ? User2UserGroupEdgeLabel.IsAdmin
+                   : User2UserGroupEdgeLabel.IsMember;
+
+        #endregion
+
         #region (private) WouldLeaveNoAdministrator(Account) / OnlyAdministrator(Account)
 
         /// <summary>
@@ -556,8 +634,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// </remarks>
         private Boolean WouldLeaveNoAdministrator(IUser Account)
 
-            => RoleOf(Account) == User2OrganizationEdgeLabel.IsAdmin &&
-               accounts.Users.Count(candidate => RoleOf(candidate) == User2OrganizationEdgeLabel.IsAdmin) <= 1;
+            => accounts.IsMember(Account, MeterRole.SystemAdmin.GroupId) &&
+               accounts.Users.Count(candidate => accounts.IsMember(candidate, MeterRole.SystemAdmin.GroupId)) <= 1;
 
         private static String OnlyAdministrator(IUser Account)
 
@@ -571,7 +649,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Boolean TryGetMeterOrganization([NotNullWhen(true)] out IOrganization? Organization)
         {
 
-            if (Organization_Id.TryParse(ModbusTLSEnergyMeter.MeterOrganizationId, out var organizationId) &&
+            if (Organization_Id.TryParse(meter.Kind.Organization, out var organizationId) &&
                 accounts.TryGetOrganization(organizationId, out var organization) &&
                 organization is not null)
             {
@@ -586,15 +664,22 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private) AccountJSON(Account, CurrentUser) / RolesJSON()
+        #region (private) AccountJSON(Account, CurrentUser) / RolesJSON() / Article(Role)
 
         /// <summary>
         /// One account as a page shows it.
         /// </summary>
+        /// <remarks>
+        /// The strongest of its roles as "role", which is what the page's list
+        /// shows and changes, and every one of them as "roles" beside it - an
+        /// account put in a second group by some other way is not to be
+        /// described as having one.
+        /// </remarks>
         private JObject AccountJSON(IUser Account, IUser CurrentUser)
         {
 
-            var role = RoleOf(Account);
+            var roles = meter.RolesOf(Account);
+            var role  = roles.FirstOrDefault();
 
             return new JObject(
 
@@ -602,12 +687,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                        new JProperty("name",         Account.Name.FirstText()),
                        new JProperty("email",        Account.EMail.Address.ToString()),
 
-                       role.HasValue
-                           ? new JProperty("role",   role.Value.ToString())
+                       role is not null
+                           ? new JProperty("role",   role.Name)
                            : new JProperty("role",   JValue.CreateNull()),
 
-                       new JProperty("roleTitle",    role?.AsText() ?? "No role in this meter"),
-                       new JProperty("permissions",  new JArray((role?.PermissionsOf() ?? MeterPermissions.None).Names())),
+                       new JProperty("roles",        new JArray(roles.Select(one => one.Name))),
+                       new JProperty("roleTitle",    role?.Title ?? "No role on this meter"),
+                       new JProperty("permissions",  new JArray(roles.PermissionsOf().Names())),
 
                        // So that a page can say "you" rather than leaving somebody
                        // to recognise their own user name in a list.
@@ -619,7 +705,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         private static JArray RolesJSON()
 
-            => new (MeterRoles.Assignable.Select(role => role.ToJSON()));
+            => new (MeterRole.All.Select(role => role.ToJSON()));
+
+        private static String Article(MeterRole Role)
+
+            => "aeiou".Contains(Char.ToLowerInvariant(Role.Title[0]))
+                   ? "an"
+                   : "a";
 
         #endregion
 

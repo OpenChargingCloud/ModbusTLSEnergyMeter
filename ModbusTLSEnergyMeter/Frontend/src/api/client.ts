@@ -25,6 +25,11 @@ export interface LogEntry {
     message:    string;
     /** Whatever else belongs to it, when there is more than one line to say. */
     data?:      unknown;
+    /**
+     * Whether it is in the log book as well - signed, chained and kept whole -
+     * because it is evidence: a refusal, a write, the clock. Absent where not.
+     */
+    metrological?:  boolean;
 }
 
 /** What a page of the log brings back. */
@@ -55,9 +60,9 @@ export type Permission = 'ReadMeter'
 
 /** One of the roles this meter hands out, and what holding it means. */
 export interface RoleInfo {
-    /** What the meter calls it: "IsAdmin", "IsMember", ... */
+    /** What the meter calls it - the name of its user group: "systemadmin", "viewer", ... */
     role:         string;
-    /** What a person calls it: "Administrator", "Member", ... */
+    /** What a person calls it: "Administrator", "Viewer", ... */
     title:        string;
     description:  string;
     permissions:  Permission[];
@@ -68,8 +73,10 @@ export interface Account {
     userId:       string;
     name:         string | null;
     email:        string;
-    /** Their role, or null when they hold none and may therefore do nothing. */
+    /** Their strongest role, or null when they hold none and may therefore do nothing. */
     role:         string | null;
+    /** Every role they hold - one per group of that name they are in - strongest first. */
+    roles:        string[];
     roleTitle:    string;
     permissions:  Permission[];
     /** Whether this is the account the request was made with. */
@@ -207,11 +214,13 @@ export interface Me {
     userId:       string;
     name:         string | null;
     organization: string;
-    /** Their role in the meter's organization, or null when they have none. */
+    /** Their strongest role on this meter, or null when they have none. */
     role:         string | null;
+    /** Every role they hold - one per group of that name they are in - strongest first. */
+    roles:        string[];
     /**
-     * The same role as a person would say it: "Read-only administrator" rather
-     * than "IsAdminReadOnly".
+     * The same role as a person would say it: "Administrator" rather than
+     * "systemadmin".
      *
      * Sent with the role rather than looked up, because every page that tells
      * somebody what they may not do here names their role in the same sentence,
@@ -299,27 +308,57 @@ export interface MeterReadings {
 
 /** One name server this meter asks. */
 export interface DNSServer {
-    address:    string;
-    port:       number;
-    transport:  string;
+    /** An IP address or a host name. */
+    address:              string;
+    port:                 number;
+    transport:            string;
+    /** Its own query timeout, or null for the one in the settings. */
+    queryTimeoutSeconds:  number | null;
+}
+
+/** What may be changed about the name resolution while the meter runs. */
+export interface DNSSettings {
+    queryTimeoutSeconds:  number;
+    /** null leaves it to the server's own default. */
+    recursionDesired:     boolean | null;
+    useCache:             boolean;
+    dnssecOK:             boolean;
+    followCNAMEs:         boolean;
+    maxCNAMEFollows:      number;
+    maxRetries:           number;
 }
 
 /** How this meter resolves names. */
 export interface DNSConfiguration {
-    enabled:              boolean;
-    servers:              DNSServer[];
-    recursionDesired:     boolean;
-    useCache:             boolean;
-    dnssecOK:             boolean;
-    followCNAMEs:         boolean;
-    queryTimeoutSeconds:  number;
-    maxCNAMEFollows:      number;
-    maxRetries:           number;
-    file?:                string;
+    enabled:    boolean;
+    servers:    DNSServer[];
+    settings:   DNSSettings;
+    /** What was decided when the client was made, and is not on offer. */
+    fixed:      Record<string, unknown>;
+    limits: {
+        maxServers:       number;
+        maxQueryTimeout:  number;
+        transports:       string[];
+        recordTypes:      string[];
+    };
+    file:       string;
 }
 
-/** What a PUT to the name resolution may carry. */
-export type DNSUpdate = Partial<Omit<DNSConfiguration, 'file'>>;
+/**
+ * What a PUT to the name resolution may carry - the shape of the "dns"
+ * section of the configuration file, flat. What is left out stays as it is.
+ */
+export interface DNSUpdate {
+    enabled?:              boolean;
+    servers?:              DNSServer[];
+    queryTimeoutSeconds?:  number;
+    recursionDesired?:     boolean | null;
+    useCache?:             boolean;
+    dnssecOK?:             boolean;
+    followCNAMEs?:         boolean;
+    maxCNAMEFollows?:      number;
+    maxRetries?:           number;
+}
 
 /**
  * One time server as the configuration names it. Whatever is left out is the
@@ -331,6 +370,38 @@ export interface NTSServerEntry {
     ntsKEPort?:  number;
     ntpPort?:    number;
     enabled?:    boolean;
+    /** The SHA-256 fingerprint of the certificate it has to show. */
+    certificateFingerprint?:  string;
+    /** The SHA-256 fingerprint of the root its chain has to end at. */
+    rootFingerprint?:         string;
+    /** What a fingerprint that does not match does: refuse the server - what a pin means anyway - or only write it down. */
+    onMismatch?:              PinMismatch;
+}
+
+/** What a time server's fingerprint that does not match does. */
+export type PinMismatch = 'refuse' | 'record';
+
+/** What a time server is held to, where it is held to anything. */
+export interface NTSPins {
+    certificate:  string | null;
+    root:         string | null;
+    onMismatch:   PinMismatch;
+}
+
+/** What the meter made of the certificate a time server showed at its last key exchange. */
+export interface TimeServerJudgement {
+    server:       string;
+    at:           string;
+    accepted:     boolean;
+    /** "accepted", "recorded", "pinMismatch", "untrusted", "wrongName" or "noCertificate". */
+    outcome:      string;
+    /** The fingerprint of the certificate it showed, or null when it showed none. */
+    certificate:  string | null;
+    /** The fingerprint of the root its chain ends at, or null when it ends at none this meter trusts. */
+    root:         string | null;
+    /** The label of the root of the meter's own store the chain ends at, where the machine did not know that root. */
+    anchoredBy:   string | null;
+    heldTo:       { certificate: string | null; root: string | null } | null;
 }
 
 /**
@@ -417,6 +488,13 @@ export interface NTSTimeSource {
      * or null before the first exchange.
      */
     rootCA?:        NTSRootCA | null;
+
+    /** The SHA-256 fingerprint of the certificate the last key exchange showed. */
+    certificate?:   string | null;
+    /** What this server is held to, or null when it is held to nothing but the usual checks. */
+    heldTo?:        NTSPins | null;
+    /** What the meter made of the certificate at the last key exchange. */
+    judgement?:     TimeServerJudgement | null;
 }
 
 /** A root CA, by a name to call it, its subject, and its SHA-256 fingerprint. */
@@ -470,30 +548,32 @@ export interface NTSConfiguration {
 
 /** What this meter's clock is, and whether anybody may call it legal time. */
 export interface Clock {
-    now:                  string;
-    ntsEnabled:           boolean;
-    /** The group the clock is checked against - null while NTS is switched off. */
-    group:                string | null;
-    /** Its servers switched on, in the order they are asked - null while switched off. */
-    servers:              string[] | null;
-    /** How many of them have to answer - null while switched off. */
-    minServers:           number | null;
-    checkEvery_s:         number;
-    lastCheck:            string | null;
-    lastCheckServer:      string | null;
-    lastCheckAsked:       number | null;
-    lastCheckAnswered:    number | null;
-    lastCheckAge_s:       number | null;
-    lastCheckOffset_ms:   number | null;
-    /** The last synchronisation, whichever way it went - lastCheck is the last that found a time. */
-    lastSync:             string | null;
-    lastSyncResult:       string | null;
-    legalAuthority:       string | null;
-    legalTolerance_ms:    number;
-    legalMaxAge_s:        number;
-    isLegalTime:          boolean;
-    /** Why it is, or why it is not. */
-    why:                  string;
+    now:        string;
+    /** Always "system": said out loud, because the check below did not set it. */
+    source:     string;
+    nts: {
+        enabled:       boolean;
+        /** The group the clock is checked against, its servers and its quorum; null while switched off. */
+        group:         string | null;
+        /** The one server by name when the group has only one. */
+        server:        string | null;
+        servers:       string[] | null;
+        minServers:    number | null;
+        /** The last check: which server's answer it went by, how many were asked and how many answered. */
+        lastServer:    string | null;
+        asked:         number | null;
+        answered:      number | null;
+        checkedAt:     string | null;
+        ageSeconds:    number | null;
+        offset_ms:     number | null;
+        everySeconds:  number;
+    };
+    legal:             boolean;
+    authority:         string | null;
+    /** null while legal; otherwise "notClaimed", "ntsOff", "neverChecked", "stale" or "offBy". */
+    why:               string | null;
+    toleranceSeconds:  number;
+    maxAgeSeconds:     number;
 }
 
 
@@ -764,7 +844,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 }
 
 const meterAPI    = <T>(method: string, path: string, body?: unknown) => request<T>(method, config.apiBase      + path, body);
-const accountsAPI = <T>(method: string, path: string, body?: unknown) => request<T>(method, config.accountsBase + path, body);
+const accountsAPI = <T>(method: string, path: string, body?: unknown) => request<T>(method, config.extBase      + path, body);
 
 
 export const api = {

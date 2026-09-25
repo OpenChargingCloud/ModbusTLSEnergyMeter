@@ -5,8 +5,6 @@ import type { Page } from '../router';
 import { shell } from '../shell';
 import { checked, errorMessage, numberField } from '../ui';
 
-const transports = ['UDP', 'TCP', 'TLS', 'HTTPS'];
-
 /**
  * How this meter resolves names.
  *
@@ -69,9 +67,11 @@ export const dnsPage: Page = {
                         <div class="server-list" id="servers"></div>
 
                         <div class="form-actions">
-                            <button type="button" class="btn" id="add-server" ${mayChange ? '' : html`disabled`}>
+                            <button type="button" class="btn" id="add-server"
+                                    ${!mayChange || servers.length >= configuration.limits.maxServers ? html`disabled` : ''}>
                                 Add a name server
                             </button>
+                            <span class="hint">At most ${configuration.limits.maxServers}.</span>
                         </div>
 
                         <p class="hint">
@@ -92,39 +92,42 @@ export const dnsPage: Page = {
                                 <span>Name resolution on</span>
                             </label>
 
-                            <label class="switch">
-                                <input type="checkbox" name="recursionDesired" ${configuration.recursionDesired ? html`checked` : ''} ${mayChange ? '' : html`disabled`} />
-                                <span>Recursion desired</span>
+                            <label>Recursion desired
+                                <select name="recursionDesired" ${mayChange ? '' : html`disabled`}>
+                                    <option value=""      ${configuration.settings.recursionDesired === null  ? html`selected` : ''}>leave it to the server</option>
+                                    <option value="true"  ${configuration.settings.recursionDesired === true  ? html`selected` : ''}>yes</option>
+                                    <option value="false" ${configuration.settings.recursionDesired === false ? html`selected` : ''}>no</option>
+                                </select>
                             </label>
 
                             <label class="switch">
-                                <input type="checkbox" name="useCache" ${configuration.useCache ? html`checked` : ''} ${mayChange ? '' : html`disabled`} />
+                                <input type="checkbox" name="useCache" ${configuration.settings.useCache ? html`checked` : ''} ${mayChange ? '' : html`disabled`} />
                                 <span>Use the cache</span>
                             </label>
 
                             <label class="switch">
-                                <input type="checkbox" name="dnssecOK" ${configuration.dnssecOK ? html`checked` : ''} ${mayChange ? '' : html`disabled`} />
+                                <input type="checkbox" name="dnssecOK" ${configuration.settings.dnssecOK ? html`checked` : ''} ${mayChange ? '' : html`disabled`} />
                                 <span>DNSSEC OK</span>
                             </label>
 
                             <label class="switch">
-                                <input type="checkbox" name="followCNAMEs" ${configuration.followCNAMEs ? html`checked` : ''} ${mayChange ? '' : html`disabled`} />
+                                <input type="checkbox" name="followCNAMEs" ${configuration.settings.followCNAMEs ? html`checked` : ''} ${mayChange ? '' : html`disabled`} />
                                 <span>Follow CNAMEs</span>
                             </label>
 
                             <label>Query timeout in seconds
-                                <input type="number" name="queryTimeoutSeconds" min="0.1" max="60" step="0.1"
-                                       value="${configuration.queryTimeoutSeconds}" ${mayChange ? '' : html`disabled`} />
+                                <input type="number" name="queryTimeoutSeconds" min="0.1" max="${configuration.limits.maxQueryTimeout}" step="0.1"
+                                       value="${configuration.settings.queryTimeoutSeconds}" ${mayChange ? '' : html`disabled`} />
                             </label>
 
                             <label>Max CNAME follows
                                 <input type="number" name="maxCNAMEFollows" min="0" max="255"
-                                       value="${configuration.maxCNAMEFollows}" ${mayChange ? '' : html`disabled`} />
+                                       value="${configuration.settings.maxCNAMEFollows}" ${mayChange ? '' : html`disabled`} />
                             </label>
 
                             <label>Max retries
                                 <input type="number" name="maxRetries" min="0" max="255"
-                                       value="${configuration.maxRetries}" ${mayChange ? '' : html`disabled`} />
+                                       value="${configuration.settings.maxRetries}" ${mayChange ? '' : html`disabled`} />
                             </label>
 
                             <div class="form-actions">
@@ -134,10 +137,27 @@ export const dnsPage: Page = {
                             </div>
 
                             <span class="hint">
-                                Saved to ${configuration.file ?? 'the configuration file'}, and in effect at once.
+                                Saved to ${configuration.file}, and in effect at once.
                             </span>
 
                         </form>
+
+                    </section>
+
+                    <section class="card">
+
+                        <h2><i class="fa-solid fa-circle-info"></i> Fixed when the client was made</h2>
+
+                        <div class="kv-list">
+                            ${Object.entries(configuration.fixed).map(([key, value]) => html`
+                                <div class="kv">
+                                    <span class="k">${key}</span>
+                                    <span class="v">${value === null || value === undefined ? '-' : String(value)}</span>
+                                </div>
+                            `)}
+                        </div>
+
+                        <p class="hint">Changing these means making another client, which means restarting the meter.</p>
 
                     </section>
 
@@ -166,7 +186,7 @@ export const dnsPage: Page = {
                         <input type="number" data-field="port" data-index="${index}" value="${server.port}"
                                min="1" max="65535" ${mayChange ? '' : html`disabled`} />
                         <select data-field="transport" data-index="${index}" ${mayChange ? '' : html`disabled`}>
-                            ${transports.map(transport => html`
+                            ${(current?.limits.transports ?? [server.transport]).map(transport => html`
                                 <option ${server.transport === transport ? html`selected` : ''}>${transport}</option>
                             `)}
                         </select>
@@ -224,7 +244,7 @@ export const dnsPage: Page = {
                 return;
 
             must<HTMLButtonElement>(content, '#add-server').addEventListener('click', () => {
-                servers.push({ address: '', port: 53, transport: 'UDP' });
+                servers.push({ address: '', port: 53, transport: 'UDP', queryTimeoutSeconds: null });
                 drawServers();
             });
 
@@ -242,9 +262,11 @@ export const dnsPage: Page = {
                     try
                     {
 
+                        const recursion = String(new FormData(form).get('recursionDesired') ?? '');
+
                         current = await api.dns.save({
                             enabled:              checked(form, 'enabled'),
-                            recursionDesired:     checked(form, 'recursionDesired'),
+                            recursionDesired:     recursion === '' ? null : recursion === 'true',
                             useCache:             checked(form, 'useCache'),
                             dnssecOK:             checked(form, 'dnssecOK'),
                             followCNAMEs:         checked(form, 'followCNAMEs'),

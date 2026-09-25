@@ -30,6 +30,8 @@ using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
+using LogLevel = cloud.charging.open.protocols.WWCP.Node.Logging.LogLevel;
+
 #endregion
 
 namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
@@ -46,10 +48,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
     /// accounts at "/" - Hermod dispatches a request to the most specific
     /// HTTPAPI first.
     ///
-    /// Signing in is not here: that is <see cref="HTTPExtAPI"/>'s
-    /// "/auth/login", and the session cookie it sets is what every resource
+    /// Signing in is not here: that is the node's <see cref="HTTPExtAPI"/>'s
+    /// "/ext/auth/login", and the session cookie it sets is what every resource
     /// below is read with. This API only ever asks who the cookie belongs to
-    /// and what that person's role in the meter's organization allows.
+    /// and what the groups of that person's roles allow.
     /// </remarks>
     public partial class MeterHTTPAPI : org.GraphDefined.Vanaheimr.Hermod.HTTP.HTTPAPI
     {
@@ -60,6 +62,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// The default root path of this API.
         /// </summary>
         public static readonly HTTPPath  DefaultAPIPath      = HTTPPath.Parse("/api");
+
+        /// <summary>
+        /// What the files of the web interface are called as resources of this
+        /// assembly: the namespace, "HTTPRoot", and the path below dist/ with
+        /// dots - see the Frontend targets in the project file.
+        /// </summary>
+        public const           String    FrontendResourcePrefix  = "cloud.charging.open.EnergyMeters.ModbusTLS.HTTPRoot.";
 
         /// <summary>
         /// The name of the Server-Sent Events stream.
@@ -234,7 +243,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         ///
         /// The role travels twice: once as this meter spells it and once as a
         /// person would say it. Every page that tells somebody what they may
-        /// not do here names their role in the same breath, and "IsAdminReadOnly"
+        /// not do here names their role in the same breath, and "systemadmin"
         /// is not a thing anybody says. Sending the readable form with the role
         /// it belongs to is one field; the alternative is every page fetching
         /// the role table to translate one word.
@@ -245,28 +254,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryGetUser(Request, out var user, out var unauthorized))
                 return Task.FromResult(unauthorized);
 
-            var role        = RoleOf(user);
-            var permissions = role?.PermissionsOf() ?? MeterPermissions.None;
+            var roles       = meter.RolesOf(user);
+            var role        = roles.FirstOrDefault();
 
             return Task.FromResult(
                        JSONResponse(Request, HTTPStatusCode.OK,
                            new JObject(
-                               new JProperty("userId",       user.Id.ToString()),
-                               new JProperty("name",         user.Name.FirstText()),
-                               new JProperty("organization", ModbusTLSEnergyMeter.MeterOrganizationId),
-                               role.HasValue
-                                   ? new JProperty("role",             role.Value.ToString())
-                                   : new JProperty("role",             JValue.CreateNull()),
-
-                               role.HasValue
-                                   ? new JProperty("roleTitle",        role.Value.AsText())
-                                   : new JProperty("roleTitle",        JValue.CreateNull()),
-
-                               role.HasValue
-                                   ? new JProperty("roleDescription",  role.Value.Description())
-                                   : new JProperty("roleDescription",  JValue.CreateNull()),
-
-                               new JProperty("permissions",  new JArray(permissions.Names()))
+                               new JProperty("userId",           user.Id.ToString()),
+                               new JProperty("name",             user.Name.FirstText()),
+                               new JProperty("organization",     meter.Kind.Organization),
+                               new JProperty("role",             role?.Name),
+                               new JProperty("roles",            new JArray(roles.Select(one => one.Name))),
+                               new JProperty("roleTitle",        role?.Title),
+                               new JProperty("roleDescription",  role?.Description),
+                               new JProperty("permissions",      new JArray(roles.PermissionsOf().Names()))
                            ))
                    );
 
@@ -769,13 +770,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #region (private) GetLogVerification(Request)
 
         /// <summary>
-        /// GET /api/v1/logs/verify: walk the log on disk and say whether it
-        /// still leads to where it says it does.
+        /// GET /api/v1/logs/verify: walk the log book - the node's metrological
+        /// log - on disk and say whether it still leads to where it says it
+        /// does.
         /// </summary>
         /// <remarks>
         /// The whole of it, every line, which is why this is its own resource
         /// and not part of reading the log: it is the expensive question, asked
-        /// rarely and deliberately.
+        /// rarely and deliberately. The log book, which is what is signed: the
+        /// ordinary log files beside it are for reading.
         ///
         /// The answer carries the public key and the head of the chain, because
         /// both are what somebody checking this from outside needs - the key to
@@ -788,21 +791,21 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out var user, out var refused))
                 return Task.FromResult(refused);
 
-            var store = meter.Log.Store;
+            var store = meter.MetrologicalLog;
 
             if (store is null)
                 return Task.FromResult(
                            JSONResponse(Request, HTTPStatusCode.OK,
                                new JObject(
                                    new JProperty("persisted",  false),
-                                   new JProperty("why",        "This meter keeps its log in memory only, so there is nothing signed to check.")
+                                   new JProperty("why",        "This meter writes no log files, and so keeps no log book to check.")
                                ))
                        );
 
             var result = store.Verify();
 
             meter.Log.Log(
-                result.IsIntact ? Logging.LogLevel.Notice : Logging.LogLevel.Error,
+                result.IsIntact ? LogLevel.Notice : LogLevel.Error,
                 result.IsIntact
                     ? $"'{user.Id}' checked the log: {result.Entries} entries, intact."
                     : $"'{user.Id}' checked the log: {result.FirstProblem}",
@@ -821,6 +824,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                new JProperty("publicKey",     store.Signer.PublicKeyPem),
                                new JProperty("path",          store.Path),
                                new JProperty("keepDays",      store.KeepDays),
+                               new JProperty("metrological",  true),
                                new JProperty("firstProblem",  result.FirstProblem),
 
                                new JProperty("files",         new JArray(
@@ -1032,46 +1036,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private) RoleOf      (User)
-
-        /// <summary>
-        /// The role this person holds in the meter's organization, or null when
-        /// they hold none.
-        /// </summary>
-        /// <remarks>
-        /// The strongest of them when there are several. Somebody made both a
-        /// member and an administrator is an administrator; taking the first
-        /// edge found instead would make their rights depend on the order the
-        /// account database happened to be written in.
-        /// </remarks>
-        private User2OrganizationEdgeLabel? RoleOf(IUser User)
-        {
-
-            User2OrganizationEdgeLabel? strongest   = null;
-            var                         permissions = MeterPermissions.None;
-
-            foreach (var edge in User.User2Organization_OutEdges)
-            {
-
-                if (edge.Target.Id.ToString() != ModbusTLSEnergyMeter.MeterOrganizationId)
-                    continue;
-
-                var candidate = edge.EdgeLabel.PermissionsOf();
-
-                if (strongest is null || candidate > permissions)
-                {
-                    strongest    = edge.EdgeLabel;
-                    permissions  = candidate;
-                }
-
-            }
-
-            return strongest;
-
-        }
-
-        #endregion
-
         #region (private) TryAuthorize(Request, Required, StateChanging, out User, out Refused)
 
         /// <summary>
@@ -1109,8 +1073,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryGetUser(Request, out User, out Refused))
                 return false;
 
-            var role        = RoleOf(User);
-            var permissions = role?.PermissionsOf() ?? MeterPermissions.None;
+            var roles       = meter.RolesOf(User);
+            var permissions = roles.PermissionsOf();
 
             if (!permissions.HasFlag(Required))
             {
@@ -1119,8 +1083,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                               new JObject(
                                   new JProperty("error",     $"'{User.Id}' may not do this."),
                                   new JProperty("required",  Required.ToString()),
-                                  new JProperty("role",      role?.ToString()),
-                                  new JProperty("granted",   new JArray(permissions.Names()))
+                                  new JProperty("role",      roles.FirstOrDefault()?.Name),
+                                  new JProperty("granted",   new JArray(permissions.Names())),
+
+                                  // Who could, so that a refusal says whom to ask.
+                                  new JProperty("rolesThatMay",  new JArray(MeterRole.All.Where(role => role.Permissions.HasFlag(Required)).
+                                                                                          Select(role => role.Name)))
                               ));
 
                 User = null;

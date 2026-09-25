@@ -7,18 +7,20 @@ import { shell } from '../shell';
 import { errorMessage, formatTime, formatTimestamp, isAtLeast } from '../ui';
 
 /**
- * The log as evidence: what it says, and whether it can still be believed.
+ * The log book: the entries that are evidence, what they say, and whether they
+ * can still be believed.
  *
- * Every Modbus request is in here, allowed or refused. A log that recorded
- * only what was permitted could not afterwards answer who was turned away,
- * how often, or with which certificate - which is the question this page
- * exists for.
+ * Every refused Modbus request is in here, and every write - a log that
+ * recorded only what was permitted could not afterwards answer who was turned
+ * away, how often, or with which certificate, which is the question this page
+ * exists for - and beside them the clock, the time servers' certificates, the
+ * certificates this meter shows, and its starts and stops.
  *
- * Its twin under /logs shows the same entries as they arrive and is the one
- * to watch while something is going wrong. This one is for afterwards: it
- * walks the files on disk, checks that every line matches its own hash,
- * follows the line before it and carries the signature of a key this meter
- * holds, and says so plainly when it does not.
+ * Its twin under /logs shows every entry as it arrives, these among them, and
+ * is the one to watch while something is going wrong. This one is for
+ * afterwards: it walks the files on disk, checks that every line matches its
+ * own hash, follows the line before it and carries the signature of a key this
+ * meter holds, and says so plainly when it does not.
  *
  * The list is fed by the store, which follows the meter's event stream from
  * the moment somebody signs in - so this page opens on what happened while
@@ -90,6 +92,11 @@ export const metrologicalLogPage: Page = {
                    (tag === '' || entry.level === tag || entry.tags.includes(tag));
         }
 
+        /** What of the log in the browser is in the log book as well. */
+        function book(): LogEntry[] {
+            return logs.entries.filter(entry => entry.metrological === true);
+        }
+
         function drawTags(): void {
 
             const known = new Set(Array.from(tagSelect.options).map(option => option.value));
@@ -105,16 +112,17 @@ export const metrologicalLogPage: Page = {
         /** Newest first: what just happened is what somebody came here for. */
         function drawList(): void {
 
-            const shown = drawOrder(logs.entries.filter(matches));
+            const all    = book();
+            const shown  = drawOrder(all.filter(matches));
 
             render(list, html`${shown.map(line)}`);
 
-            count.textContent = shown.length === logs.entries.length
+            count.textContent = shown.length === all.length
                                     ? `${shown.length} entries`
-                                    : `${shown.length} of ${logs.entries.length} entries`;
+                                    : `${shown.length} of ${all.length} entries`;
 
             foot.textContent = logs.capacity > 0
-                                   ? `This meter keeps the newest ${logs.capacity} entries in memory; the log on disk goes back further.`
+                                   ? `This meter keeps the newest ${logs.capacity} entries of its log in memory, these among them; the log book on disk goes back further.`
                                    : '';
 
         }
@@ -209,7 +217,7 @@ function verdictOf(result: Awaited<ReturnType<typeof api.verifyLog>>): HTMLFragm
         <section class="card verdict">
 
             <h2>
-                <i class="fa-solid fa-file-signature"></i> The log on disk
+                <i class="fa-solid fa-file-signature"></i> The log book on disk
                 <span class="chip ${result.intact ? 'on' : 'alert'}">${result.intact ? 'intact' : 'broken'}</span>
             </h2>
 
@@ -223,7 +231,7 @@ function verdictOf(result: Awaited<ReturnType<typeof api.verifyLog>>): HTMLFragm
             <table class="kv">
                 <tr><td>Head</td><td class="wrap"><code>${result.head}</code></td></tr>
                 <tr><td>Where</td><td class="wrap">${result.path}</td></tr>
-                <tr><td>Kept</td><td>${result.keepDays} days</td></tr>
+                <tr><td>Kept</td><td>${(result.keepDays ?? 0) > 0 ? `${result.keepDays} days` : 'whole - nothing is thrown away'}</td></tr>
                 ${(result.files ?? []).map(file => html`
                     <tr>
                         <td>${file.name}</td>

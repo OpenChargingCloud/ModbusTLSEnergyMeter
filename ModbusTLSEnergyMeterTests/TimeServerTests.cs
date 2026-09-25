@@ -23,7 +23,7 @@ using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Configuration;
 
 #endregion
 
@@ -55,7 +55,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         private String  directory         = "";
 
         private String ConfigurationPath
-            => Path.Combine(directory, MeterConfigFile.DefaultFileName);
+            => Path.Combine(directory, WWCPConfigFile.DefaultFileName);
 
         #endregion
 
@@ -134,7 +134,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                        ServerPfxPassword:  "demo",
                        ClientCACertPath:   Path.Combine(pkiDirectory, "issuing-clients-ca.crt"),
                        DataPath:           Path.Combine(directory, "data"),
-                       ConfigFile:         new MeterConfigFile(ConfigurationPath),
+                       ConfigFile:         new WWCPConfigFile(ConfigurationPath),
                        LogKeepDays:        0,
                        LogToConsole:       false
                    );
@@ -198,7 +198,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
                 Assert.That(result.Value<Boolean>("ok"),  Is.False);
-                Assert.That(Steps(result),                Is.EqualTo(new[] { "Time synchronisation is switched off on this meter, so nothing was asked." }));
+                Assert.That(Steps(result),                Is.EqualTo(new[] { "Time synchronisation is switched off on this energy meter, so nothing was asked." }));
                 Assert.That(meter.Log.Recent(50, before, "test"),  Is.Empty);
             });
 
