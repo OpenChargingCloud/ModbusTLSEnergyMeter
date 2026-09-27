@@ -1361,6 +1361,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(csr,                                                                         Does.StartWith("-----BEGIN CERTIFICATE REQUEST-----"));
                 Assert.That(request["keyType"]?.ToString(),                                              Is.EqualTo("ecdsa-p256"));
 
+                // The key stays in the meter: not in the file a CA is sent, and
+                // not in anything the API says about the request.
+                Assert.That(csr,                                                                         Does.Not.Contain("PRIVATE KEY"));
+                Assert.That(request.ToString(),                                                          Does.Not.Contain("PRIVATE KEY"));
+                Assert.That(requests?.ToString(),                                                        Does.Not.Contain("PRIVATE KEY"));
+
                 Assert.That(answered,                                                                    Is.EqualTo(HttpStatusCode.OK), $"{answer}");
                 Assert.That(answer?["certificate"]?["usages"]?.Values<String>(),                         Is.EqualTo(new[] { "modbus" }));
                 Assert.That(answer?["certificate"]?["chainLength"]?.Value<Int32>(),                      Is.EqualTo(1), "the issuing CA came with it");
