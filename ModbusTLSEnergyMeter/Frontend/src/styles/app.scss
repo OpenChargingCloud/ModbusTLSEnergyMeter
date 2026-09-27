@@ -1207,8 +1207,14 @@ input, textarea, select {
 
 @media (max-width: 52rem) {
 
+    // No wider than the window, whatever is in it. A column of 1fr is at least
+    // as wide as the widest thing in it that cannot get any narrower, and the
+    // strip was that thing: the menu's entries in one row made the frame 722
+    // pixels wide for an administrator, and 496 for a role that may not read
+    // the log. A phone 390 pixels across showed the left of that and cut off
+    // the rest, the sign-out button with it.
     .shell {
-        grid-template-columns:  1fr;
+        grid-template-columns:  minmax(0, 1fr);
         grid-template-rows:     auto 1fr;
     }
 
@@ -1218,17 +1224,24 @@ input, textarea, select {
         align-items:     center;
         flex-wrap:       wrap;
         gap:             0.5rem;
-        padding:         0 0.75rem;
+        // The same gutter as the page below it.
+        padding:         0 1rem;
 
         .brand {
             border-bottom: none;
             padding:       0.6rem 0.5rem 0.6rem 0;
         }
 
+        // Beside the brand where all its entries fit there, on a line of its
+        // own where they do not, and over as many lines as it takes on a
+        // phone, where not even a line of its own is enough: an entry that
+        // runs off the edge of the strip is one nobody finds, whether it is
+        // cut off or scrolled away.
         .menu {
-            display:  flex;
-            flex:     1;
-            margin:   0;
+            display:    flex;
+            flex:       1 1 auto;
+            flex-wrap:  wrap;
+            margin:     0;
 
             a {
                 padding: 0.5rem 0.8rem;
@@ -1239,9 +1252,12 @@ input, textarea, select {
             }
         }
 
+        // Allowed to be narrower than a long user id, which is then cut off
+        // rather than pushing the sign-out button past the edge.
         .sidebar-foot {
             flex-direction:  row;
             align-items:     center;
+            min-width:       0;
             border-top:      none;
             padding:         0.4rem 0;
 
@@ -1250,6 +1266,11 @@ input, textarea, select {
             }
         }
 
+    }
+
+    // The heading in line with the cards below it.
+    .page-head {
+        padding: 1.1rem 1rem 0.9rem;
     }
 
     .content-body {
@@ -1442,7 +1463,9 @@ table.numbers {
 
 .accounts {
     display:                grid;
-    grid-template-columns:  repeat(auto-fill, minmax(26rem, 1fr));
+    // Cards at least 26rem wide, but never wider than the page: on a phone a
+    // single one was, and the page scrolled sideways.
+    grid-template-columns:  repeat(auto-fill, minmax(min(26rem, 100%), 1fr));
     gap:                    1rem;
     align-items:            start;
     margin-bottom:          1rem;
@@ -1515,7 +1538,8 @@ table.numbers {
 
 .keys {
     display:                grid;
-    grid-template-columns:  repeat(auto-fill, minmax(26rem, 1fr));
+    // At least 26rem, and never wider than the page - as the accounts above.
+    grid-template-columns:  repeat(auto-fill, minmax(min(26rem, 100%), 1fr));
     gap:                    1rem;
     align-items:            start;
     margin-bottom:          1rem;
