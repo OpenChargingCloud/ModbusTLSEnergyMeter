@@ -29,7 +29,7 @@ export const dnsPage: Page = {
 
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
 
-        const mayChange = auth.can('ChangeNetworkSettings');
+        const mayChange = auth.can('dns', 'edit');
 
         let cancelled = false;
         let current: DNSConfiguration | null = null;

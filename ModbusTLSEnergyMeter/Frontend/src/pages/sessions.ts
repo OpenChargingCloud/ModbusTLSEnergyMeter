@@ -35,7 +35,7 @@ export const sessionsPage: Page = {
 
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
 
-        const mayDrive = auth.can('WriteRegisters');
+        const mayDrive = auth.can('meter', 'run');
 
         let cancelled = false;
         let state: SessionState | null = null;

@@ -22,7 +22,7 @@ using System.Security.Cryptography;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 
-using cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI;
+using cloud.charging.open.protocols.WWCP.Node.Web;
 
 #endregion
 
@@ -35,37 +35,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
     /// <remarks>
     /// The accounts are the node's - Hermod's HTTPExt API at "/ext", the first
     /// account "root" in the systemadmin group, and a role for every group of
-    /// the same name. The meter's own part is the roles, <see cref="MeterRole"/>,
-    /// and the accounts from before it had groups.
+    /// the same name - and so is the asking: RolesOf, PermissionsOf and
+    /// IsAllowed, on every request. The meter's own part is its resources and
+    /// roles, <see cref="MeterAccess"/>, and the accounts from before it had
+    /// groups.
     /// </remarks>
     public partial class ModbusTLSEnergyMeter
     {
-
-        #region RolesOf(User) / PermissionsOf(User)
-
-        /// <summary>
-        /// The roles this account holds on this meter: one per group of that name
-        /// it is in, strongest first.
-        /// </summary>
-        /// <remarks>
-        /// Asked of the groups every time rather than remembered at sign-in, so
-        /// that taking somebody out of a group takes effect on their next request
-        /// instead of at their next sign-in. A role revoked that still works
-        /// until a browser is closed is not revoked.
-        /// </remarks>
-        public IReadOnlyList<MeterRole> RolesOf(IUser User)
-
-            => [.. MeterRole.All.Where(role => ExtAPI.IsMember(User, role.GroupId))];
-
-        /// <summary>
-        /// Everything those roles add up to, or nothing at all when the account
-        /// is in none of the groups.
-        /// </summary>
-        public MeterPermissions PermissionsOf(IUser User)
-
-            => RolesOf(User).PermissionsOf();
-
-        #endregion
 
         #region (protected override) OnAccountsReady()
 
@@ -99,41 +75,47 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 if (account is not User user)
                     continue;
 
-                if (MeterRole.All.Any(role => ExtAPI.IsMember(user, role.GroupId)))
+                if (RolesOf(user).Count > 0)
                     continue;
 
                 // The strongest of them, where there are several: somebody made
                 // both a member and an administrator was an administrator.
-                var was = user.User2Organization_OutEdges.
-                               Where  (edge => edge.Target.Id.ToString() == Kind.Organization).
-                               Select (edge => MeterRole.Of(edge.EdgeLabel)).
-                               Where  (role => role is not null).
-                               OrderBy(role => MeterRole.All.ToList().IndexOf(role!)).
-                               FirstOrDefault();
+                var wasInTheOrganization = user.User2Organization_OutEdges.
+                                                Where  (edge  => edge.Target.Id.ToString() == Kind.Organization).
+                                                Select (edge  => edge.EdgeLabel).
+                                                Where  (label => MeterAccess.RoleNameOf(label) is not null).
+                                                OrderBy(MeterAccess.RankOf).
+                                                Cast<User2OrganizationEdgeLabel?>().
+                                                FirstOrDefault();
 
-                if (was is null)
+                if (wasInTheOrganization is null ||
+                    Access.RoleNamed(MeterAccess.RoleNameOf(wasInTheOrganization.Value)) is not Role was)
+                {
                     continue;
+                }
+
+                var title = MeterAccess.TitleOf(was).ToLowerInvariant();
 
                 if (!ExtAPI.TryGetUserGroup(was.GroupId, out var group) || group is not UserGroup userGroup)
                 {
-                    Log.Warning($"'{user.Id}' was {was.Title.ToLowerInvariant()} of this meter, and there is no {was.Name} group to put it in.", "web", "auth");
+                    Log.Warning($"'{user.Id}' was {title} of this meter, and there is no {was.Name} group to put it in.", "web", "auth");
                     continue;
                 }
 
                 var joined = await ExtAPI.AddUserToUserGroup(
                                        user,
-                                       was == MeterRole.SystemAdmin
+                                       was.IsSystemAdmin
                                            ? User2UserGroupEdgeLabel.IsAdmin
                                            : User2UserGroupEdgeLabel.IsMember,
                                        userGroup
                                    );
 
                 if (joined.IsSuccess)
-                    Log.Notice($"'{user.Id}' was {was.Title.ToLowerInvariant()} of this meter by its organization, and is in the {was.Name} group now.",
+                    Log.Notice($"'{user.Id}' was {title} of this meter by its organization, and is in the {was.Name} group now.",
                                "web", "auth");
 
                 else
-                    Log.Warning($"'{user.Id}' was {was.Title.ToLowerInvariant()} of this meter, and could not be put in the {was.Name} group: " +
+                    Log.Warning($"'{user.Id}' was {title} of this meter, and could not be put in the {was.Name} group: " +
                                 $"{joined.ErrorDescription?.FirstText() ?? "no reason was given"}",
                                 "web", "auth");
 

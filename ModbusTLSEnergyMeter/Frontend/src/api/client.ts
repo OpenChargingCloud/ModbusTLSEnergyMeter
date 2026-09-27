@@ -42,29 +42,42 @@ export interface LogPage {
 }
 
 /**
- * What somebody signed in to this meter may do.
+ * What there is to be allowed to do something with: the node's resources -
+ * configuration, dns, nts, certificates - and the meter's.
+ */
+export type Resource = 'configuration'
+                     | 'dns'
+                     | 'nts'
+                     | 'certificates'
+                     | 'meter'
+                     | 'keys'
+                     | 'log'
+                     | 'accounts';
+
+/** The three things one may be allowed to do with a resource, the same on every node. */
+export type Operation = 'read' | 'edit' | 'run';
+
+/**
+ * What somebody signed in to this meter may do: an operation on a resource,
+ * "meter:edit".
  *
  * A copy of what the meter enforces, not the enforcement: it is here so that a
  * page can leave out what this person may not do instead of offering it and
  * letting them find out by being refused. Every request is checked again on
  * arrival, so editing this list in a browser buys a button that answers 403.
+ * Spelt out resource by resource by the meter, so "*" never arrives here.
  */
-export type Permission = 'ReadMeter'
-                       | 'ReadConfiguration'
-                       | 'ChangeNetworkSettings'
-                       | 'RunDiagnostics'
-                       | 'WriteRegisters'
-                       | 'ManageCertificates'
-                       | 'ManageAccounts';
+export type Permission = `${Resource}:${Operation}`;
 
 
 /** One of the roles this meter hands out, and what holding it means. */
 export interface RoleInfo {
     /** What the meter calls it - the name of its user group: "systemadmin", "viewer", ... */
     role:         string;
-    /** What a person calls it: "Administrator", "Viewer", ... */
+    /** What a person calls it: "Administrator", "Viewer", ... - or its name, for a role the configuration file adds. */
     title:        string;
-    description:  string;
+    /** Null for a role the configuration file adds without saying what it is for. */
+    description:  string | null;
     permissions:  Permission[];
 }
 
@@ -75,7 +88,7 @@ export interface Account {
     email:        string;
     /** Their strongest role, or null when they hold none and may therefore do nothing. */
     role:         string | null;
-    /** Every role they hold - one per group of that name they are in - strongest first. */
+    /** Every role they hold - one per group of that name they are in - in the node's order: the viewer first, the administrators last. */
     roles:        string[];
     roleTitle:    string;
     permissions:  Permission[];
@@ -216,7 +229,7 @@ export interface Me {
     organization: string;
     /** Their strongest role on this meter, or null when they have none. */
     role:         string | null;
-    /** Every role they hold - one per group of that name they are in - strongest first. */
+    /** Every role they hold - one per group of that name they are in - in the node's order: the viewer first, the administrators last. */
     roles:        string[];
     /**
      * The same role as a person would say it: "Administrator" rather than
@@ -933,7 +946,7 @@ export const api = {
     /**
      * Who may sign in to this meter, and as what.
      *
-     * Reading the list needs ManageAccounts; reading what the roles mean does
+     * Reading the list needs accounts:read; reading what the roles mean does
      * not, because it names nobody and is what somebody who was given one
      * wants to know about their own.
      */

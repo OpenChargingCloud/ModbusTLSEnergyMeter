@@ -70,7 +70,7 @@ auth.onChange(user => {
 
         // The stream and the log are the same permission, and somebody who
         // may only read the meter would get a 401-shaped silence instead.
-        if (auth.can('ReadConfiguration'))
+        if (auth.can('log', 'read'))
             logs.start();
 
         return;

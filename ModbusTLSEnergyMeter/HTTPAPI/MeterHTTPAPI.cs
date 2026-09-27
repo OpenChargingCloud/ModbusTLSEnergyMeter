@@ -30,6 +30,8 @@ using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
+using cloud.charging.open.protocols.WWCP.Node.Web;
+
 using LogLevel = cloud.charging.open.protocols.WWCP.Node.Logging.LogLevel;
 
 #endregion
@@ -255,7 +257,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                 return Task.FromResult(unauthorized);
 
             var roles       = meter.RolesOf(user);
-            var role        = roles.FirstOrDefault();
+            var role        = MeterAccess.Strongest(meter.Access, roles);
 
             return Task.FromResult(
                        JSONResponse(Request, HTTPStatusCode.OK,
@@ -265,9 +267,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                new JProperty("organization",     meter.Kind.Organization),
                                new JProperty("role",             role?.Name),
                                new JProperty("roles",            new JArray(roles.Select(one => one.Name))),
-                               new JProperty("roleTitle",        role?.Title),
-                               new JProperty("roleDescription",  role?.Description),
-                               new JProperty("permissions",      new JArray(roles.PermissionsOf().Names()))
+                               new JProperty("roleTitle",        role is not null ? MeterAccess.TitleOf(role)       : null),
+                               new JProperty("roleDescription",  role is not null ? MeterAccess.DescriptionOf(role) : null),
+
+                               // Spelled out resource by resource, so that "*" never
+                               // reaches a page: "meter:read", "nts:run", ...
+                               new JProperty("permissions",      new JArray(meter.PermissionsOf(user).Select(permission => permission.ToString())))
                            ))
                    );
 
@@ -283,7 +288,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetStatus(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadMeter, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             var now = meter.TimeProvider.GetUtcNow();
@@ -326,7 +331,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetMeter(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadMeter, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             var registers = meter.Device.ReadHolding(
@@ -369,7 +374,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetRegisters(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadMeter, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             var start = SunSpecMeterMap.BaseAddress;
@@ -411,7 +416,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PutMeterMode(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.WriteRegisters, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Meter), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -459,7 +464,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PostResetEnergy(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.WriteRegisters, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Meter), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!meter.Device.WriteHolding(SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterResetEnergy), 0xCAFE))
@@ -491,7 +496,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetConfiguration(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Configuration), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(
@@ -516,7 +521,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetDNSConfiguration(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.DNS), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.DNSConfigurationJSON()));
@@ -531,7 +536,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PutDNSConfiguration(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ChangeNetworkSettings, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.DNS), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -556,7 +561,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetNTSConfiguration(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.NTS), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.NTSConfigurationJSON()));
@@ -571,7 +576,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PutNTSConfiguration(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ChangeNetworkSettings, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.NTS), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -599,7 +604,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private async Task<HTTPResponse> PostNTSSync(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.RunDiagnostics, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Run(NodeResources.NTS), true, out var user, out var refused))
                 return refused;
 
             meter.Log.Notice($"'{user.Id}' asked this meter to check its clock.", "nts", "web");
@@ -630,7 +635,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private async Task<HTTPResponse> PostNTSTest(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.RunDiagnostics, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Run(NodeResources.NTS), true, out var user, out var refused))
                 return refused;
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -660,7 +665,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetClock(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.NTS), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.ClockJSON()));
@@ -684,7 +689,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetCertificates(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(
@@ -735,7 +740,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetLogs(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Log), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             var limit = Request.QueryString.GetInt32 ("limit") ?? DefaultLogPageSize;
@@ -788,7 +793,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetLogVerification(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Log), false, out var user, out var refused))
                 return Task.FromResult(refused);
 
             var store = meter.MetrologicalLog;
@@ -878,7 +883,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> StreamEvents(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Log), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             var clientId = Request.RemoteSocket.ToString();
@@ -1049,14 +1054,18 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// who may not do this is a 403 naming the permission they are short
         /// of. The difference between the last two matters to a browser: 401
         /// means sign in again, 403 means signing in again will not help.
+        ///
+        /// What somebody may do is the node's to answer, from the groups they
+        /// are in at this moment: the meter's roles, the node's, and those the
+        /// configuration file adds or redefines.
         /// </remarks>
         /// <param name="Request">The request.</param>
-        /// <param name="Required">What this request needs permission to do.</param>
+        /// <param name="Required">What this request needs permission to do: an operation on a resource.</param>
         /// <param name="StateChanging">Whether it changes something, and is therefore also checked for being cross-site.</param>
         /// <param name="User">The person behind it.</param>
         /// <param name="Refused">The response to send instead.</param>
         internal Boolean TryAuthorize(HTTPRequest                             Request,
-                                     MeterPermissions                        Required,
+                                     Permission                              Required,
                                      Boolean                                 StateChanging,
                                      [NotNullWhen(true)]  out IUser?         User,
                                      [NotNullWhen(false)] out HTTPResponse?  Refused)
@@ -1073,22 +1082,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryGetUser(Request, out User, out Refused))
                 return false;
 
-            var roles       = meter.RolesOf(User);
-            var permissions = roles.PermissionsOf();
-
-            if (!permissions.HasFlag(Required))
+            if (!meter.IsAllowed(User, [ Required ]))
             {
 
                 Refused = JSONResponse(Request, HTTPStatusCode.Forbidden,
                               new JObject(
                                   new JProperty("error",     $"'{User.Id}' may not do this."),
                                   new JProperty("required",  Required.ToString()),
-                                  new JProperty("role",      roles.FirstOrDefault()?.Name),
-                                  new JProperty("granted",   new JArray(permissions.Names())),
+                                  new JProperty("role",      MeterAccess.Strongest(meter.Access, meter.RolesOf(User))?.Name),
+                                  new JProperty("granted",   new JArray(meter.PermissionsOf(User).Select(permission => permission.ToString()))),
 
                                   // Who could, so that a refusal says whom to ask.
-                                  new JProperty("rolesThatMay",  new JArray(MeterRole.All.Where(role => role.Permissions.HasFlag(Required)).
-                                                                                          Select(role => role.Name)))
+                                  new JProperty("rolesThatMay",  new JArray(meter.Access.RolesAllowing([ Required ]).
+                                                                                         Select(role => role.Name)))
                               ));
 
                 User = null;

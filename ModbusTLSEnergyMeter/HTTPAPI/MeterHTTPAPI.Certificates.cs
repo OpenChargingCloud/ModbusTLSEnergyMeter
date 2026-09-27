@@ -22,6 +22,8 @@ using System.Text;
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+
+using cloud.charging.open.protocols.WWCP.Node.Web;
 using org.GraphDefined.Vanaheimr.Hermod.PKI;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
@@ -82,7 +84,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetCertificateOverview(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(
@@ -114,7 +116,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetServerStore(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryGetStore(Request, out var store, out var unknown))
@@ -141,7 +143,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PostCertificateRequest(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryGetStore(Request, out var store, out var unknown))
@@ -202,7 +204,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetCertificateRequest(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryGetStore(Request, out var store, out var unknown))
@@ -245,7 +247,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PutCertificate(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryGetStore(Request, out var store, out var unknown))
@@ -289,7 +291,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> DeleteCertificate(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryGetStore(Request, out var store, out var unknown))
@@ -319,7 +321,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetTrustedChains(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.ClientTrust.ToJSON()));
@@ -336,7 +338,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PostTrustedChain(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -368,7 +370,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PutTrustedChain(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -400,7 +402,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> DeleteTrustedChain(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             var id = Request.ParsedURLParameters.Length > 0 ? Request.ParsedURLParameters[0] : "";

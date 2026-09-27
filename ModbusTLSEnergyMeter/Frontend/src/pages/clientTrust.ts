@@ -34,7 +34,7 @@ export const clientTrustPage: Page = {
 
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
 
-        const mayManage = auth.can('ManageCertificates');
+        const mayManage = auth.can('certificates', 'edit');
 
         let cancelled = false;
         let trust: ClientTrust | null = null;

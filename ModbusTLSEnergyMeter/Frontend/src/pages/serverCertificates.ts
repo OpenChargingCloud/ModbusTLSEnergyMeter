@@ -59,7 +59,7 @@ export function serverCertificatesPage(purpose: CertificatePurpose): Page {
 
             must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
 
-            const mayManage = auth.can('ManageCertificates');
+            const mayManage = auth.can('certificates', 'edit');
 
             let cancelled = false;
             let store: CertificateStore | null = null;

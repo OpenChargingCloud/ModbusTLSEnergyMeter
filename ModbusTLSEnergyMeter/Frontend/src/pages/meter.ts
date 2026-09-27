@@ -39,7 +39,7 @@ export const meterPage: Page = {
 
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
 
-        const mayWrite = auth.can('WriteRegisters');
+        const mayWrite = auth.can('meter', 'edit');
 
         let cancelled = false;
         let built     = false;

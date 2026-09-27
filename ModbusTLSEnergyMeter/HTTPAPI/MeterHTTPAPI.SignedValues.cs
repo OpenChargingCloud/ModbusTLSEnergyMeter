@@ -23,6 +23,8 @@ using System.Security.Cryptography;
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+
+using cloud.charging.open.protocols.WWCP.Node.Web;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
@@ -86,7 +88,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetSignedMeterValue(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadMeter, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             var format = (Request.QueryString.GetString("format") ?? "ocmf").Trim().ToLowerInvariant();
@@ -152,7 +154,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetSession(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadMeter, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(
@@ -186,7 +188,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PostSessionStart(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.WriteRegisters, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Run(MeterAccess.Meter), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -259,7 +261,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PostSessionStop(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.WriteRegisters, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Run(MeterAccess.Meter), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryReadEnergy(Request, out var importedWh, out var unreadable))
@@ -356,7 +358,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetKeys(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ReadConfiguration, false, out _, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Keys), false, out _, out var refused))
                 return Task.FromResult(refused);
 
             var json = meter.SigningKeys.ToJSON();
@@ -374,7 +376,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PostKey(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Keys), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -419,7 +421,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> PutKeyDefault(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Keys), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             var id = Request.ParsedURLParameters.Length > 0 ? Request.ParsedURLParameters[0] : "";
@@ -439,7 +441,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> DeleteKey(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageCertificates, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Keys), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
             var id = Request.ParsedURLParameters.Length > 0 ? Request.ParsedURLParameters[0] : "";

@@ -524,7 +524,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                    HTTPRootPath:                    MeterAPIPath,
                    AccountsPath:                    Setup.DataPath,
-                   Roles:                           MeterRole.All.Select(role => role.Name),
+
+                   // Who may do what: the meter's resources and roles, as data -
+                   // so that the node asks them on every request, and a role the
+                   // configuration file adds or redefines is heard like these.
+                   Resources:                       MeterAccess.Resources,
+                   RoleDefinitions:                 MeterAccess.Roles,
                    ConfigFile:                      ConfigFile,
                    DNSClient:                       DNSClient,
                    NTSClient:                       NTSClient,

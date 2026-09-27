@@ -23,6 +23,8 @@ using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+
+using cloud.charging.open.protocols.WWCP.Node.Web;
 using org.GraphDefined.Vanaheimr.Hermod.Mail;
 
 #endregion
@@ -84,7 +86,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private Task<HTTPResponse> GetAccounts(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageAccounts, false, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Accounts), false, out var user, out var refused))
                 return Task.FromResult(refused);
 
             return Task.FromResult(
@@ -147,7 +149,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private async Task<HTTPResponse> PostAccount(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageAccounts, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Accounts), true, out var user, out var refused))
                 return refused;
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
@@ -170,9 +172,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             #region What it may do
 
-            if (!MeterRole.TryParse(json["role"]?.Value<String>(), out var role))
+            if (!MeterAccess.TryParse(meter.Access, json["role"]?.Value<String>(), out var role))
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                 $"A 'role' is required, one of: {String.Join(", ", MeterRole.All.Select(one => one.Name))}.");
+                                 $"A 'role' is required, one of: {String.Join(", ", meter.Roles)}.");
 
             if (!TryGetGroup(role, out var group))
                 return ErrorJSON(Request, HTTPStatusCode.InternalServerError, $"The {role.Name} group is missing.");
@@ -267,7 +269,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             }
 
             meter.Log.Notice(
-                $"'{user.Id}' made the account '{userId}' {Article(role)} {role.Title.ToLowerInvariant()}.",
+                $"'{user.Id}' made the account '{userId}' {Article(role)} {MeterAccess.TitleOf(role).ToLowerInvariant()}.",
                 "accounts", "web"
             );
 
@@ -306,7 +308,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private async Task<HTTPResponse> PutAccountRole(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageAccounts, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Accounts), true, out var user, out var refused))
                 return refused;
 
             if (!TryGetAccount(Request, out var account, out var unknown))
@@ -315,17 +317,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return errorResponse;
 
-            if (!MeterRole.TryParse(json["role"]?.Value<String>(), out var role))
+            if (!MeterAccess.TryParse(meter.Access, json["role"]?.Value<String>(), out var role))
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                 $"A 'role' is required, one of: {String.Join(", ", MeterRole.All.Select(one => one.Name))}.");
+                                 $"A 'role' is required, one of: {String.Join(", ", meter.Roles)}.");
 
             var held = meter.RolesOf(account);
-            var was  = held.FirstOrDefault();
+            var was  = MeterAccess.Strongest(meter.Access, held);
 
-            if (held.Count == 1 && was == role)
+            if (held.Count == 1 && String.Equals(was?.Name, role.Name, StringComparison.OrdinalIgnoreCase))
                 return JSONResponse(Request, HTTPStatusCode.OK, AccountJSON(account, user));
 
-            if (role != MeterRole.SystemAdmin &&
+            if (!role.IsSystemAdmin &&
                 WouldLeaveNoAdministrator(account))
                 return ErrorJSON(Request, HTTPStatusCode.Conflict, OnlyAdministrator(account));
 
@@ -349,7 +351,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                         await accounts.AddUserToUserGroup(person, EdgeLabelOf(old), oldGroup, CurrentUserId: user.Id);
 
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                 $"'{account.Id}' could not be made {Article(role)} {role.Title.ToLowerInvariant()}: " +
+                                 $"'{account.Id}' could not be made {Article(role)} {MeterAccess.TitleOf(role).ToLowerInvariant()}: " +
                                  $"{result.ErrorDescription?.FirstText() ?? "no reason given"}");
 
             }
@@ -360,8 +362,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             accounts.Sessions.RemoveAllForUser(account.Id);
 
             meter.Log.Notice(
-                $"'{user.Id}' made '{account.Id}' {Article(role)} {role.Title.ToLowerInvariant()}" +
-                (was is not null ? $", who was {Article(was)} {was.Title.ToLowerInvariant()}." : "."),
+                $"'{user.Id}' made '{account.Id}' {Article(role)} {MeterAccess.TitleOf(role).ToLowerInvariant()}" +
+                (was is not null ? $", who was {Article(was)} {MeterAccess.TitleOf(was).ToLowerInvariant()}." : "."),
                 "accounts", "web"
             );
 
@@ -396,7 +398,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private async Task<HTTPResponse> PutAccountPassword(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageAccounts, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Accounts), true, out var user, out var refused))
                 return refused;
 
             if (!TryGetAccount(Request, out var account, out var unknown))
@@ -462,7 +464,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private async Task<HTTPResponse> DeleteAccount(HTTPRequest Request)
         {
 
-            if (!TryAuthorize(Request, MeterPermissions.ManageAccounts, true, out var user, out var refused))
+            if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Accounts), true, out var user, out var refused))
                 return refused;
 
             if (!TryGetAccount(Request, out var account, out var unknown))
@@ -568,7 +570,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// The user group that carries a role - which the node makes at every
         /// start, so that it is there unless somebody took it away since.
         /// </summary>
-        private Boolean TryGetGroup(MeterRole                           Role,
+        private Boolean TryGetGroup(Role                                Role,
                                     [NotNullWhen(true)] out UserGroup?  Group)
         {
 
@@ -588,9 +590,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// the systemadmin group, which is how the node puts its first account
         /// there, and as a member everywhere else.
         /// </summary>
-        private static User2UserGroupEdgeLabel EdgeLabelOf(MeterRole Role)
+        private static User2UserGroupEdgeLabel EdgeLabelOf(Role Role)
 
-            => Role == MeterRole.SystemAdmin
+            => Role.IsSystemAdmin
                    ? User2UserGroupEdgeLabel.IsAdmin
                    : User2UserGroupEdgeLabel.IsMember;
 
@@ -616,8 +618,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// </remarks>
         private Boolean WouldLeaveNoAdministrator(IUser Account)
 
-            => accounts.IsMember(Account, MeterRole.SystemAdmin.GroupId) &&
-               accounts.Users.Count(candidate => accounts.IsMember(candidate, MeterRole.SystemAdmin.GroupId)) <= 1;
+            => accounts.IsMember(Account, Role.SystemAdmin.GroupId) &&
+               accounts.Users.Count(candidate => accounts.IsMember(candidate, Role.SystemAdmin.GroupId)) <= 1;
 
         private static String OnlyAdministrator(IUser Account)
 
@@ -646,7 +648,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private) AccountJSON(Account, CurrentUser) / RolesJSON() / Article(Role)
+        #region (private) AccountJSON(Account, CurrentUser) / RolesJSON() / RoleJSON(Role) / Article(Role)
 
         /// <summary>
         /// One account as a page shows it.
@@ -661,7 +663,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         {
 
             var roles = meter.RolesOf(Account);
-            var role  = roles.FirstOrDefault();
+            var role  = MeterAccess.Strongest(meter.Access, roles);
 
             return new JObject(
 
@@ -674,8 +676,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                            : new JProperty("role",   JValue.CreateNull()),
 
                        new JProperty("roles",        new JArray(roles.Select(one => one.Name))),
-                       new JProperty("roleTitle",    role?.Title ?? "No role on this meter"),
-                       new JProperty("permissions",  new JArray(roles.PermissionsOf().Names())),
+                       new JProperty("roleTitle",    role is not null ? MeterAccess.TitleOf(role) : "No role on this meter"),
+                       new JProperty("permissions",  new JArray(meter.PermissionsOf(Account).Select(permission => permission.ToString()))),
 
                        // So that a page can say "you" rather than leaving somebody
                        // to recognise their own user name in a list.
@@ -685,13 +687,32 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         }
 
-        private static JArray RolesJSON()
+        /// <summary>
+        /// Every role an account can be given here - the meter's, the node's
+        /// and those of the configuration file - in the node's order: the
+        /// viewer first, the administrators last.
+        /// </summary>
+        private JArray RolesJSON()
 
-            => new (MeterRole.All.Select(role => role.ToJSON()));
+            => new (meter.Access.Roles.Select(RoleJSON));
 
-        private static String Article(MeterRole Role)
+        /// <summary>
+        /// A role as a page needs it: what it is called, what it does, and the
+        /// permissions behind the words - spelled out resource by resource, so
+        /// that "*" never reaches a page.
+        /// </summary>
+        private JObject RoleJSON(Role Role)
 
-            => "aeiou".Contains(Char.ToLowerInvariant(Role.Title[0]))
+            => new (
+                   new JProperty("role",         Role.Name),
+                   new JProperty("title",        MeterAccess.TitleOf(Role)),
+                   new JProperty("description",  MeterAccess.DescriptionOf(Role)),
+                   new JProperty("permissions",  new JArray(meter.Access.PermissionsOf([ Role ]).Select(permission => permission.ToString())))
+               );
+
+        private static String Article(Role Role)
+
+            => "aeiou".Contains(Char.ToLowerInvariant(MeterAccess.TitleOf(Role)[0]))
                    ? "an"
                    : "a";
 

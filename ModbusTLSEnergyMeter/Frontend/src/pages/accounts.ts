@@ -35,7 +35,10 @@ export const accountsPage: Page = {
 
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
 
-        const mayManage = auth.can('ManageAccounts');
+        // Seeing the accounts and changing them are two permissions: a role the
+        // configuration file adds may be given the one without the other.
+        const maySee    = auth.can('accounts', 'read');
+        const mayManage = maySee && auth.can('accounts', 'edit');
 
         let cancelled  = false;
         let accounts: Account[] | null = null;
@@ -118,7 +121,7 @@ export const accountsPage: Page = {
 
                 </section>
 
-                ${mayManage ? html`
+                ${maySee ? html`
 
                     <h2 class="section-heading">Everybody else</h2>
 
@@ -126,7 +129,7 @@ export const accountsPage: Page = {
                         ${(accounts ?? []).map(card)}
                     </div>
 
-                    <section class="card">
+                    ${mayManage ? html`<section class="card">
 
                         <h2><i class="fa-solid fa-user-plus"></i> Add an account</h2>
 
@@ -166,7 +169,7 @@ export const accountsPage: Page = {
 
                         </form>
 
-                    </section>
+                    </section>` : ''}
 
                 ` : html`
                     <div class="notice">
@@ -199,7 +202,7 @@ export const accountsPage: Page = {
                         <tr><td>E-mail</td><td class="wrap">${account.email}</td></tr>
                         <tr><td>Role</td>
                             <td>
-                                <select data-role-for="${account.userId}">
+                                ${mayManage ? html`<select data-role-for="${account.userId}">
                                     ${roles.map(role => html`
                                         <option value="${role.role}" ${role.role === account.role ? html`selected` : ''}>
                                             ${role.title}
@@ -208,20 +211,22 @@ export const accountsPage: Page = {
                                     ${account.role === null
                                           ? html`<option value="" selected>No role in this meter</option>`
                                           : ''}
-                                </select>
+                                </select>` : account.roleTitle}
                             </td></tr>
                     </table>
 
-                    ${description === undefined ? '' : html`
+                    ${description ? html`
                         <p class="hint">${description}</p>
-                    `}
+                    ` : ''}
 
-                    <div class="form-actions">
-                        ${account.isYou ? '' : html`
-                            <button type="button" class="btn small" data-reset="${account.userId}">Reset the password</button>
-                        `}
-                        <button type="button" class="btn small danger" data-remove="${account.userId}">Remove</button>
-                    </div>
+                    ${mayManage ? html`
+                        <div class="form-actions">
+                            ${account.isYou ? '' : html`
+                                <button type="button" class="btn small" data-reset="${account.userId}">Reset the password</button>
+                            `}
+                            <button type="button" class="btn small danger" data-remove="${account.userId}">Remove</button>
+                        </div>
+                    ` : ''}
 
                     ${account.isYou ? html`
                         <span class="hint">
@@ -518,9 +523,10 @@ export const accountsPage: Page = {
             try
             {
 
-                // An administrator gets both in one request; everybody else may
-                // read what the roles mean but not who holds them.
-                if (mayManage)
+                // Somebody who may see the accounts gets both in one request;
+                // everybody else may read what the roles mean but not who holds
+                // them.
+                if (maySee)
                 {
                     const list = await api.accounts.list();
 

@@ -1,7 +1,7 @@
 import { auth } from './auth';
 import { config } from './config';
 import { html, must, render, type HTMLFragment } from './html';
-import type { Permission } from './api/client';
+import type { Operation, Resource } from './api/client';
 
 /**
  * The frame every signed-in page sits in: the menu on the left, a heading and
@@ -18,8 +18,8 @@ export interface MenuEntry {
     label:     string;
     /** A Font Awesome class, e.g. "fa-sliders". */
     icon:      string;
-    /** Left out entirely for somebody whose role does not carry this. */
-    needs?:    Permission;
+    /** Left out entirely for somebody whose role does not carry this: an operation on a resource. */
+    needs?:    [Resource, Operation];
     /** The pages below this one, shown indented while one of them is open. */
     children?: MenuEntry[];
 }
@@ -30,20 +30,20 @@ export const menu: MenuEntry[] = [
         path:   '/meter',
         label:  'Meter',
         icon:   'fa-bolt',
-        needs:  'ReadMeter'
+        needs:  ['meter', 'read']
     },
     {
         path:      '/configuration',
         label:     'Configuration',
         icon:      'fa-sliders',
-        needs:     'ReadConfiguration',
+        needs:     ['configuration', 'read'],
         children:  [
-            { path: '/configuration/dns',                      label: 'DNS client',             icon: 'fa-magnifying-glass-location' },
-            { path: '/configuration/nts',                      label: 'NTS client',             icon: 'fa-clock'                     },
-            { path: '/configuration/certificates/modbus',      label: 'Modbus/TLS certificate', icon: 'fa-plug-circle-bolt'          },
-            { path: '/configuration/certificates/web',         label: 'Web certificate',        icon: 'fa-globe'                     },
-            { path: '/configuration/certificates/clients',     label: 'Client trust',           icon: 'fa-user-shield'               },
-            { path: '/configuration/keys',                     label: 'Signing keys',           icon: 'fa-key'                       }
+            { path: '/configuration/dns',                      label: 'DNS client',             icon: 'fa-magnifying-glass-location', needs: ['dns',          'read'] },
+            { path: '/configuration/nts',                      label: 'NTS client',             icon: 'fa-clock',                     needs: ['nts',          'read'] },
+            { path: '/configuration/certificates/modbus',      label: 'Modbus/TLS certificate', icon: 'fa-plug-circle-bolt',          needs: ['certificates', 'read'] },
+            { path: '/configuration/certificates/web',         label: 'Web certificate',        icon: 'fa-globe',                     needs: ['certificates', 'read'] },
+            { path: '/configuration/certificates/clients',     label: 'Client trust',           icon: 'fa-user-shield',               needs: ['certificates', 'read'] },
+            { path: '/configuration/keys',                     label: 'Signing keys',           icon: 'fa-key',                       needs: ['keys',         'read'] }
         ]
     },
     {
@@ -52,13 +52,13 @@ export const menu: MenuEntry[] = [
         path:   '/sessions',
         label:  'Sessions',
         icon:   'fa-file-signature',
-        needs:  'ReadMeter'
+        needs:  ['meter', 'read']
     },
     {
         path:   '/logs',
         label:  'Logs',
         icon:   'fa-list-ul',
-        needs:  'ReadConfiguration'
+        needs:  ['log', 'read']
     },
     {
         // Its own entry rather than something under Logs: the live list and
@@ -68,7 +68,7 @@ export const menu: MenuEntry[] = [
         path:   '/metrological-log',
         label:  'Metrological log',
         icon:   'fa-file-shield',
-        needs:  'ReadConfiguration'
+        needs:  ['log', 'read']
     },
     {
         // No permission: everybody signed in can reach it, because everybody
@@ -81,9 +81,17 @@ export const menu: MenuEntry[] = [
     }
 ];
 
-/** The entries this person may see at all. */
+/** The entries this person may see at all, and of each the pages below it they may see. */
 export function visibleMenu(): MenuEntry[] {
-    return menu.filter(entry => entry.needs === undefined || auth.can(entry.needs));
+    return menu.filter(mayOpen).
+                map   (entry => entry.children === undefined
+                                    ? entry
+                                    : { ...entry, children: entry.children.filter(mayOpen) });
+}
+
+/** Whether this person may open this page at all. */
+function mayOpen(entry: MenuEntry): boolean {
+    return entry.needs === undefined || auth.can(...entry.needs);
 }
 
 /** Every entry of the menu, parents and children alike. */

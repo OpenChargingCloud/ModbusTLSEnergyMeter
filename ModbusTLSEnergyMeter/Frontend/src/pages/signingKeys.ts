@@ -35,7 +35,7 @@ export const signingKeysPage: Page = {
 
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
 
-        const mayManage = auth.can('ManageCertificates');
+        const mayManage = auth.can('keys', 'edit');
 
         let cancelled = false;
         let store: SigningKeys | null = null;

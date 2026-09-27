@@ -145,9 +145,11 @@ registers, its certificates, its signed readings and its roles.
 
 A role is a user group of the same name - `systemadmin`, `auditor`, `viewer`,
 `guest` - and that is what separates who may change this meter from who may
-only watch it. What an account may do is asked of its groups at every request
-rather than remembered at sign-in, so that taking somebody out of a group takes
-effect on their next click and not at their next sign-in.
+only watch it. What a role may do is data, as on every node: operations on
+resources, written `meter:edit` (see [The JSON API](#the-json-api)). What an
+account may do is asked of its groups at every request rather than remembered
+at sign-in, so that taking somebody out of a group takes effect on their next
+click and not at their next sign-in.
 
 At the first start there are no accounts, so one administrator is made and its
 password reported once, through `GeneratedUserId` and `GeneratedPassword`, for
@@ -191,10 +193,10 @@ finds their own account there and nothing else.
 Three of the four roles change nothing, which is the reason the page exists.
 Watching what a meter is doing - on a night shift, over the phone, for an
 audit - should not need the account that can also clear the energy counters or
-replace the certificate. `viewer` sees the readings and the configuration
-and touches neither; `guest` sees only the readings; `auditor` additionally
-sees the certificates and may ask a time server whether it answers, which sends
-traffic and is therefore not folded into reading.
+replace the certificate. `viewer` sees the readings, the configuration, the
+certificates and the log and touches none of them; `guest` sees only the
+readings; `auditor` additionally may ask a time server whether it answers, which
+sends traffic and is therefore not folded into reading.
 
 No password is asked for when an account is made: the meter makes one, shows it
 once, and keeps it nowhere it could be read back. The person it was made for
@@ -222,39 +224,76 @@ account back.
 
 ## The JSON API
 
-Everything below `/api/v1` needs the session cookie, and each resource names the
-permission it wants. What a person may do follows from the groups their account
-is in:
+Everything below `/api/v1` needs the session cookie, and each resource names
+the permission it wants: an operation - `read`, `edit` or `run` - on a resource,
+written `meter:edit`, as on every node. The resources are the node's -
+`configuration`, `dns`, `nts`, `certificates` - and the meter's:
 
-| Role | read meter | read config | change DNS/NTS | diagnostics | write registers | certificates | accounts |
-|------|:----------:|:-----------:|:--------------:|:-----------:|:---------------:|:------------:|:--------:|
-| `systemadmin` | yes | yes | yes | yes | yes | yes | yes |
-| `auditor`     | yes | yes | no  | yes | no  | no  | no  |
-| `viewer`      | yes | yes | no  | no  | no  | no  | no  |
-| `guest`       | yes | no  | no  | no  | no  | no  | no  |
+| Resource | read | edit | run |
+|----------|------|------|-----|
+| `meter` | its status, the readings, the registers, the signed readings, the sessions | the meter mode, clearing the energy counters | starting and stopping a session |
+| `configuration` | every section at once | | |
+| `dns` | the name servers | changing them | |
+| `nts` | the time servers, and the clock | changing them | asking one: `sync`, `test` |
+| `certificates` | the stores and the accepted client CAs | a key and its request, a certificate, a CA | |
+| `keys` | the signing keys | making one, choosing the default, throwing one away | |
+| `log` | the log, the log book, the event stream | | |
+| `accounts` | who may sign in, and as what | making one, giving a role, resetting a password, taking one away | |
 
-Managing certificates is its own permission and not part of changing network
-settings, because it is a bigger thing than any of those: which certificate this
-meter shows is who it says it is, and which CAs it trusts is who may talk to it
-at all. Somebody who may repoint a name server has not thereby been handed the
-identity of the device.
+What a person may do follows from the groups their account is in:
+
+| Role | may |
+|------|-----|
+| `viewer`      | read everything but the accounts |
+| `auditor`     | what a viewer may, and `nts:run` |
+| `guest`       | `meter:read` |
+| `systemadmin` | everything: every operation on every resource |
+
+The viewer is the meter's own and narrower than a node's, which may read
+everything: who may sign in to a meter is not something everybody who may look
+at it has been told. Starting a session is `meter:run` rather than part of
+`meter:edit`, because it is what a station operator does every day, and
+clearing the energy counters is the one thing here that destroys something.
+
+Certificates and signing keys are each a resource of their own and not part of
+changing network settings, because they are bigger things than any of those:
+which certificate this meter shows is who it says it is, which CAs it trusts is
+who may talk to it at all, and which key it signs with is what a bill can be
+checked against. Somebody who may repoint a name server has not thereby been
+handed the identity of the device.
 
 An account in several of these groups may do what any of them allows, and one
-in none of them may do nothing at all. A refusal says which roles would have
-been allowed, in `rolesThatMay`, so that it also says whom to ask.
+in none of them may do nothing at all. A refusal says what was needed, what the
+account was granted and which roles would have been allowed - `required`,
+`granted` and `rolesThatMay` - so that it also says whom to ask.
 
-The names in that table are what the API speaks. What a page shows is the
-readable form - "Auditor" rather than `auditor` - and it travels with the
-strongest role in `/api/v1/me` rather than being looked up, because every page
-that tells somebody what they may not do here names their role in the same
-sentence and none of them should need a second request to translate one word.
-The names of the roles in the organization from before - `IsAdmin` to
-`IsGuest` - are still taken wherever a role is given, and mean the group they
-were moved into.
+The roles are data, so the configuration file can add one or say differently
+what one of the meter's may do, under `roles` - here for somebody who looks
+after the time and nothing else:
+
+```json
+{ "roles": { "timekeeper": [ "meter:read", "nts:read", "nts:run" ] } }
+```
+
+A role from the file is listed with the others, can be given to an account like
+them, and is held to exactly what the file says. Every start says in the log,
+tagged `security`, what the file added or changed. A role that names a resource
+this meter does not have stops the start - a typo would otherwise be a role
+that quietly grants nothing - and so does one that tries to say what
+`systemadmin` may do.
+
+The names in the tables are what the API speaks. What a page shows is the
+readable form - "Auditor" rather than `auditor`, and a role from the file by its
+name - and it travels with the strongest role in `/api/v1/me` rather than being
+looked up, because every page that tells somebody what they may not do here
+names their role in the same sentence and none of them should need a second
+request to translate one word. The names of the roles in the organization from
+before - `IsAdmin` to `IsGuest` - are still taken wherever a role is given, and
+mean the group they were moved into.
 
 | Resource | |
 |----------|---|
-| `GET  /api/v1/me` | who is signed in, their roles - the strongest as this meter spells it and as a person would say it - and their permissions |
+| `GET  /api/v1/me` | who is signed in, their roles - the strongest as this meter spells it and as a person would say it - and their permissions, spelled out: `meter:read`, `nts:run`, ... |
 | `GET  /api/v1/status` | serial, uptime, both listeners |
 | `GET  /api/v1/meter` | the readings with scale factors applied, the mode, and what the simulated site is doing |
 | `GET  /api/v1/meter/registers?start=&count=` | the raw register block |
@@ -814,9 +853,10 @@ was turned away" is one filter rather than a search through everything that was
 not. A meter that recorded only what it permitted could not answer that question
 afterwards at all.
 
-Reading the log needs `ReadConfiguration` and not merely `ReadMeter`: it holds
-the addresses peers connect from and every certificate that was turned away,
-which is more than somebody allowed to watch the readings was given.
+Reading the log needs `log:read` and not merely `meter:read`: it holds the
+addresses peers connect from and every certificate that was turned away, which
+is more than somebody allowed to watch the readings was given. A node leaves its
+log to anybody signed in; the meter's has more in it.
 
 
 ## Name resolution and the time
