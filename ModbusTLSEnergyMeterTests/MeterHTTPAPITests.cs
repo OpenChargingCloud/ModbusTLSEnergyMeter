@@ -19,6 +19,8 @@
 
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 using Newtonsoft.Json.Linq;
@@ -466,7 +468,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 foreach (var path in new[] { "api/v1/meter", "api/v1/meter/registers",
                                              "api/v1/configuration", "api/v1/configuration/dns",
-                                             "api/v1/configuration/nts", "api/v1/logs" })
+                                             "api/v1/configuration/nts", "api/v1/logs",
+                                             "api/v1/certificates", "api/v1/certificates/requests" })
                 {
                     Assert.That(await rory.StatusOf(HttpMethod.Get, path),
                                 Is.EqualTo(HttpStatusCode.OK),
@@ -488,8 +491,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/configuration/nts/test", new { host = "ptbtime2.ptb.de" }),
                             Is.EqualTo(HttpStatusCode.Forbidden),           "nor ask one time server everything");
 
-                Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/certificates/servers/web/requests",
-                                                new { subject = "CN=whoever" }),
+                Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/certificates/requests",
+                                                new { listener = "web", subject = "CN=whoever" }),
                             Is.EqualTo(HttpStatusCode.Forbidden),           "may not ask for a certificate");
 
                 Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/accounts"),
@@ -1254,6 +1257,222 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+        #region TheCertificateStore_HoldsWhatTheMeterWasStartedWith()
+
+        /// <summary>
+        /// One store for every certificate the meter shows and believes, and in
+        /// it what the meter was started with: its certificate as the identity of
+        /// the Modbus/TLS listener, with the intermediates it came with, and the
+        /// CA its clients are issued by - which is not a root, and is a client
+        /// root all the same.
+        /// </summary>
+        [Test]
+        public async Task TheCertificateStore_HoldsWhatTheMeterWasStartedWith()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (status, store) = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
+
+            var identity  = store?["certificates"]?["tlsIdentity"]?.FirstOrDefault(entry => entry["label"]?.ToString() == "the certificate this meter was started with");
+            var clientCA  = store?["certificates"]?["clientRoot"]?. FirstOrDefault(entry => entry["label"]?.ToString() == "the CA this meter was started with");
+
+            Assert.Multiple(() => {
+
+                Assert.That(status,                                                               Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(store?["kinds"]?.Children<JProperty>().Select(kind => kind.Name),     Is.EqualTo(new[] { "tlsRoot", "clientRoot", "tlsServer", "tlsIdentity" }));
+                Assert.That(store?["listeners"]?.Values<String>(),                                Is.EqualTo(new[] { "modbus", "web" }));
+                Assert.That(store?["kinds"]?["tlsIdentity"]?["usages"]?.Values<String>(),         Is.EqualTo(new[] { "modbus", "web" }), "an identity is told a listener");
+                Assert.That(store?["kinds"]?["tlsRoot"]?["usages"]?.Values<String>(),             Is.EqualTo(new[] { "dns", "nts" }),    "a root a service");
+                Assert.That(store?["kinds"]?["clientRoot"]?["hasUsages"]?.Value<Boolean>(),       Is.False);
+
+                Assert.That(identity,                                                             Is.Not.Null, store?.ToString());
+                Assert.That(identity?["usages"]?.Values<String>(),                                Is.EqualTo(new[] { "modbus" }));
+                Assert.That(identity?["hasPrivateKey"]?.Value<Boolean>(),                         Is.True);
+                Assert.That(identity?["chainLength"]?.Value<Int32>(),                             Is.GreaterThan(0), "the intermediates travel with it");
+                Assert.That(identity?["shownOn"]?.Values<String>(),                               Is.EqualTo(new[] { "modbus" }));
+                Assert.That(store?["shown"]?["modbus"]?["current"]?.ToString(),                   Is.EqualTo(identity?["id"]?.ToString()));
+
+                Assert.That(clientCA,                                                             Is.Not.Null, store?.ToString());
+                Assert.That(clientCA?["subject"]?.ToString(),                                     Is.Not.EqualTo(clientCA?["issuer"]?.ToString()), "an issuing CA, and not its root");
+                Assert.That(clientCA?["usable"]?.Value<Boolean>(),                                Is.True);
+
+            });
+
+        }
+
+        #endregion
+
+        #region ASigningRequestIsAnswered_AndTheNewerCertificateIsShown()
+
+        /// <summary>
+        /// The key is made in the meter, the request goes to a CA, and what comes
+        /// back becomes an identity of the listener it was asked for - shown from
+        /// the moment it is the newest valid one, without a restart.
+        /// </summary>
+        /// <remarks>
+        /// Asked without a key type: the meter's own default, which it used to
+        /// refuse under its old spelling.
+        /// </remarks>
+        [Test]
+        public async Task ASigningRequestIsAnswered_AndTheNewerCertificateIsShown()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, before)       = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
+            var shownBefore       = before?["shown"]?["modbus"]?["current"]?.ToString();
+            var startedWith       = before?["certificates"]?["tlsIdentity"]?.First(entry => entry["id"]?.ToString() == shownBefore);
+            var startedAt         = new DateTimeOffset(DateTime.SpecifyKind(startedWith!["notBefore"]!.Value<DateTime>(), DateTimeKind.Utc));
+
+            var (made, request)   = await administrator.Call(HttpMethod.Post, "api/v1/certificates/requests",
+                                                             new { listener = "modbus", subject = "CN=meter-test-001, O=Test", dnsNames = new[] { "meter-test-001.local" } });
+
+            Assert.That(made, Is.EqualTo(HttpStatusCode.Created), $"{request}");
+
+            var id                = request!["id"]!.ToString();
+            var (downloaded, csr) = await administrator.GetText($"api/v1/certificates/requests/{id}");
+
+            Assert.That(downloaded, Is.EqualTo(HttpStatusCode.OK), csr);
+
+            // Signed by the device CA the meter's own certificate came from, and
+            // valid from a second after that one, so that it is the newer.
+            var validFrom         = startedAt.AddSeconds(1);
+            var wait              = validFrom - DateTimeOffset.UtcNow;
+
+            if (wait > TimeSpan.Zero)
+                await Task.Delay(wait + TimeSpan.FromMilliseconds(250));
+
+            using var issuer      = X509Certificate2.CreateFromPemFile(Path.Combine(workingDirectory!, "pki", "issuing-device-ca.crt"),
+                                                                       Path.Combine(workingDirectory!, "pki", "issuing-device-ca.key"));
+
+            var signing           = CertificateRequest.LoadSigningRequestPem(csr, HashAlgorithmName.SHA256, CertificateRequestLoadOptions.UnsafeLoadCertificateExtensions);
+
+            using var issued      = signing.Create(issuer, validFrom, validFrom.AddDays(90), [ 0x01, .. RandomNumberGenerator.GetBytes(15) ]);
+
+            var (answered, answer)  = await administrator.Call(HttpMethod.Put, $"api/v1/certificates/requests/{id}",
+                                                               new { pem = issued.ExportCertificatePem() + "\n" + issuer.ExportCertificatePem() });
+
+            var (_, after)        = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
+            var (_, requests)     = await administrator.Call(HttpMethod.Get, "api/v1/certificates/requests");
+
+            Assert.Multiple(() => {
+
+                Assert.That(csr,                                                                         Does.StartWith("-----BEGIN CERTIFICATE REQUEST-----"));
+                Assert.That(request["keyType"]?.ToString(),                                              Is.EqualTo("ecdsa-p256"));
+
+                Assert.That(answered,                                                                    Is.EqualTo(HttpStatusCode.OK), $"{answer}");
+                Assert.That(answer?["certificate"]?["usages"]?.Values<String>(),                         Is.EqualTo(new[] { "modbus" }));
+                Assert.That(answer?["certificate"]?["chainLength"]?.Value<Int32>(),                      Is.EqualTo(1), "the issuing CA came with it");
+
+                Assert.That(after?["shown"]?["modbus"]?["current"]?.ToString(),                          Is.EqualTo(answer?["certificate"]?["id"]?.ToString()),
+                            "the newer one is shown from now on");
+
+                Assert.That(requests?["requests"]?.First(one => one["id"]?.ToString() == id)?["state"]?.ToString(),
+                            Is.EqualTo("answered"));
+
+            });
+
+        }
+
+        #endregion
+
+        #region WhatAListenerOrAClientNeeds_IsNotTakenAway()
+
+        /// <summary>
+        /// The only certificate a listener could show cannot be removed, switched
+        /// off or given to the other listener, and the last CA Modbus/TLS clients
+        /// may be issued by cannot be removed or switched off - each refused
+        /// before anything is changed, while what takes nothing away is done.
+        /// </summary>
+        [Test]
+        public async Task WhatAListenerOrAClientNeeds_IsNotTakenAway()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var (_, store)              = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
+            var modbus                  = store?["shown"]?["modbus"]?["current"]?.ToString();
+            var clientCA                = store?["certificates"]?["clientRoot"]?.First()?["id"]?.ToString();
+
+            var (removed,   notRemoved) = await administrator.Call(HttpMethod.Delete, $"api/v1/certificates/{modbus}");
+            var (switched,  _)          = await administrator.Call(HttpMethod.Patch,  $"api/v1/certificates/{modbus}",   new { active = false });
+            var (moved,     _)          = await administrator.Call(HttpMethod.Patch,  $"api/v1/certificates/{modbus}",   new { usages = new[] { "web" } });
+            var (caOff,     caNotOff)   = await administrator.Call(HttpMethod.Patch,  $"api/v1/certificates/{clientCA}", new { active = false });
+            var (caGone,    _)          = await administrator.Call(HttpMethod.Delete, $"api/v1/certificates/{clientCA}");
+            var (renamed,   relabelled) = await administrator.Call(HttpMethod.Patch,  $"api/v1/certificates/{modbus}",   new { label = "the meter itself" });
+
+            Assert.Multiple(() => {
+
+                Assert.That(removed,                                 Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(notRemoved?["error"]?.ToString(),        Does.Contain("only certificate the modbus listener could show"));
+                Assert.That(switched,                                Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(moved,                                   Is.EqualTo(HttpStatusCode.Conflict));
+
+                Assert.That(caOff,                                   Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(caNotOff?["error"]?.ToString(),          Does.Contain("last CA Modbus/TLS clients may be issued by"));
+                Assert.That(caGone,                                  Is.EqualTo(HttpStatusCode.Conflict));
+
+                Assert.That(renamed,                                 Is.EqualTo(HttpStatusCode.OK), "what takes nothing away is done");
+                Assert.That(relabelled?["label"]?.ToString(),        Is.EqualTo("the meter itself"));
+                Assert.That(relabelled?["active"]?.Value<Boolean>(), Is.True, "and nothing else was changed on the way");
+
+            });
+
+        }
+
+        #endregion
+
+        #region TheStoreTakesItsKindsAndWhatEachIsFor()
+
+        /// <summary>
+        /// A kind the meter keeps no certificate of, an identity "for dns" and a
+        /// root "for web" are each refused where they are typed, and a root for
+        /// the time servers is taken.
+        /// </summary>
+        [Test]
+        public async Task TheStoreTakesItsKindsAndWhatEachIsFor()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            using var key          = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            using var identity     = new CertificateRequest("CN=somebody", key, HashAlgorithmName.SHA256).
+                                         CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30));
+
+            using var rootKey      = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var rootRequest        = new CertificateRequest("CN=Some Time Server Root", rootKey, HashAlgorithmName.SHA256);
+            rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+            using var root         = rootRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(365));
+
+            var pkcs12             = Convert.ToBase64String(identity.Export(X509ContentType.Pkcs12));
+            var pem                = Convert.ToBase64String(Encoding.ASCII.GetBytes(root.ExportCertificatePem()));
+
+            var (forDNS, dnsSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsIdentity", content = pkcs12, usages = new[] { "dns" } });
+            var (forWeb, webSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = pem,    usages = new[] { "web" } });
+            var (v2g,    v2gSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "v2gRoot",     content = pem });
+            var (taken,  entry)    = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = pem,    usages = new[] { "nts" } });
+
+            Assert.Multiple(() => {
+
+                Assert.That(forDNS,                              Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(dnsSaid?["error"]?.ToString(),       Does.Contain("'dns' is not a listener").And.Contain("modbus, web"));
+
+                Assert.That(forWeb,                              Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(webSaid?["error"]?.ToString(),       Does.Contain("'web' is not a usage").And.Contain("dns, nts"));
+
+                Assert.That(v2g,                                 Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(v2gSaid?["error"]?.ToString(),       Does.Contain("tlsRoot, clientRoot, tlsServer, tlsIdentity"));
+
+                Assert.That(taken,                               Is.EqualTo(HttpStatusCode.Created), $"{entry}");
+                Assert.That(entry?["usages"]?.Values<String>(),  Is.EqualTo(new[] { "nts" }));
+
+            });
+
+        }
+
+        #endregion
+
         #region TheLogBook_CanBeCheckedFromTheBrowser()
 
         /// <summary>
@@ -1526,6 +1745,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             public async Task<JObject?> GetJSON(String Path)
                 => (await Call(HttpMethod.Get, Path)).Item2;
+
+            /// <summary>
+            /// What a path answers, as text: a file rather than JSON.
+            /// </summary>
+            public async Task<(HttpStatusCode, String)> GetText(String Path)
+            {
+                using var response = await client.GetAsync(Path);
+                return (response.StatusCode, await response.Content.ReadAsStringAsync());
+            }
 
             public async Task<HttpStatusCode> StatusOf(HttpMethod  Method,
                                                        String      Path,

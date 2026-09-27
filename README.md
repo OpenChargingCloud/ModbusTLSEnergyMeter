@@ -305,15 +305,15 @@ mean the group they were moved into.
 | `POST /api/v1/configuration/nts/sync` | check the clock now |
 | `POST /api/v1/configuration/nts/test` | `{"host": "ptbtime2.ptb.de"}`: ask one time server everything, step by step |
 | `GET  /api/v1/configuration/time` | what time it is, and what that is worth |
-| `GET  /api/v1/configuration/certificates` | which certificates it was started with |
-| `GET  /api/v1/certificates` | both server stores and the accepted client CAs, in one answer |
-| `GET  /api/v1/certificates/servers/{modbus\|web}` | one store |
-| `POST /api/v1/certificates/servers/{purpose}/requests` | make a key and a signing request for it |
-| `GET  /api/v1/certificates/servers/{purpose}/{id}/request` | that request, as a file |
-| `PUT  /api/v1/certificates/servers/{purpose}/{id}` | `{"pem": ...}`, the signed certificate coming back |
-| `DELETE /api/v1/certificates/servers/{purpose}/{id}` | throw an entry and its key away |
-| `GET/POST /api/v1/certificates/clients` | the CAs Modbus/TLS clients may chain to |
-| `PUT/DELETE /api/v1/certificates/clients/{id}` | switch one off, or remove it |
+| `GET  /api/v1/configuration/certificates` | the certificate Modbus/TLS clients are shown now, the CA the meter was started with, and the SunSpec roles |
+| `GET  /api/v1/certificates` | the certificate store: every certificate by kind, and what each listener shows now and next |
+| `POST /api/v1/certificates` | put one in: `{"kind", "content" (base64), "password", "label", "usages"}` |
+| `POST /api/v1/certificates/reload` | read the store's directory again |
+| `GET/PATCH/DELETE /api/v1/certificates/{id}` | one certificate: rename it, switch it on or off, say what it is for, or take it out |
+| `GET/POST /api/v1/certificates/requests` | the keys made here and their signing requests; make one |
+| `GET  /api/v1/certificates/requests/{id}` | that request, as a file |
+| `PUT  /api/v1/certificates/requests/{id}` | `{"pem": ...}`, the signed certificate coming back |
+| `DELETE /api/v1/certificates/requests/{id}` | throw a request and its key away |
 | `GET  /api/v1/signedMeterValues?format=&key=` | one reading, signed; `ocmf` or `alfen` |
 | `GET  /api/v1/sessions` | the charging session that is running, if one is |
 | `POST /api/v1/sessions/start` | begin one; answers with the time and the public key |
@@ -386,8 +386,8 @@ npm run typecheck
 and `-p:SkipFrontendBuild=true` leaves it alone.
 
 Pages: the meter and what it is measuring, the DNS client, the NTS client with
-the state of the clock, a page each for the two certificate stores and one for
-the accepted client CAs, the signing keys, the charging sessions, the accounts,
+the state of the clock, the certificate store with the signing requests, the
+signing keys, the charging sessions, the accounts,
 the log as it happens, and the metrological log. On the DNS page name servers
 can be added and removed and timeouts changed. The NTS page is the group of time
 servers: each one is added, changed, switched off or deleted on its own, in a
@@ -410,107 +410,143 @@ gets a real 404: a mistyped script tag must not hand the browser HTML to run.
 
 ## Certificates
 
-Two stores and a trust store, under `<DataPath>/certificates/`. What lives in
-each of them is decided by who checks it:
+One store for every certificate the meter shows and believes - the node's, as on
+every OpenChargingCloud node - under `<DataPath>/certificates/`, with an
+`index.json` beside the files and each certificate addressed by a short handle,
+the first 16 hex digits of its SHA-256 fingerprint, rather than by a path. It
+keeps four kinds:
 
-| | `certificates/modbus/` | `certificates/web/` |
+| kind | what it is | below `certificates/` |
+|---|---|---|
+| `tlsIdentity` | what a listener of this meter shows, with its key | `tls/identity/` |
+| `clientRoot` | a CA Modbus/TLS clients are issued by | `roots/clients/` |
+| `tlsRoot` | a root a time or name server this meter asks may chain to | `roots/tls/` |
+| `tlsServer` | a time or name server's own certificate, kept to be recognised | `tls/servers/` |
+
+An identity is told which listener it is shown on, `modbus` or `web`, and what
+each of them checks decides where its certificate comes from:
+
+| | `modbus` | `web` |
 |---|---|---|
 | shown to | a charging station or a controller | a browser |
 | issued by | a device PKI | wherever the operator's web certificates come from |
 | checked against | the CA that peer has pinned | the browser's own trust store |
-| first entry | the certificate this meter was started with, adopted | one this meter signs for itself |
+| at the first start | the certificate this meter was started with | one this meter signs for itself |
 
-They are deliberately not one store. A certificate both would accept would have
-to be issued by a CA that is both pinned by the charging station and trusted by
-the browser, and nothing issues such a thing.
+They are not the same certificate: one both would accept would have to be issued
+by a CA that is both pinned by the charging station and trusted by the browser,
+and nothing issues such a thing. An identity never told is shown on both. A TLS
+root is told the same way which servers it vouches for, `dns` or `nts`, and a
+client root is for Modbus/TLS alone - the store refuses an identity "for dns" and
+a root "for web" where they are typed, rather than keeping either to mean
+nothing.
+
+Private keys are kept unencrypted, readable only by the account the meter runs
+as where the platform says so, and the store says so in the log at every start.
+A certificate copied into its directory by hand is taken in at the next start,
+or at `POST /api/v1/certificates/reload`; every change of what the store holds
+goes into the log book, tagged `security`. On the page, all of it is under
+Configuration -> Certificates.
+
+### From before
+
+A meter whose certificates were in stores of its own - `certificates/modbus/`,
+`certificates/web/` and `certificates/trust/` - finds them in the node's store
+at its next start: each certificate with its key as an identity for the listener
+it was for, keeping its note as its label; each key that asked for one as a
+signing request, answered by it; and each accepted CA as a client root, switched
+off where it was. What was moved is put below `certificates/moved/` rather than
+deleted. What cannot be moved - a key of a kind this platform cannot hold with
+its certificate, such as Ed448 - stays where it is and is named in the log at
+every start.
 
 ### Asking for one
 
 The private key is made in the meter and never leaves it. What goes out is a
 PKCS#10 request; what comes back is a certificate, which is checked against the
-key that asked for it before it is kept - a certificate this meter has no key
-for is no use to it, and finding that out at the next handshake would be
-finding it out as an outage.
+key that asked for it before it becomes an identity - a certificate this meter
+has no key for is no use to it, and finding that out at the next handshake
+would be finding it out as an outage.
 
 ```
-POST /api/v1/certificates/servers/web/requests
-     {"subject": "CN=meter7.lan, O=Acme", "dnsNames": ["meter7.lan"], "keyType": "ec256"}
-GET  /api/v1/certificates/servers/web/<id>/request      -> the .csr, as a file
-PUT  /api/v1/certificates/servers/web/<id>              {"pem": "-----BEGIN CERTIFICATE-----..."}
+POST /api/v1/certificates/requests
+     {"listener": "web", "subject": "CN=meter7.lan, O=Acme", "dnsNames": ["meter7.lan"]}
+GET  /api/v1/certificates/requests/<id>      -> the .csr, as a file
+PUT  /api/v1/certificates/requests/<id>      {"pem": "-----BEGIN CERTIFICATE-----..."}
 ```
 
-or the same three steps as three controls on the page.
+or the same three steps as three controls on the page. A request is kept once it
+is answered, with its key: a certificate that runs out can be renewed for the
+same key by sending the same request again, and the second answer is a second
+identity that takes over when it becomes valid. Throwing a request away throws
+its key away with it; what was put into the store from it stays there.
 
 ### On which key
 
-The kinds of key come from Hermod's `KeyAlgorithm`, and the list is served with
-the certificates so that a kind added there turns up on the page without
-anything here changing:
+The kinds of key come from Hermod's `KeyAlgorithm`, and of its list the ones the
+store can keep together with their certificate and a TLS stack can present:
 
 | | |
 |---|---|
-| `ecdsa-p256`, `ecdsa-p384`, `ecdsa-p521` | ECDSA on the NIST curves. `ecdsa-p521` is secp521r1 - there is no secp521r2 |
+| `ecdsa-p256`, `ecdsa-p384`, `ecdsa-p521` | ECDSA on the NIST curves, `ecdsa-p256` when nobody says. `ecdsa-p521` is secp521r1 - there is no secp521r2 |
 | `rsa-2048`, `rsa-3072`, `rsa-4096` | RSA |
-| `ed25519`, `ed448` | Edwards curves |
-| `ml-dsa-44`, `ml-dsa-65`, `ml-dsa-87` | ML-DSA, FIPS 204 |
-| `slh-dsa-sha2-128s`, `slh-dsa-sha2-192s` | SLH-DSA, FIPS 205 - post-quantum on hash functions alone |
 
-Everything goes through Bouncy Castle, including the kinds .NET could do by
-itself: .NET cannot sign a request with an Ed448 or an ML-DSA key, and a store
-that generated one way and read back another would be a store with two sets of
-bugs in it.
+Hermod can make more - Edwards curves, ML-DSA, SLH-DSA - and a CA could sign
+them. But a certificate for such a key cannot be held together with its key on
+this platform, so it could neither be kept in the store nor shown, and asking for
+one would only lead to a certificate that goes nowhere.
 
-**Whether a certificate can then be shown is a different question, and it is not
-answered from a list.** It depends on the operating system's TLS stack, on the
-runtime and on the year - an Ed25519 certificate is refused by one platform and
-served by the next. Hermod finds out by doing it: one TLS handshake against
-itself, once per algorithm. A store written before knew the answer from a table
-in its own source, which would have been wrong on somebody's machine from the
-day it was written.
+**Whether a certificate can then be shown is still found out by doing it**, not
+from a list: it depends on the operating system's TLS stack, on the runtime and
+on the year. Hermod does one TLS handshake against itself, once per algorithm,
+and an identity this meter cannot present is kept and never shown.
 
-So `keyTypes` in the certificates overview carries three answers per algorithm -
-yes, no, and nobody has tried - and an entry says `servedByTLS` once there is a
-certificate to ask about. One this meter cannot present is kept, says "not for a
-listener", and is never handed to either listener.
-
-The old spellings this store used before Hermod had a list - `ec256`, `rsa3072`,
-`mldsa65` - are still read, so a certificate already in a store is not lost over
-a rename. Nothing writes them any more.
+The old spellings the meter's own store used before Hermod had a list - `ec256`,
+`rsa3072`, `mldsa65` - are still read, so nothing is lost over a rename. Nothing
+writes them any more.
 
 ### Which one is shown
 
-Of the certificates that are valid at this moment, the one whose validity began
-last. Nothing else decides it, and nothing has to be pressed:
+Of the identities for a listener that are switched on and valid at this moment,
+the one whose validity began last. Nothing else decides it, and nothing has to be
+pressed:
 
 * Both listeners ask the store **at every handshake**. A certificate that is
   valid now is shown to the next peer that connects - no restart, and existing
   connections are not disturbed.
-* A certificate uploaded today that becomes valid in two days is simply not the
+* A certificate put in today that becomes valid in two days is simply not the
   answer until then, and is the answer from the second it is. The page says
-  which one is waiting and when it takes over.
-* "Newest" is by `notBefore` and not by when it was uploaded, because what a
+  which one is next and when it takes over.
+* "Newest" is by `notBefore` and not by when it was put in, because what a
   certificate says about itself is the thing both ends of a handshake can check.
 * An expired one stops being shown. Once a minute the meter looks again, so that
   a rollover is written down when it happens rather than whenever the next peer
   turns up - on a quiet meter that could be the following afternoon.
 
-An entry is kept with its key until it is thrown away, so the certificate this
-meter was running under last month can still be pointed at. The one being shown
-cannot be removed while it is the only one that could be: a listener with
-nothing to show refuses every handshake, and doing that to oneself through a web
-page is not a mistake worth making possible.
+A certificate is kept with its key until it is taken out, so the one this meter
+was running under last month can still be pointed at. The one being shown cannot
+be taken out, switched off or given to the other listener while it is the only
+one that could be: a listener with nothing to show refuses every handshake, and
+doing that to oneself through a web page is not a mistake worth making possible.
 
 ### Who may connect
 
-`certificates/trust/` holds the CAs a **Modbus/TLS client** certificate may
-chain to - more than one, on purpose. A meter in the field is reached by peers
-whose certificates were issued by different people, and even with one issuer,
+The client roots are the CAs a **Modbus/TLS client** certificate may be issued
+by - more than one, on purpose. A meter in the field is reached by peers whose
+certificates were issued by different people, and even with one issuer,
 replacing it happens while both the old and the new one still have to work. A
 single pinned CA makes that a flag day.
 
-Anchors are asked for at every handshake as well, so adding or removing one
-takes effect on the next connection. The last accepted CA cannot be removed: a
-meter that accepts none refuses every Modbus/TLS client.
+A client root is usually not a root at all but the issuing CA below one that
+signs the clients and nothing else: the root above it signs the devices as well,
+and would let any of them in. The Modbus/TLS listener judges a client against
+the CA that issued it, so that is what is kept - and what the node's store takes
+as a client root, as long as it is a CA.
+
+Client roots are asked for at every handshake as well, so adding or switching
+one off takes effect on the next connection. The last one that is switched on
+cannot be taken out or switched off: a meter that accepts none refuses every
+Modbus/TLS client.
 
 This is only about Modbus/TLS. The web interface authenticates nobody by
 certificate; there a person signs in with an account.
@@ -519,7 +555,9 @@ certificate; there a person signs in with an account.
 
 A certificate signed by an issuing CA under a root is no use on its own: a peer
 that holds only the root cannot build a path to it. So whatever came in the PEM
-alongside the certificate is kept and sent with it - both listeners build an
+alongside the certificate - in the PEM that answers a request, or in the
+PKCS#12 the meter was started with - is kept in the store with it and sent with
+it - both listeners build an
 `SslStreamCertificateContext` from the leaf and those intermediates, once per
 distinct chain and with `offline: true`, so that building it never reaches for
 the network. A server that pauses a handshake to fetch something is a server

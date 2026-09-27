@@ -30,6 +30,7 @@ using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 using cloud.charging.open.protocols.WWCP.Node;
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Certificates;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
@@ -38,7 +39,6 @@ using cloud.charging.open.EnergyMeters.ModbusTLS.Logging;
 
 using LogLevel             = cloud.charging.open.protocols.WWCP.Node.Logging.LogLevel;
 using NetIPAddress         = System.Net.IPAddress;
-using NodeCertificateKind  = cloud.charging.open.protocols.WWCP.Node.Certificates.CertificateKind;
 
 #endregion
 
@@ -178,9 +178,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private readonly  ILoggerFactory           loggerFactory;
         private readonly  ILogger                  logger;
 
-        private readonly  CertificateStore         modbusCertificates;
-        private readonly  CertificateStore         webCertificates;
-        private readonly  ClientTrustStore         clientTrust;
+        private readonly  ListenerCertificates     modbusCertificates;
+        private readonly  ListenerCertificates     webCertificates;
+        private readonly  ClientRoots              clientRoots;
+        private readonly  SigningRequests          signingRequests;
         private readonly  MeterKeyStore            signingKeys;
         private readonly  ChargingSessions         sessions;
         private readonly  X509Certificate2         startupCertificate;
@@ -230,30 +231,40 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             => device;
 
         /// <summary>
-        /// The certificates this meter can show to its Modbus/TLS clients, and
+        /// The certificates this meter can show to its Modbus/TLS clients - the
+        /// TLS identities of the node's certificate store for "modbus" - and
         /// the rule for which of them it shows now.
         /// </summary>
-        public CertificateStore    ModbusCertificates
+        public ListenerCertificates  ModbusCertificates
             => modbusCertificates;
 
         /// <summary>
-        /// The certificates the web interface can show a browser.
+        /// The certificates the web interface can show a browser: the TLS
+        /// identities of the node's certificate store for "web".
         /// </summary>
         /// <remarks>
-        /// A different store, and deliberately: what a meter shows a charging
-        /// station says "I am this device" and comes from a device PKI, and
-        /// what it shows a browser says "I am this administrative web server"
-        /// and comes from wherever the operator's web certificates come from.
-        /// Nothing issues a certificate both of those would accept.
+        /// Apart from the Modbus/TLS ones, and deliberately: what a meter shows
+        /// a charging station says "I am this device" and comes from a device
+        /// PKI, and what it shows a browser says "I am this administrative web
+        /// server" and comes from wherever the operator's web certificates come
+        /// from. Nothing issues a certificate both of those would accept.
         /// </remarks>
-        public CertificateStore    WebCertificates
+        public ListenerCertificates  WebCertificates
             => webCertificates;
 
         /// <summary>
-        /// Which CAs a Modbus/TLS client certificate may chain to.
+        /// Which CAs a Modbus/TLS client certificate may chain to: the client
+        /// roots of the node's certificate store.
         /// </summary>
-        public ClientTrustStore    ClientTrust
-            => clientTrust;
+        public ClientRoots           ClientRoots
+            => clientRoots;
+
+        /// <summary>
+        /// The keys made here and the certificate signing requests for them,
+        /// waiting for a CA or answered already.
+        /// </summary>
+        public SigningRequests       SigningRequests
+            => signingRequests;
 
         /// <summary>
         /// The keys this meter puts its name to a reading with.
@@ -332,9 +343,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         /// <summary>
         /// What has to exist before the node below a meter is made: where its
-        /// data lives, and the store the certificate of its web interface comes
-        /// from - which the node's HTTP server asks at every handshake, and so
-        /// is handed before the node exists.
+        /// data lives, and the place the certificates of its web interface are
+        /// handed over at - which the node's HTTP server asks at every
+        /// handshake, and so is handed before the node, and its certificate
+        /// store, exist.
         /// </summary>
         private sealed class Setup
         {
@@ -343,7 +355,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             public String            CertificatesPath   { get; }
             public String?           LogPath            { get; }
             public Int32             LogKeepDays        { get; }
-            public CertificateStore  WebCertificates    { get; }
+            public LateListener      Web                { get; } = new();
 
             /// <summary>
             /// The accounts file that was renamed, to be said once there is a
@@ -371,24 +383,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                              ? Path.Combine(this.DataPath, LogDirectoryName)
                                              : null;
 
-                this.WebCertificates   = new CertificateStore(Path.Combine(this.CertificatesPath, "web"), "web", TimeProvider ?? System.TimeProvider.System);
-
-                // The web interface has no certificate to inherit - and borrowing
-                // the device's would be the very conflation the two stores exist
-                // to avoid - so it signs one for itself. A browser will say it
-                // does not know who signed it, and it is right; a certificate from
-                // a CA simply becomes the newer one later.
-                if (HTTPS && WebCertificates.Current is null)
-                    // Named so that it cannot be mistaken for the device
-                    // certificate in a log line: they are two identities, and the
-                    // whole point of two stores is that nobody conflates them.
-                    WebCertificates.CreateSelfSigned(
-                        $"CN={SerialNumber} web interface",
-                        ["localhost", $"{SerialNumber}.local"],
-                        ["127.0.0.1", "::1"],
-                        "made by this meter at the first start"
-                    );
-
                 // The accounts under the name every node gives them. The meter's
                 // were called by Hermod's default, and a node that looked for
                 // users.db would find none, make a first account and leave every
@@ -406,6 +400,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             }
 
+        }
+
+        #endregion
+
+        #region (private sealed class) LateListener
+
+        /// <summary>
+        /// A listener's certificates, handed over before they exist: the node's
+        /// HTTP server is given the question at its construction, and the answer
+        /// is there by the time anybody asks it.
+        /// </summary>
+        private sealed class LateListener
+        {
+            public ListenerCertificates?  Certificates  { get; set; }
         }
 
         #endregion
@@ -515,11 +523,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    // intermediates with it, which is what a browser needs to
                    // build a path from this certificate to something it trusts.
                    ServerCertificateSelector:       HTTPS
-                                                        ? (tcpServer, tcpClient) => Setup.WebCertificates.Current?.Certificate
+                                                        ? (tcpServer, tcpClient) => Setup.Web.Certificates?.Current?.Certificate
                                                                                         ?? throw new InvalidOperationException("This meter has no valid web certificate to show.")
                                                         : null,
                    ServerCertificateChainSelector:  HTTPS
-                                                        ? (tcpServer, tcpClient) => Setup.WebCertificates.ChainFor(null)
+                                                        ? (tcpServer, tcpClient) => Setup.Web.Certificates?.ChainFor(null)
                                                         : null,
 
                    HTTPRootPath:                    MeterAPIPath,
@@ -535,12 +543,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    NTSClient:                       NTSClient,
                    Frontend:                        Frontend ?? new EmbeddedContentSource(MeterHTTPAPI.FrontendResourcePrefix, typeof(ModbusTLSEnergyMeter).Assembly),
 
-                   // The time servers' certificates and roots, for holding a time
-                   // server to one, in "roots/tls" and "tls/servers" as on every
-                   // node; everything else this meter shows and believes is in
-                   // stores of its own beside them - "modbus", "web", "trust".
+                   // Every certificate this meter shows and believes, in the
+                   // node's store: what its two listeners show - each identity
+                   // told which of them it is for - the CAs its Modbus/TLS
+                   // clients are issued by, and the roots and servers of the
+                   // time and name servers it asks.
                    CertificatesPath:                Setup.CertificatesPath,
-                   CertificateKinds:                [ NodeCertificateKind.TLSRoot, NodeCertificateKind.TLSServer ],
+                   CertificateKinds:                CertificateKindExtensions.TLS,
+                   CertificateListeners:            ListenerCertificates.All,
 
                    LogToConsole:                    LogToConsole,
                    ConsoleLogLevel:                 ConsoleLogLevel,
@@ -587,13 +597,40 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             #region The certificates, and which of them is shown
 
-            // Three stores and one trust store, all under one directory. The
-            // certificate a charging station checks and the certificate a
-            // browser checks are different statements, issued by different
-            // people, and are never the same file.
-            this.modbusCertificates  = new CertificateStore(Path.Combine(Setup.CertificatesPath, "modbus"), "modbus", this.TimeProvider);
-            this.webCertificates     = Setup.WebCertificates;
-            this.clientTrust         = new ClientTrustStore(Path.Combine(Setup.CertificatesPath, "trust"),            this.TimeProvider);
+            // One store for all of them, the node's: what the two listeners
+            // show, each identity told which listener it is for, and the CAs
+            // Modbus/TLS clients are issued by. A key made here waits beside it,
+            // with its signing request, until a CA answers.
+            this.signingRequests     = new SigningRequests(Path.Combine(Certificates.Directory, SigningRequests.DirectoryName), this.TimeProvider);
+
+            // What this meter was started with is in the store as well, so that
+            // there is one place that decides what is shown and a meter started
+            // the old way needs nothing done to it. Put in once: what somebody
+            // did with it since - relabelled it, switched it off - stands.
+            AdoptAtTheStart(ServerPfxPath,    ServerPfxPassword, startupCertificate, CertificateKind.TLSIdentity, "the certificate this meter was started with", [ ListenerCertificates.Modbus ]);
+            AdoptAtTheStart(ClientCACertPath, null,              ClientCA,           CertificateKind.ClientRoot,  "the CA this meter was started with",          null);
+
+            // What a meter from before kept in stores of its own is moved into
+            // the node's, once - and put below "moved" rather than deleted.
+            // After the files it was started with rather than before them: the
+            // old store kept the certificate it was started with without the
+            // intermediates the file brings, and the one that is put in first
+            // is the one that stays.
+            OldCertificateStores.MoveInto(Certificates, signingRequests, this.Log, this.TimeProvider.GetUtcNow());
+
+            // The web interface has no certificate to inherit - and borrowing
+            // the device's would be the very conflation the two listeners are
+            // kept apart for - so it signs one for itself. A browser will say it
+            // does not know who signed it, and it is right; a certificate from a
+            // CA simply becomes the newer one later.
+            if (HTTPS && new ListenerCertificates(Certificates, ListenerCertificates.Web).Current is null)
+                SignTheWebInterfaceItself();
+
+            this.modbusCertificates  = new ListenerCertificates(Certificates, ListenerCertificates.Modbus);
+            this.webCertificates     = new ListenerCertificates(Certificates, ListenerCertificates.Web);
+            this.clientRoots         = new ClientRoots(Certificates);
+
+            Setup.Web.Certificates   = webCertificates;
 
             // Beside the certificates rather than among them: these are not
             // certificates, nobody issues them, and they outlive every
@@ -601,38 +638,27 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             this.signingKeys         = new MeterKeyStore   (Path.Combine(this.DataPath, "keys"),                 this.TimeProvider);
             this.sessions            = new ChargingSessions(Path.Combine(this.DataPath, "sessions"),             this.TimeProvider);
 
-            foreach (var problem in new[] { modbusCertificates.LastError, webCertificates.LastError, clientTrust.LastError })
-                if (problem is not null)
-                    this.Log.Warning(problem, "meter", "certificates");
-
-            // What this meter was started with becomes the first entry, so
-            // that there is one place that decides what is shown and a meter
-            // started the old way needs nothing done to it.
-            modbusCertificates.Adopt(startupCertificate, "the certificate this meter was started with");
-            clientTrust.       Adopt(ClientCA, "the CA this meter was started with");
-
-            // Who a charging station is talking to, who a browser is talking
-            // to, and who may talk to this meter at all: each a change of what
-            // the meter is known by or trusts, and so into the log book.
-            modbusCertificates.OnCurrentChanged += (before, after) =>
+            // Who a charging station is talking to and who a browser is talking
+            // to: each a change of what the meter is known by, and so into the
+            // log book. What the store itself changes - what it trusts - it
+            // writes there itself.
+            modbusCertificates.OnCurrentChanged += shown =>
                 this.Log.Metrological(
                     LogLevel.Notice,
-                    after is not null
-                        ? $"Modbus/TLS clients are now shown '{after.Certificate?.Subject}', valid until {after.Certificate?.NotAfter:yyyy-MM-dd}."
+                    shown is not null
+                        ? $"Modbus/TLS clients are now shown '{shown.Certificate.Subject}', valid until {shown.Certificate.NotAfter:yyyy-MM-dd}."
                         : "There is no valid certificate left to show Modbus/TLS clients: every handshake will fail.",
-                    "certificates", "modbus"
+                    "certificates", ListenerCertificates.Modbus
                 );
 
-            webCertificates.OnCurrentChanged += (before, after) =>
+            webCertificates.OnCurrentChanged += shown =>
                 this.Log.Metrological(
                     LogLevel.Notice,
-                    after is not null
-                        ? $"The web interface is now shown as '{after.Certificate?.Subject}', valid until {after.Certificate?.NotAfter:yyyy-MM-dd}."
+                    shown is not null
+                        ? $"The web interface is now shown as '{shown.Certificate.Subject}', valid until {shown.Certificate.NotAfter:yyyy-MM-dd}."
                         : "There is no valid certificate left for the web interface.",
-                    "certificates", "web"
+                    "certificates", ListenerCertificates.Web
                 );
-
-            clientTrust.OnChanged += what => this.Log.Metrological(LogLevel.Notice, what, "certificates", "trust");
 
             #endregion
 
@@ -676,7 +702,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                                            ServerCertificateSelector:  serverName => modbusCertificates.ChainFor(serverName)
                                                                                          ?? throw new InvalidOperationException("This meter has no valid Modbus/TLS certificate to show."),
-                                           ClientTrustAnchors:         clientTrust.Anchors
+                                           ClientTrustAnchors:         clientRoots.Anchors
                                        ),
                                        new SunSpecBackendFactory(device),
                                        new AuthorizationPolicy(device),

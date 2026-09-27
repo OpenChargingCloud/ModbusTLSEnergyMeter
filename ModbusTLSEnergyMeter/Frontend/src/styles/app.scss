@@ -1263,43 +1263,79 @@ input, textarea, select {
 }
 
 
-// Certificates: one card each, and the one being shown marked as such.
+// Certificates: the node's store, one card per kind and one row per
+// certificate, and a card per signing request.
 
-.certificates {
-    display:                grid;
-    grid-template-columns:  repeat(auto-fill, minmax(26rem, 1fr));
-    gap:                    1rem;
-    align-items:            start;
-    margin-bottom:          1rem;
+// A table read across rather than down: what a certificate is called, whom
+// it names, its key, how long it holds, its state and what can be done with
+// it. Wider than a card on a narrow screen, so it sits in a .table-scroll.
+table.records {
+
+    border-collapse:  collapse;
+    width:            100%;
+    font-size:        0.85rem;
+
+    th, td {
+        text-align:     left;
+        padding:        0.3rem 0.6rem 0.3rem 0;
+        border-bottom:  1px solid $color-border;
+        white-space:    nowrap;
+    }
+
+    th {
+        color:        $color-muted;
+        font-weight:  600;
+    }
+
 }
 
-.certificate {
+// Chips that belong together and wrap as a group: what a certificate is for.
+.chips {
+    display:    flex;
+    flex-wrap:  wrap;
+    gap:        0.3rem;
+}
 
-    // The one this listener is actually showing. A store with five entries in
-    // it is only readable if that one is obvious at a glance.
-    &.in-use {
-        border-color:  $color-accent;
-        box-shadow:    inset 3px 0 0 $color-accent;
+// The boxes that say what a certificate is for - the servers a root vouches
+// for, the listeners an identity may be shown on - in the import form and in
+// the dialog that says it again.
+fieldset.usages {
+
+    display:         flex;
+    flex-direction:  column;
+    gap:             0.7rem;
+    margin:          0;
+    padding:         0.75rem 0.9rem 0.9rem;
+    border:          1px solid $color-border;
+    border-radius:   $radius;
+    min-width:       0;
+
+    legend {
+        padding:    0 0.35rem;
+        font-size:  0.85rem;
+        color:      $color-muted;
     }
 
-    // Kept and shown rather than hidden: what this meter was running under
-    // last month is worth being able to point at.
-    &.expired {
-        opacity: 0.7;
+    .hint {
+        margin:     0;
+        font-size:  0.8rem;
     }
 
-    .kv + .kv {
-        margin-top: 0.4rem;
-    }
+}
+
+// A signing request: its subject can be long, and its state goes under it
+// rather than squeezing it.
+.signing-request {
 
     h2 {
-        gap:         0.5rem;
-        flex-wrap:   wrap;
+        gap:        0.5rem;
+        flex-wrap:  wrap;
     }
 
 }
 
-// The box that folds out to take a signed certificate.
+// The box under a signing request that takes the certificate it was answered
+// with.
 .upload {
 
     margin-top: 0.8rem;

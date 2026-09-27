@@ -13,8 +13,7 @@ import { Router } from './router';
 import { meterPage }         from './pages/meter';
 import { dnsPage }           from './pages/dns';
 import { ntsPage }           from './pages/nts';
-import { modbusCertificatesPage, webCertificatesPage } from './pages/serverCertificates';
-import { clientTrustPage }   from './pages/clientTrust';
+import { certificatesPage }  from './pages/certificates';
 import { signingKeysPage }   from './pages/signingKeys';
 import { sessionsPage }      from './pages/sessions';
 import { accountsPage }      from './pages/accounts';
@@ -31,6 +30,11 @@ if (root === null)
 
 render(root, html`<div id="page" class="page"></div>`);
 
+// The certificates had three pages while the meter kept three stores of its
+// own. A bookmark to one of them still arrives - at the page that has all of
+// them now, which asks for the sign-in where one is needed.
+const toCertificates = (): string => '/configuration/certificates';
+
 const router = new Router({
     routes: [
         // "/" is the meter, and is a route of its own rather than a redirect
@@ -42,11 +46,11 @@ const router = new Router({
         { path: '/configuration',              page: dnsPage,           guard: auth.requireSignIn },
         { path: '/configuration/dns',          page: dnsPage,           guard: auth.requireSignIn },
         { path: '/configuration/nts',          page: ntsPage,           guard: auth.requireSignIn },
-        { path: '/configuration/certificates',         page: modbusCertificatesPage,  guard: auth.requireSignIn },
-        { path: '/configuration/certificates/modbus',  page: modbusCertificatesPage,  guard: auth.requireSignIn },
-        { path: '/configuration/certificates/web',     page: webCertificatesPage,     guard: auth.requireSignIn },
-        { path: '/configuration/certificates/clients', page: clientTrustPage,         guard: auth.requireSignIn },
-        { path: '/configuration/accounts',             page: accountsPage,            guard: auth.requireSignIn },
+        { path: '/configuration/certificates',         page: certificatesPage,  guard: auth.requireSignIn },
+        { path: '/configuration/certificates/modbus',  page: certificatesPage,  guard: toCertificates },
+        { path: '/configuration/certificates/web',     page: certificatesPage,  guard: toCertificates },
+        { path: '/configuration/certificates/clients', page: certificatesPage,  guard: toCertificates },
+        { path: '/configuration/accounts',             page: accountsPage,      guard: auth.requireSignIn },
         { path: '/sessions',                   page: sessionsPage,      guard: auth.requireSignIn },
         { path: '/configuration/keys',         page: signingKeysPage,   guard: auth.requireSignIn },
         { path: '/logs',                       page: logsPage,          guard: auth.requireSignIn },

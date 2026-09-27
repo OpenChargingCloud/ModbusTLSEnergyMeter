@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
 using Newtonsoft.Json.Linq;
@@ -24,7 +25,7 @@ using Newtonsoft.Json.Linq;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 
 using cloud.charging.open.protocols.WWCP.Node.Web;
-using org.GraphDefined.Vanaheimr.Hermod.PKI;
+using cloud.charging.open.protocols.WWCP.Node.Certificates;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 
@@ -34,20 +35,24 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 {
 
     /// <summary>
-    /// The certificates this meter shows, and the CAs it accepts.
+    /// The certificates this meter shows and believes - the node's certificate
+    /// store - and the keys and signing requests made here.
     /// </summary>
     /// <remarks>
-    /// Two server stores and one trust store, kept apart because they answer
-    /// different questions. "servers/modbus" is what a charging station checks
-    /// and comes from a device PKI; "servers/web" is what a browser checks and
-    /// comes from wherever the operator's web certificates come from; "clients"
-    /// is which CAs a Modbus/TLS peer may chain to, which is who may talk to
-    /// this meter at all.
-    ///
-    /// The private key of a server certificate is made in the meter and never
-    /// leaves it. What goes out is a PKCS#10 request; what comes back is a
+    /// <para>
+    /// One store for all of them, as on every node, addressed by a short
+    /// handle rather than by a path: the TLS identities its two listeners show,
+    /// each told which listener it is for; the client roots Modbus/TLS clients
+    /// are issued by; and the TLS roots and server certificates of the time and
+    /// name servers it asks.
+    /// </para>
+    /// <para>
+    /// The private key of a certificate asked for here is made in the meter and
+    /// never leaves it. What goes out is a PKCS#10 request; what comes back is a
     /// certificate, which is checked against the key that asked for it before
-    /// it is kept.
+    /// it becomes an identity. A store is a collection rather than a setting,
+    /// which is why it is not below "configuration".
+    /// </para>
     /// </remarks>
     public partial class MeterHTTPAPI
     {
@@ -57,172 +62,349 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         private void RegisterCertificateTemplates()
         {
 
-            AddHandler(HTTPPath.Root + "v1/certificates",                                  GetCertificateOverview, HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/certificates",                GetCertificateStore,      HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/certificates",                PostCertificate,          HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/certificates/reload",         PostCertificateReload,    HTTPMethod.POST);
 
-            AddHandler(HTTPPath.Root + "v1/certificates/servers/{purpose}",                GetServerStore,         HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/certificates/servers/{purpose}/requests",       PostCertificateRequest, HTTPMethod.POST);
-            AddHandler(HTTPPath.Root + "v1/certificates/servers/{purpose}/{id}/request",   GetCertificateRequest,  HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/certificates/servers/{purpose}/{id}",           PutCertificate,         HTTPMethod.PUT);
-            AddHandler(HTTPPath.Root + "v1/certificates/servers/{purpose}/{id}",           DeleteCertificate,      HTTPMethod.DELETE);
+            AddHandler(HTTPPath.Root + "v1/certificates/requests",       GetSigningRequests,       HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/certificates/requests",       PostSigningRequest,       HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/certificates/requests/{id}",  GetSigningRequestFile,    HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/certificates/requests/{id}",  PutSigningRequestAnswer,  HTTPMethod.PUT);
+            AddHandler(HTTPPath.Root + "v1/certificates/requests/{id}",  DeleteSigningRequest,     HTTPMethod.DELETE);
 
-            AddHandler(HTTPPath.Root + "v1/certificates/clients",                          GetTrustedChains,       HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/certificates/clients",                          PostTrustedChain,       HTTPMethod.POST);
-            AddHandler(HTTPPath.Root + "v1/certificates/clients/{id}",                     PutTrustedChain,        HTTPMethod.PUT);
-            AddHandler(HTTPPath.Root + "v1/certificates/clients/{id}",                     DeleteTrustedChain,     HTTPMethod.DELETE);
+            AddHandler(HTTPPath.Root + "v1/certificates/{id}",           GetCertificate,           HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/certificates/{id}",           PatchCertificate,         HTTPMethod.PATCH);
+            AddHandler(HTTPPath.Root + "v1/certificates/{id}",           DeleteCertificate,        HTTPMethod.DELETE);
 
         }
 
         #endregion
 
 
-        #region (private) GetCertificateOverview(Request)
+        #region (private) GetCertificateStore   (Request)
 
         /// <summary>
-        /// GET /api/v1/certificates: both server stores and the trusted client
-        /// chains, in one answer, so that a page can be drawn from one request.
+        /// GET /api/v1/certificates: the store, every certificate in it by kind,
+        /// and what each listener shows.
         /// </summary>
-        private Task<HTTPResponse> GetCertificateOverview(HTTPRequest Request)
+        private Task<HTTPResponse> GetCertificateStore(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
                 return Task.FromResult(refused);
 
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK,
-                           new JObject(
-                               new JProperty("modbus",   meter.ModbusCertificates.ToJSON()),
-                               new JProperty("web",      meter.WebCertificates.   ToJSON()),
-                               new JProperty("clients",  meter.ClientTrust.       ToJSON()),
-                               new JProperty("https",    meter.HTTPS),
-
-                               // What a request may ask for, with what each one
-                               // is called and what somebody choosing it should
-                               // know. Said once here rather than repeated in a
-                               // page that would then have to be changed
-                               // alongside Hermod's list.
-                               new JProperty("keyTypes", new JArray(KeyAlgorithm.All.Select(algorithm => algorithm.ToJSON())))
-                           ))
-                   );
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, CertificatesJSON()));
 
         }
 
         #endregion
 
-        #region (private) GetServerStore        (Request)
+        #region (private) PostCertificate       (Request)
 
         /// <summary>
-        /// GET /api/v1/certificates/servers/{modbus|web}
-        /// </summary>
-        private Task<HTTPResponse> GetServerStore(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            if (!TryGetStore(Request, out var store, out var unknown))
-                return Task.FromResult(unknown);
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, store.ToJSON()));
-
-        }
-
-        #endregion
-
-        #region (private) PostCertificateRequest(Request)
-
-        /// <summary>
-        /// POST /api/v1/certificates/servers/{purpose}/requests with
-        /// {"subject": "CN=...", "dnsNames": [...], "ipAddresses": [...],
-        ///  "keyType": "ec256"|"rsa3072", "note": "..."}
+        /// POST /api/v1/certificates with {"kind", "content" (base64), "password",
+        /// "label", "usages"}: put a certificate into the store.
         /// </summary>
         /// <remarks>
-        /// Makes a key and writes the request for it. The key stays here: what
-        /// this answers with is the request, and the only thing that ever has
-        /// to come back is a certificate.
+        /// The same certificate again is the same entry, and may change its label
+        /// and what it is for: 200 rather than 201.
         /// </remarks>
-        private Task<HTTPResponse> PostCertificateRequest(HTTPRequest Request)
+        private Task<HTTPResponse> PostCertificate(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
-            if (!TryGetStore(Request, out var store, out var unknown))
+            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
+                return Task.FromResult(errorResponse);
+
+            var store = meter.Certificates;
+
+            if (!CertificateKindExtensions.TryParseKind(json["kind"]?.Value<String>(), out var kind) || !store.Kinds.Contains(kind))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
+                                                 $"'kind' has to be one of {String.Join(", ", store.Kinds.Select(one => one.AsText()))}."));
+
+            if (json["content"]?.Value<String>() is not String base64 || base64.Trim().Length == 0)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "'content' has to be the certificate file, base64-encoded."));
+
+            Byte[] content;
+
+            try
+            {
+                content = Convert.FromBase64String(base64.Trim());
+            }
+            catch (FormatException)
+            {
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "'content' is not valid base64."));
+            }
+
+            if (!TryReadUsages(Request, json, out var usages, out var badUsages))
+                return Task.FromResult(badUsages);
+
+            var before = store.Entries.Count;
+
+            if (!store.Import(content,
+                              kind,
+                              json["password"]?.Value<String>(),
+                              json["label"]?.   Value<String>(),
+                              usages,
+                              out var entry,
+                              out var error))
+            {
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
+            }
+
+            AfterACertificateChanged();
+
+            meter.Log.Notice($"'{user.Id}' put '{entry.Label}' into the certificate store as a {entry.Kind.AsText()} ({entry.Id}).",
+                             "certificates", "web");
+
+            return Task.FromResult(JSONResponse(Request,
+                                                store.Entries.Count > before
+                                                    ? HTTPStatusCode.Created
+                                                    : HTTPStatusCode.OK,
+                                                EntryJSON(entry)));
+
+        }
+
+        #endregion
+
+        #region (private) PostCertificateReload (Request)
+
+        /// <summary>
+        /// POST /api/v1/certificates/reload: read the store's directory again -
+        /// adopting what was copied into it by hand, and forgetting what was
+        /// taken out of it.
+        /// </summary>
+        private Task<HTTPResponse> PostCertificateReload(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out _, out var refused))
+                return Task.FromResult(refused);
+
+            meter.Certificates.Reload();
+
+            AfterACertificateChanged();
+
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, CertificatesJSON()));
+
+        }
+
+        #endregion
+
+        #region (private) GetCertificate        (Request)
+
+        /// <summary>
+        /// GET /api/v1/certificates/{id}: one certificate.
+        /// </summary>
+        private Task<HTTPResponse> GetCertificate(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
+                return Task.FromResult(refused);
+
+            if (!TryGetEntry(Request, out var entry, out var unknown))
                 return Task.FromResult(unknown);
+
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, EntryJSON(entry)));
+
+        }
+
+        #endregion
+
+        #region (private) PatchCertificate      (Request)
+
+        /// <summary>
+        /// PATCH /api/v1/certificates/{id} with any of {"label", "active",
+        /// "usages"}: rename a certificate, switch it on or off, or say what it
+        /// is for.
+        /// </summary>
+        /// <remarks>
+        /// Refused when it would leave a listener with nothing to show, or
+        /// Modbus/TLS clients with no CA to be issued by - before anything is
+        /// changed.
+        /// </remarks>
+        private Task<HTTPResponse> PatchCertificate(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
+                return Task.FromResult(refused);
+
+            if (!TryGetEntry(Request, out var entry, out var unknown))
+                return Task.FromResult(unknown);
+
+            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
+                return Task.FromResult(errorResponse);
+
+            Boolean? active = null;
+
+            if (json.TryGetValue("active", out var activeToken))
+            {
+
+                if (activeToken.Type != JTokenType.Boolean)
+                    return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "'active' has to be true or false."));
+
+                active = activeToken.Value<Boolean>();
+
+            }
+
+            IReadOnlyList<String>? usages     = null;
+            var                    newUsages  = json.ContainsKey("usages");
+
+            if (newUsages && !TryReadUsages(Request, json, out usages, out var badUsages))
+                return Task.FromResult(badUsages);
+
+            // What the entry would be for afterwards, to be asked before it is.
+            var wouldBeActive  = active ?? entry.IsActive;
+            var wouldBeFor     = newUsages ? usages : entry.Usages;
+
+            if (RefuseLeavingNothing(Request, entry, wouldBeActive, wouldBeFor) is HTTPResponse leavesNothing)
+                return Task.FromResult(leavesNothing);
+
+            var store = meter.Certificates;
+
+            if (json.ContainsKey("label") &&
+                !store.Relabel(entry.Id, json["label"]?.Type == JTokenType.Null ? null : json["label"]?.Value<String>(), out _, out var labelError))
+            {
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, labelError));
+            }
+
+            if (active is Boolean on && !store.SetActive(entry.Id, on, out _, out var activeError))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, activeError));
+
+            if (newUsages && !store.SetUsages(entry.Id, usages, out _, out var usagesError))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, usagesError));
+
+            AfterACertificateChanged();
+
+            var changed = store.Get(entry.Id) ?? entry;
+
+            meter.Log.Notice($"'{user.Id}' changed the certificate '{changed.Label}' ({changed.Id}) in the certificate store.",
+                             "certificates", "web");
+
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, EntryJSON(changed)));
+
+        }
+
+        #endregion
+
+        #region (private) DeleteCertificate     (Request)
+
+        /// <summary>
+        /// DELETE /api/v1/certificates/{id}: take a certificate out of the store,
+        /// and its file with it.
+        /// </summary>
+        private Task<HTTPResponse> DeleteCertificate(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
+                return Task.FromResult(refused);
+
+            if (!TryGetEntry(Request, out var entry, out var unknown))
+                return Task.FromResult(unknown);
+
+            if (RefuseLeavingNothing(Request, entry, false, entry.Usages) is HTTPResponse leavesNothing)
+                return Task.FromResult(leavesNothing);
+
+            if (!meter.Certificates.Remove(entry.Id, out var error))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, error));
+
+            AfterACertificateChanged();
+
+            meter.Log.Notice($"'{user.Id}' took the certificate '{entry.Label}' ({entry.Id}) out of the certificate store.",
+                             "certificates", "web");
+
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, CertificatesJSON()));
+
+        }
+
+        #endregion
+
+
+        #region (private) GetSigningRequests    (Request)
+
+        /// <summary>
+        /// GET /api/v1/certificates/requests: the keys made here and their signing
+        /// requests, and the kinds of key a new one can be asked for with.
+        /// </summary>
+        private Task<HTTPResponse> GetSigningRequests(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
+                return Task.FromResult(refused);
+
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, SigningRequestsJSON()));
+
+        }
+
+        #endregion
+
+        #region (private) PostSigningRequest    (Request)
+
+        /// <summary>
+        /// POST /api/v1/certificates/requests with {"listener", "subject",
+        /// "dnsNames", "ipAddresses", "keyType", "note"}: make a key and a
+        /// signing request for it.
+        /// </summary>
+        private Task<HTTPResponse> PostSigningRequest(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
+                return Task.FromResult(refused);
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return Task.FromResult(errorResponse);
 
             var subject = json["subject"]?.Value<String>()?.Trim();
 
-            if (subject is null || subject.Length == 0)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 "A 'subject' is required, e.g. \"CN=meter7.lan, O=Acme\"."));
+            if (String.IsNullOrEmpty(subject))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "A 'subject' is required, e.g. \"CN=meter7.lan, O=Acme\"."));
 
-            var keyType = json["keyType"]?.Value<String>()?.Trim().ToLowerInvariant() ?? "ec256";
-
-            if (!CertificateStore.KeyTypes.Contains(keyType))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 $"'keyType' is one of: {String.Join(", ", CertificateStore.KeyTypes)}."));
-
-            try
+            if (!meter.SigningRequests.TryCreate(json["listener"]?.Value<String>()?.Trim().ToLowerInvariant() ?? "",
+                                                 subject,
+                                                 Strings(json["dnsNames"]),
+                                                 Strings(json["ipAddresses"]),
+                                                 json["keyType"]?.Value<String>(),
+                                                 json["note"]?.   Value<String>(),
+                                                 out var request,
+                                                 out var error))
             {
-
-                var entry = store.CreateRequest(
-                                subject,
-                                Strings(json["dnsNames"]),
-                                Strings(json["ipAddresses"]),
-                                keyType,
-                                json["note"]?.Value<String>()
-                            );
-
-                meter.Log.Notice(
-                    $"'{user.Id}' asked for a new {store.Purpose} certificate: {subject}.",
-                    "certificates", store.Purpose, "web"
-                );
-
-                return Task.FromResult(
-                           JSONResponse(Request, HTTPStatusCode.Created, entry.ToJSON(meter.TimeProvider.GetUtcNow()))
-                       );
-
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
             }
-            catch (Exception e)
-            {
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 $"That request could not be made: {e.Message}"));
-            }
+
+            meter.Log.Notice($"'{user.Id}' asked for a new {request.Listener} certificate: {request.Subject}.", "certificates", "web");
+
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.Created, request.ToJSON(meter.Certificates)));
 
         }
 
         #endregion
 
-        #region (private) GetCertificateRequest (Request)
+        #region (private) GetSigningRequestFile (Request)
 
         /// <summary>
-        /// GET /api/v1/certificates/servers/{purpose}/{id}/request: the PKCS#10
-        /// request, as a file to hand to a CA.
+        /// GET /api/v1/certificates/requests/{id}: the PKCS#10 request, as a file
+        /// to hand to a CA.
         /// </summary>
-        private Task<HTTPResponse> GetCertificateRequest(HTTPRequest Request)
+        private Task<HTTPResponse> GetSigningRequestFile(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
                 return Task.FromResult(refused);
 
-            if (!TryGetStore(Request, out var store, out var unknown))
-                return Task.FromResult(unknown);
+            var id       = HandleOf(Request);
+            var request  = meter.SigningRequests.Get(id);
+            var pem      = meter.SigningRequests.RequestPEM(id);
 
-            var id    = Request.ParsedURLParameters.Length > 1 ? Request.ParsedURLParameters[1] : "";
-            var entry = store.Entries.FirstOrDefault(entry => entry.Id == id);
-
-            if (entry?.RequestPEM is null)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound,
-                                                 "There is no signing request with that id."));
+            if (request is null || pem is null)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound, "There is no signing request with that id."));
 
             return Task.FromResult(
                        new HTTPResponse.Builder(Request) {
                            HTTPStatusCode      = HTTPStatusCode.OK,
                            ContentType         = HTTPContentType.Application.OCTETSTREAM,
-                           Content             = Encoding.ASCII.GetBytes(entry.RequestPEM),
-                           ContentDisposition  = $"attachment; filename=\"{store.Purpose}-{entry.Id}.csr\"",
+                           Content             = Encoding.ASCII.GetBytes(pem),
+                           ContentDisposition  = $"attachment; filename=\"{request.Listener}-{request.Id}.csr\"",
                            CacheControl        = "no-store",
                            Connection          = ConnectionType.Close
                        }.AsImmutable
@@ -232,110 +414,18 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private) PutCertificate        (Request)
+        #region (private) PutSigningRequestAnswer (Request)
 
         /// <summary>
-        /// PUT /api/v1/certificates/servers/{purpose}/{id} with {"pem": "..."}:
-        /// the signed certificate coming back.
+        /// PUT /api/v1/certificates/requests/{id} with {"pem"}: the certificate a
+        /// CA signed for a request, and the intermediates above it - which become
+        /// an identity of the listener it was asked for.
         /// </summary>
         /// <remarks>
-        /// Nothing takes effect here and nothing needs to: both listeners ask
-        /// the store at every handshake, so a certificate that is valid now is
-        /// shown to the next peer, and one that becomes valid in two days is
-        /// shown from the second it does.
+        /// A second answer for the same request is a renewal for the same key,
+        /// and a second identity: the newer one takes over when it becomes valid.
         /// </remarks>
-        private Task<HTTPResponse> PutCertificate(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
-                return Task.FromResult(refused);
-
-            if (!TryGetStore(Request, out var store, out var unknown))
-                return Task.FromResult(unknown);
-
-            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
-                return Task.FromResult(errorResponse);
-
-            var id  = Request.ParsedURLParameters.Length > 1 ? Request.ParsedURLParameters[1] : "";
-            var pem = json["pem"]?.Value<String>();
-
-            if (pem is null || pem.Trim().Length == 0)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 "A 'pem' with the signed certificate is required."));
-
-            if (!store.TryImportCertificate(id, pem, out var error))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error ?? "That certificate was refused."));
-
-            var entry = store.Entries.First(entry => entry.Id == id);
-            var now   = meter.TimeProvider.GetUtcNow();
-
-            meter.Log.Notice(
-                $"'{user.Id}' put a {store.Purpose} certificate in: {entry.Certificate?.Subject}, " +
-                (entry.IsValidAt(now)
-                     ? $"valid until {entry.Certificate?.NotAfter:yyyy-MM-dd} and in use from now."
-                     : $"which takes over on {entry.Certificate?.NotBefore:yyyy-MM-dd HH:mm}."),
-                "certificates", store.Purpose, "web"
-            );
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, store.ToJSON()));
-
-        }
-
-        #endregion
-
-        #region (private) DeleteCertificate     (Request)
-
-        /// <summary>
-        /// DELETE /api/v1/certificates/servers/{purpose}/{id}
-        /// </summary>
-        private Task<HTTPResponse> DeleteCertificate(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
-                return Task.FromResult(refused);
-
-            if (!TryGetStore(Request, out var store, out var unknown))
-                return Task.FromResult(unknown);
-
-            var id = Request.ParsedURLParameters.Length > 1 ? Request.ParsedURLParameters[1] : "";
-
-            if (!store.TryRemove(id, out var error))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, error ?? "That entry could not be removed."));
-
-            meter.Log.Notice($"'{user.Id}' threw away the {store.Purpose} certificate '{id}' and its key.",
-                             "certificates", store.Purpose, "web");
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, store.ToJSON()));
-
-        }
-
-        #endregion
-
-
-        #region (private) GetTrustedChains      (Request)
-
-        /// <summary>
-        /// GET /api/v1/certificates/clients: which CAs a Modbus/TLS client
-        /// certificate may chain to.
-        /// </summary>
-        private Task<HTTPResponse> GetTrustedChains(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(NodeResources.Certificates), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.ClientTrust.ToJSON()));
-
-        }
-
-        #endregion
-
-        #region (private) PostTrustedChain      (Request)
-
-        /// <summary>
-        /// POST /api/v1/certificates/clients with {"name": "...", "pem": "..."}
-        /// </summary>
-        private Task<HTTPResponse> PostTrustedChain(HTTPRequest Request)
+        private Task<HTTPResponse> PutSigningRequestAnswer(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
@@ -344,118 +434,287 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return Task.FromResult(errorResponse);
 
-            var pem = json["pem"]?.Value<String>();
+            var id = HandleOf(Request);
 
-            if (pem is null || pem.Trim().Length == 0)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 "A 'pem' with the CA certificate, and any intermediates, is required."));
+            if (meter.SigningRequests.Get(id) is null)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound, "There is no signing request with that id."));
 
-            if (!meter.ClientTrust.TryAdd(json["name"]?.Value<String>() ?? "", pem, out var chain, out var error))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error ?? "That chain was refused."));
+            if (json["pem"]?.Value<String>() is not String pem || pem.Trim().Length == 0)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "'pem' has to be the certificate, and the intermediates above it."));
 
-            meter.Log.Notice($"'{user.Id}' added '{chain?.Name}' to the CAs this meter accepts Modbus/TLS clients from.",
-                             "certificates", "trust", "web");
+            if (!meter.SigningRequests.TryAnswer(id, pem, meter.Certificates, out var entry, out var error))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
 
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.Created, meter.ClientTrust.ToJSON()));
+            AfterACertificateChanged();
+
+            meter.Log.Notice($"'{user.Id}' put the certificate for the signing request {id} in: '{entry.Label}' ({entry.Id}).",
+                             "certificates", "web");
+
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK,
+                                                new JObject(
+                                                    new JProperty("request",      meter.SigningRequests.Get(id)?.ToJSON(meter.Certificates)),
+                                                    new JProperty("certificate",  EntryJSON(entry))
+                                                )));
 
         }
 
         #endregion
 
-        #region (private) PutTrustedChain       (Request)
+        #region (private) DeleteSigningRequest  (Request)
 
         /// <summary>
-        /// PUT /api/v1/certificates/clients/{id} with {"enabled": true|false}
+        /// DELETE /api/v1/certificates/requests/{id}: throw a request away, and
+        /// its key with it. What was put into the store from it stays there.
         /// </summary>
-        private Task<HTTPResponse> PutTrustedChain(HTTPRequest Request)
+        private Task<HTTPResponse> DeleteSigningRequest(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
                 return Task.FromResult(refused);
 
-            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
-                return Task.FromResult(errorResponse);
+            var id = HandleOf(Request);
 
-            var id      = Request.ParsedURLParameters.Length > 0 ? Request.ParsedURLParameters[0] : "";
-            var enabled = json["enabled"]?.Value<Boolean>();
+            if (meter.SigningRequests.Get(id) is null)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound, "There is no signing request with that id."));
 
-            if (enabled is null)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "An 'enabled' is required."));
+            if (!meter.SigningRequests.TryRemove(id, out var error))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, error));
 
-            if (!meter.ClientTrust.TrySetEnabled(id, enabled.Value, out var error))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, error ?? "That could not be changed."));
+            meter.Log.Notice($"'{user.Id}' threw the signing request {id} away, and its key with it.", "certificates", "web");
 
-            meter.Log.Notice($"'{user.Id}' {(enabled.Value ? "re-enabled" : "switched off")} the trusted chain '{id}'.",
-                             "certificates", "trust", "web");
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.ClientTrust.ToJSON()));
-
-        }
-
-        #endregion
-
-        #region (private) DeleteTrustedChain    (Request)
-
-        /// <summary>
-        /// DELETE /api/v1/certificates/clients/{id}
-        /// </summary>
-        private Task<HTTPResponse> DeleteTrustedChain(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Edit(NodeResources.Certificates), true, out var user, out var refused))
-                return Task.FromResult(refused);
-
-            var id = Request.ParsedURLParameters.Length > 0 ? Request.ParsedURLParameters[0] : "";
-
-            if (!meter.ClientTrust.TryRemove(id, out var error))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, error ?? "That chain could not be removed."));
-
-            meter.Log.Notice($"'{user.Id}' removed the trusted chain '{id}'.", "certificates", "trust", "web");
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.ClientTrust.ToJSON()));
+            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, SigningRequestsJSON()));
 
         }
 
         #endregion
 
 
-        #region (private) TryGetStore(Request, out Store, out Unknown)
+        #region (private) CertificatesJSON() / EntryJSON(Entry) / SigningRequestsJSON()
 
         /// <summary>
-        /// Which of the two server stores a request names.
+        /// The store as a page reads it: the kinds it keeps and what each may be
+        /// told it is for, every certificate by kind, and what each listener
+        /// shows now and next.
         /// </summary>
-        private Boolean TryGetStore(HTTPRequest            Request,
-                                    out CertificateStore   Store,
-                                    out HTTPResponse       Unknown)
+        private JObject CertificatesJSON()
         {
 
-            var purpose = Request.ParsedURLParameters.Length > 0 ? Request.ParsedURLParameters[0] : null;
-            var store   = meter.CertificateStoreFor(purpose);
+            var store         = meter.Certificates;
+            var kinds         = store.Kinds;
 
-            if (store is null)
+            var certificates  = new JObject();
+
+            foreach (var kind in kinds)
+                certificates.Add(kind.AsText(), new JArray(store.ByKind(kind).Select(EntryJSON)));
+
+            var shown         = new JObject();
+
+            foreach (var listener in ListenerCertificates.All)
             {
-                Store   = null!;
-                Unknown = ErrorJSON(Request, HTTPStatusCode.NotFound,
-                                    "There are two certificate stores here: 'modbus' for what charging stations check, and 'web' for what a browser checks.");
+
+                var certificatesOf  = meter.ListenerCertificatesFor(listener)!;
+                var next            = certificatesOf.Next;
+
+                shown.Add(listener, new JObject(
+                                        new JProperty("current",  certificatesOf.Current?.Entry.Id),
+                                        new JProperty("next",     next?.Id),
+                                        new JProperty("nextAt",   next?.NotBefore.UtcDateTime),
+                                        new JProperty("used",     listener == ListenerCertificates.Modbus || meter.HTTPS)
+                                    ));
+
+            }
+
+            return new JObject(
+                       new JProperty("directory",           store.Directory),
+                       new JProperty("trustAnchors",        new JArray(kinds.Where(kind =>  kind.IsTrustAnchor()).                                    Select(kind => kind.AsText()))),
+                       new JProperty("credentials",         new JArray(kinds.Where(kind => !kind.IsTrustAnchor() && !kind.MustNotCarryPrivateKey()).  Select(kind => kind.AsText()))),
+                       new JProperty("recognised",          new JArray(kinds.Where(kind => !kind.IsTrustAnchor() &&  kind.MustNotCarryPrivateKey()).  Select(kind => kind.AsText()))),
+                       new JProperty("kinds",               new JObject(kinds.Select(kind => new JProperty(kind.AsText(), new JObject(
+                                                                                                 new JProperty("description",      kind.Describe()),
+                                                                                                 new JProperty("trustAnchor",      kind.IsTrustAnchor()),
+                                                                                                 new JProperty("needsPrivateKey",  kind.NeedsPrivateKey()),
+                                                                                                 new JProperty("hasUsages",        store.HasUsages(kind)),
+                                                                                                 new JProperty("usages",           new JArray(store.UsagesFor(kind)))
+                                                                                             ))))),
+                       new JProperty("usages",              new JArray(store.Usages)),
+                       new JProperty("listeners",           new JArray(store.Listeners)),
+                       new JProperty("certificates",        certificates),
+                       new JProperty("shown",               shown),
+                       new JProperty("keysAreUnencrypted",  store.Entries.Any(entry => entry.HasPrivateKey))
+                   );
+
+        }
+
+        /// <summary>
+        /// One certificate as a page reads it: the store's entry, and which
+        /// listener shows it now.
+        /// </summary>
+        private JObject EntryJSON(CertificateEntry Entry)
+        {
+
+            var json = Entry.ToJSON(WithDiagnostics: true);
+
+            if (Entry.Kind == CertificateKind.TLSIdentity)
+                json.Add("shownOn", new JArray(ListenerCertificates.All.Where(listener => meter.ListenerCertificatesFor(listener)?.Current?.Entry.Id == Entry.Id)));
+
+            return json;
+
+        }
+
+        /// <summary>
+        /// The signing requests, and the kinds of key a new one may be asked for with.
+        /// </summary>
+        private JObject SigningRequestsJSON()
+
+            => new (
+                   new JProperty("requests",        new JArray(meter.SigningRequests.All.Select(request => request.ToJSON(meter.Certificates)))),
+                   new JProperty("listeners",       new JArray(ListenerCertificates.All)),
+                   new JProperty("keyTypes",        new JArray(SigningRequests.KeyTypes.Select(keyType => keyType.ToJSON()))),
+                   new JProperty("defaultKeyType",  SigningRequests.DefaultKeyType)
+               );
+
+        #endregion
+
+        #region (private) RefuseLeavingNothing(Request, Entry, Active, Usages)
+
+        /// <summary>
+        /// The 409 for a change that would leave a listener with nothing to show,
+        /// or Modbus/TLS clients with no CA they may be issued by - or null when
+        /// it would not.
+        /// </summary>
+        /// <param name="Request">The request.</param>
+        /// <param name="Entry">The certificate to be changed or removed.</param>
+        /// <param name="Active">Whether it would be switched on afterwards; false for a removal.</param>
+        /// <param name="Usages">What it would be for afterwards; null for every use.</param>
+        private HTTPResponse? RefuseLeavingNothing(HTTPRequest             Request,
+                                                  CertificateEntry        Entry,
+                                                  Boolean                 Active,
+                                                  IReadOnlyList<String>?  Usages)
+        {
+
+            if (Entry.Kind == CertificateKind.TLSIdentity)
+            {
+
+                foreach (var listener in ListenerCertificates.All)
+                {
+
+                    if (listener == ListenerCertificates.Web && !meter.HTTPS)
+                        continue;
+
+                    var candidates     = meter.ListenerCertificatesFor(listener)!.Candidates;
+                    var stillShowable  = Active && (Usages is null || Usages.Contains(listener));
+
+                    if (!stillShowable && candidates.Count == 1 && candidates[0].Id == Entry.Id)
+                        return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                         $"That is the only certificate the {listener} listener could show. Put another one in first.");
+
+                }
+
+            }
+
+            if (Entry.Kind == CertificateKind.ClientRoot && !Active)
+            {
+
+                var usable = meter.ClientRoots.Usable;
+
+                if (usable.Count == 1 && usable[0].Id == Entry.Id)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "That is the last CA Modbus/TLS clients may be issued by. Put another one in first - " +
+                                     "otherwise no charging station could connect.");
+
+            }
+
+            return null;
+
+        }
+
+        #endregion
+
+        #region (private) TryGetEntry(Request, out Entry, out Unknown) / HandleOf(Request)
+
+        private Boolean TryGetEntry(HTTPRequest                                   Request,
+                                    [NotNullWhen(true)]  out CertificateEntry?    Entry,
+                                    [NotNullWhen(false)] out HTTPResponse?        Unknown)
+        {
+
+            Entry = meter.Certificates.Get(HandleOf(Request));
+
+            if (Entry is null)
+            {
+                Unknown = ErrorJSON(Request, HTTPStatusCode.NotFound, "There is no such certificate in this store.");
                 return false;
             }
 
-            Store   = store;
-            Unknown = null!;
-
+            Unknown = null;
             return true;
 
         }
 
+        /// <summary>
+        /// The handle in the path, as the store spells handles: in lower case.
+        /// </summary>
+        private static String HandleOf(HTTPRequest Request)
+
+            => Request.ParsedURLParameters.Length > 0
+                   ? Request.ParsedURLParameters[0].Trim().ToLowerInvariant()
+                   : "";
+
         #endregion
 
-        #region (private static) Strings(Token)
+        #region (private static) TryReadUsages(Request, JSON, out Usages, out Refused) / Strings(Token)
+
+        /// <summary>
+        /// The usages a request names: null for every use, when they are left
+        /// out or null, and a list of names otherwise.
+        /// </summary>
+        private static Boolean TryReadUsages(HTTPRequest                             Request,
+                                             JObject                                 JSON,
+                                             out IReadOnlyList<String>?              Usages,
+                                             [NotNullWhen(false)] out HTTPResponse?  Refused)
+        {
+
+            Usages   = null;
+            Refused  = null;
+
+            var token = JSON["usages"];
+
+            if (token is null || token.Type == JTokenType.Null)
+                return true;
+
+            if (token is not JArray list || list.Any(item => item.Type != JTokenType.String))
+            {
+                Refused = ErrorJSON(Request, HTTPStatusCode.BadRequest,
+                                    "'usages' has to be a list of usages, such as [\"nts\"] or [\"modbus\"], or null for every use.");
+                return false;
+            }
+
+            Usages = [.. list.Values<String>().OfType<String>()];
+            return true;
+
+        }
 
         private static IEnumerable<String> Strings(JToken? Token)
 
-            => Token is JArray array
-                   ? array.Values<String>().Where(value => value is not null).Cast<String>()
-                   : [];
+            => Token switch {
+                   JArray array  => array.Values<String>().OfType<String>(),
+                   JValue value  when value.Type == JTokenType.String
+                                 => (value.Value<String>() ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                   _             => []
+               };
+
+        #endregion
+
+        #region (private) AfterACertificateChanged()
+
+        /// <summary>
+        /// Say so at once when a change means a listener shows another
+        /// certificate, rather than at the next minute's check.
+        /// </summary>
+        private void AfterACertificateChanged()
+        {
+            meter.ModbusCertificates.CheckRollover();
+            meter.WebCertificates.   CheckRollover();
+        }
 
         #endregion
 

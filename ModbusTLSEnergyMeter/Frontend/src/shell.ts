@@ -40,9 +40,7 @@ export const menu: MenuEntry[] = [
         children:  [
             { path: '/configuration/dns',                      label: 'DNS client',             icon: 'fa-magnifying-glass-location', needs: ['dns',          'read'] },
             { path: '/configuration/nts',                      label: 'NTS client',             icon: 'fa-clock',                     needs: ['nts',          'read'] },
-            { path: '/configuration/certificates/modbus',      label: 'Modbus/TLS certificate', icon: 'fa-plug-circle-bolt',          needs: ['certificates', 'read'] },
-            { path: '/configuration/certificates/web',         label: 'Web certificate',        icon: 'fa-globe',                     needs: ['certificates', 'read'] },
-            { path: '/configuration/certificates/clients',     label: 'Client trust',           icon: 'fa-user-shield',               needs: ['certificates', 'read'] },
+            { path: '/configuration/certificates',             label: 'Certificates',           icon: 'fa-certificate',               needs: ['certificates', 'read'] },
             { path: '/configuration/keys',                     label: 'Signing keys',           icon: 'fa-key',                       needs: ['keys',         'read'] }
         ]
     },

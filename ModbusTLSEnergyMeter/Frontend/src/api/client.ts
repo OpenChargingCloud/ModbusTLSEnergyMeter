@@ -592,7 +592,119 @@ export interface Clock {
 
 // Certificates
 
+/**
+ * What a certificate in the node's store is to this meter. A root is believed:
+ * a TLS root at the end of a time or name server's chain, a client root at the
+ * end of a Modbus/TLS client's. An identity is what one of the two listeners
+ * shows. A server certificate is neither, but kept to recognise a server by
+ * its fingerprint.
+ */
+export type CertificateKind = 'tlsRoot' | 'clientRoot' | 'tlsServer' | 'tlsIdentity';
+
+/** One of the two listeners of this meter that show a certificate: the Modbus/TLS port, and the web interface. */
+export type TLSListener = 'modbus' | 'web';
+
+/**
+ * One certificate in the store. Everything but its label, whether it is
+ * switched on and what it is for is read out of the file.
+ */
 export interface Certificate {
+    /** The handle it is addressed by: the first 16 digits of its fingerprint. */
+    id:             string;
+    kind:           CertificateKind;
+    fileName:       string;
+    label:          string;
+    subject:        string;
+    issuer:         string;
+    serialNumber:   string;
+    /** Its SHA-256 fingerprint in full, for comparing against what a CA said. */
+    thumbprint:     string;
+    notBefore:      string;
+    notAfter:       string;
+    keyAlgorithm:   string;
+    hasPrivateKey:  boolean;
+    /** How many further certificates travel with it, e.g. its sub-CAs. */
+    chainLength:    number;
+    /** Whether this meter is using it. Somebody switches this; time does not. */
+    active:         boolean;
+    importedAt:     string;
+    expired:        boolean;
+    notYetValid:    boolean;
+    /** Active, and inside its own validity. */
+    usable:         boolean;
+    description:    string;
+    /**
+     * What it is for - "dns" and "nts" for a TLS root or a server
+     * certificate, "modbus" and "web" for an identity - and null there for
+     * every use. Left out for a client root, which is for Modbus/TLS alone.
+     */
+    usages?:        string[] | null;
+    /** An identity only: the listeners that show it right now. */
+    shownOn?:       TLSListener[];
+}
+
+/** What one listener shows now, and what takes over from it next - by handle. */
+export interface ListenerCertificates {
+    /** Null when it has nothing it could show, and every handshake on it fails. */
+    current:  string | null;
+    /** The earliest of those switched on for it that are not valid yet, and when it will be. */
+    next:     string | null;
+    nextAt:   string | null;
+    /** Whether the listener runs at all: the web interface only with HTTPS. */
+    used:     boolean;
+}
+
+/** The whole store, grouped the way it is shown. */
+export interface CertificateStore {
+    directory:     string;
+    /** The kinds that are trust anchors, in the order they are shown. */
+    trustAnchors:  CertificateKind[];
+    /** The kinds that are presented, in the order they are shown. */
+    credentials:   CertificateKind[];
+    /** The kinds that are neither: kept to recognise a server by its fingerprint. */
+    recognised:    CertificateKind[];
+    kinds:         Record<CertificateKind, {
+                       description:     string;
+                       trustAnchor:     boolean;
+                       needsPrivateKey: boolean;
+                       /** Whether one of this kind is told what it is for. */
+                       hasUsages:       boolean;
+                       /** What one of this kind may be told it is for; empty where it is not told. */
+                       usages:          string[];
+                   }>;
+    /** What a TLS root or a server certificate may be told it is for. */
+    usages:        string[];
+    /** What an identity may be told it is for. */
+    listeners:     TLSListener[];
+    certificates:  Record<CertificateKind, Certificate[]>;
+    shown:         Record<TLSListener, ListenerCertificates>;
+    /** Whether anything in the store carries a private key, which is kept unencrypted. */
+    keysAreUnencrypted: boolean;
+}
+
+/** What an import sends: the file, base64-encoded, and what to make of it. */
+export interface CertificateImport {
+    kind:       CertificateKind;
+    /** The file's bytes, base64-encoded. PEM, DER or PKCS#12. */
+    content:    string;
+    /** What opens it, where it is a protected PKCS#12. Used once and not kept. */
+    password?:  string;
+    /** What to call it; its common name where this is left out. */
+    label?:     string;
+    /** What it is for, where its kind is told; left out for every use. */
+    usages?:    string[];
+}
+
+/** What a change to a stored certificate may say. Everything else is read from the file. */
+export interface CertificateUpdate {
+    active?:  boolean;
+    label?:   string | null;
+    /** What it is for; null for every use again, and left out to leave it alone. */
+    usages?:  string[] | null;
+}
+
+/** A certificate, as far as a page asks about one it does not keep. */
+export interface CertificateSummary {
     subject:     string;
     issuer:      string;
     notBefore:   string;
@@ -600,74 +712,64 @@ export interface Certificate {
     thumbprint:  string;
 }
 
-export interface Certificates {
-    meter:         Certificate;
-    clientCA:      Certificate;
+/** The certificates this meter was started with, as they stand, and the roles a client certificate may carry. */
+export interface CertificateConfiguration {
+    /** What Modbus/TLS clients are shown now - or, while the store has nothing to show them, what the meter was started with. */
+    meter:         CertificateSummary;
+    /** The CA the meter was started with. */
+    clientCA:      CertificateSummary;
     sunSpecRoles:  string[];
 }
 
 
-// The certificate stores
-
-/** Which listener a store of certificates belongs to. */
-export type CertificatePurpose = 'modbus' | 'web';
-
-/** What a certificate is, once there is one. */
-export interface CertificateInfo {
-    subject:      string;
-    issuer:       string;
-    notBefore:    string;
-    notAfter:     string;
-    thumbprint:   string;
-    chainLength:  number;
-}
+// Signing requests
 
 /**
- * One identity a listener can show: a key that never leaves the meter, the
- * request that was handed out for it, and the certificate once it came back.
+ * A key made in this meter, and the request a CA is sent for it: waiting for
+ * its certificate, or answered and kept, so that the same key can be
+ * certified again.
  */
-export interface CertificateEntry {
+export interface SigningRequest {
     id:           string;
+    /** Which listener the certificate is for. */
+    listener:     TLSListener;
     createdAt:    string;
     subject:      string;
     dnsNames:     string[];
     ipAddresses:  string[];
+    /** One of the ids of `keyTypes`, e.g. "ecdsa-p256". */
     keyType:      string;
     note:         string | null;
-    hasRequest:   boolean;
-    /**
-     * Whether a TLS listener of this meter could ever show this one.
-     *
-     * False for the Edwards curves and for ML-DSA: .NET's SslStream
-     * authenticates a server with RSA or ECDSA, so a certificate over one of
-     * those is a perfectly good certificate for use somewhere else and is never
-     * handed to a listener here.
-     */
-    servedByTLS:  boolean | null;
-    /** "valid", "not for a listener", "not valid yet", "expired", ... */
-    state:        string;
-    certificate:  CertificateInfo | null;
+    /** The handles of the identities its answers became, where the store still has them. */
+    answeredBy:   string[];
+    state:        'awaiting a certificate' | 'answered';
 }
 
-export interface CertificateStore {
-    purpose:    CertificatePurpose;
-    path:       string;
-    /** The entry being shown now, if any. */
-    currentId:  string | null;
-    /** The entry that takes over next, if one is waiting. */
-    nextId:     string | null;
-    nextAt:     string | null;
-    entries:    CertificateEntry[];
+/** The signing requests of this meter, newest first, and what a new one may ask for. */
+export interface SigningRequests {
+    requests:        SigningRequest[];
+    listeners:       TLSListener[];
+    /** What a request may ask for, and what each one means. */
+    keyTypes:        KeyAlgorithmInfo[];
+    /** What is asked for when nobody says. */
+    defaultKeyType:  string;
 }
 
 /** What a new signing request asks for. */
-export interface CertificateRequestBody {
-    subject:      string;
-    dnsNames?:    string[];
-    ipAddresses?: string[];
-    /** One of the ids from the overview's `keyTypes`, e.g. "ecdsa-p256". */
-    keyType?:     string;
-    note?:        string;
+export interface NewSigningRequest {
+    listener:      TLSListener;
+    subject:       string;
+    dnsNames?:     string[];
+    ipAddresses?:  string[];
+    /** One of the ids of `keyTypes`; the default one where it is left out. */
+    keyType?:      string;
+    note?:         string;
+}
+
+/** What putting in the certificate for a request answers with: the request, and the identity it became. */
+export interface AnsweredRequest {
+    request:      SigningRequest;
+    certificate:  Certificate;
 }
 
 /**
@@ -692,41 +794,6 @@ export interface KeyAlgorithmInfo {
      * and the year.
      */
     presentable?: boolean;
-}
-
-/** One certificate inside an accepted client chain. */
-export interface TrustedChainCertificate {
-    subject:     string;
-    issuer:      string;
-    notBefore:   string;
-    notAfter:    string;
-    thumbprint:  string;
-    expired:     boolean;
-    isRoot:      boolean;
-}
-
-/** One CA a Modbus/TLS client certificate may chain to. */
-export interface TrustedChain {
-    id:            string;
-    name:          string;
-    addedAt:       string;
-    enabled:       boolean;
-    certificates:  TrustedChainCertificate[];
-}
-
-export interface ClientTrust {
-    path:    string;
-    chains:  TrustedChain[];
-}
-
-/** Both server stores and the accepted client chains, in one answer. */
-export interface CertificateOverview {
-    modbus:    CertificateStore;
-    web:       CertificateStore;
-    clients:   ClientTrust;
-    https:     boolean;
-    /** What a request may ask for, and what each one means. */
-    keyTypes:  KeyAlgorithmInfo[];
 }
 
 
@@ -910,36 +977,72 @@ export const api = {
         test:  (host?: string)      => meterAPI<TimeServerTest>  ('POST', '/configuration/nts/test', { host })
     },
 
-    clock:         () => meterAPI<Clock>       ('GET', '/configuration/time'),
-    certificates:  () => meterAPI<Certificates>('GET', '/configuration/certificates'),
+    clock:  () => meterAPI<Clock>('GET', '/configuration/time'),
 
     /**
-     * The certificates this meter shows.
+     * The node's certificate store: what this meter believes, what its two
+     * listeners show and the servers it recognises - and the keys made here,
+     * with the requests a CA is sent for them.
      *
-     * Two stores, and deliberately not one: what a charging station checks
-     * comes from a device PKI, what a browser checks comes from wherever the
+     * One store where there were three. What a charging station checks still
+     * comes from a device PKI and what a browser checks from wherever the
      * operator's web certificates come from, and nothing issues a certificate
-     * both of them would accept.
+     * both of them would accept - which is why an identity is told which
+     * listener it is for, rather than kept in a store of its listener's own.
      */
-    tls: {
+    certificates: {
 
-        overview:  ()                        => meterAPI<CertificateOverview>('GET', '/certificates'),
-        store:     (p: CertificatePurpose)   => meterAPI<CertificateStore>   ('GET', `/certificates/servers/${p}`),
+        /** The whole store, grouped by kind, and what each listener shows now and next. */
+        get:            ()                                       => meterAPI<CertificateStore>        ('GET',    '/certificates'),
 
-        /** Make a key and write a signing request for it. The key stays there. */
-        request:   (p: CertificatePurpose, body: CertificateRequestBody) =>
-                       meterAPI<CertificateEntry>('POST', `/certificates/servers/${p}/requests`, body),
+        /**
+         * Put a certificate into the store.
+         *
+         * Importing the same file twice is the same entry - the handle is its
+         * fingerprint - so this is safe to repeat.
+         */
+        import:         (certificate: CertificateImport)         => meterAPI<Certificate>             ('POST',   '/certificates', certificate),
+
+        /**
+         * Switch one on or off, rename it, or say what it is for. Refused
+         * where that would leave a listener with nothing to show, or
+         * Modbus/TLS clients with no CA to be issued by.
+         */
+        update:         (id: string, update: CertificateUpdate)  => meterAPI<Certificate>             ('PATCH',  `/certificates/${encodeURIComponent(id)}`, update),
+
+        /** Take one out of the store and delete its file - refused on the same grounds. */
+        remove:         (id: string)                             => meterAPI<CertificateStore>        ('DELETE', `/certificates/${encodeURIComponent(id)}`),
+
+        /**
+         * Read the store's directory again.
+         *
+         * For certificates somebody copied in rather than uploaded - which is
+         * a perfectly good way to install one on a machine you already have a
+         * shell on.
+         */
+        reload:         ()                                       => meterAPI<CertificateStore>        ('POST',   '/certificates/reload', {}),
+
+        /** The keys made here with their requests, and what a new one may ask for. */
+        requests:       ()                                       => meterAPI<SigningRequests>         ('GET',    '/certificates/requests'),
+
+        /** Make a key and write a signing request for it. The key stays here. */
+        createRequest:  (request: NewSigningRequest)             => meterAPI<SigningRequest>          ('POST',   '/certificates/requests', request),
 
         /** Where the browser fetches the request itself; it arrives as a file. */
-        requestURL: (p: CertificatePurpose, id: string) =>
-                       `${config.apiBase}/certificates/servers/${p}/${id}/request`,
+        requestURL:     (id: string)                             => `${config.apiBase}/certificates/requests/${encodeURIComponent(id)}`,
 
-        /** The signed certificate coming back, checked against the key that asked. */
-        upload:    (p: CertificatePurpose, id: string, pem: string) =>
-                       meterAPI<CertificateStore>('PUT', `/certificates/servers/${p}/${id}`, { pem }),
+        /**
+         * The signed certificate coming back, with the intermediates above
+         * it, checked against the key that asked. A second one for the same
+         * request is a renewal for the same key.
+         */
+        answerRequest:  (id: string, pem: string)                => meterAPI<AnsweredRequest>         ('PUT',    `/certificates/requests/${encodeURIComponent(id)}`, { pem }),
 
-        remove:    (p: CertificatePurpose, id: string) =>
-                       meterAPI<CertificateStore>('DELETE', `/certificates/servers/${p}/${id}`)
+        /** Throw a request away, and its key with it. What was put into the store from it stays there. */
+        removeRequest:  (id: string)                             => meterAPI<SigningRequests>         ('DELETE', `/certificates/requests/${encodeURIComponent(id)}`),
+
+        /** What the meter was started with, and the SunSpec roles a client certificate may carry. */
+        configuration:  ()                                       => meterAPI<CertificateConfiguration>('GET',    '/configuration/certificates')
 
     },
 
@@ -998,14 +1101,6 @@ export const api = {
         /** Answers with one OCMF document holding both readings. */
         stop:     ()  => meterAPI<SessionStopped>('POST', '/sessions/stop', {})
 
-    },
-
-    /** Which CAs a Modbus/TLS client certificate may chain to. */
-    trust: {
-        get:         ()                              => meterAPI<ClientTrust>('GET',    '/certificates/clients'),
-        add:         (name: string, pem: string)     => meterAPI<ClientTrust>('POST',   '/certificates/clients', { name, pem }),
-        setEnabled:  (id: string, enabled: boolean)  => meterAPI<ClientTrust>('PUT',   `/certificates/clients/${id}`, { enabled }),
-        remove:      (id: string)                    => meterAPI<ClientTrust>('DELETE', `/certificates/clients/${id}`)
     },
 
     /**

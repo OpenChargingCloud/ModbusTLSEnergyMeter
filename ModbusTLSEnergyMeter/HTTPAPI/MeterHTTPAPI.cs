@@ -222,7 +222,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             // Everything else below /api answers with a JSON 404 rather than
             // falling through to the account API at "/".
-            foreach (var method in new[] { HTTPMethod.GET, HTTPMethod.HEAD, HTTPMethod.POST, HTTPMethod.PUT, HTTPMethod.DELETE })
+            foreach (var method in new[] { HTTPMethod.GET, HTTPMethod.HEAD, HTTPMethod.POST, HTTPMethod.PUT, HTTPMethod.PATCH, HTTPMethod.DELETE })
                 AddHandler(HTTPPath.Root + "{path..}", UnknownPath, method);
 
         }

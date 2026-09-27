@@ -17,7 +17,12 @@
 
 #region Usings
 
+using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
+using cloud.charging.open.protocols.WWCP.Node.Certificates;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
@@ -79,22 +84,22 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                 var current = store.Current;
 
-                if (current?.Certificate is not null)
+                if (current is not null)
                     Log.Info(
-                        $"The {store.Purpose} listener shows '{current.Certificate.Subject}', valid until {current.Certificate.NotAfter:yyyy-MM-dd}.",
-                        "certificates", store.Purpose
+                        $"The {store.Listener} listener shows '{current.Certificate.Subject}', valid until {current.Certificate.NotAfter:yyyy-MM-dd}.",
+                        "certificates", store.Listener
                     );
 
-                else if (store.Purpose == "modbus" || HTTPS)
+                else if (store.Listener == ListenerCertificates.Modbus || HTTPS)
                     Log.Warning(
-                        $"There is no valid {store.Purpose} certificate: every handshake on that listener will fail.",
-                        "certificates", store.Purpose
+                        $"There is no valid {store.Listener} certificate: every handshake on that listener will fail.",
+                        "certificates", store.Listener
                     );
 
-                if (store.Next?.Certificate is not null)
+                if (store.Next is CertificateEntry next)
                     Log.Info(
-                        $"A newer {store.Purpose} certificate takes over on {store.Next.Certificate.NotBefore:yyyy-MM-dd HH:mm}.",
-                        "certificates", store.Purpose
+                        $"A newer {store.Listener} certificate takes over on {next.NotBefore.UtcDateTime:yyyy-MM-dd HH:mm}.",
+                        "certificates", store.Listener
                     );
 
                 // Said out loud rather than left to be discovered as a
@@ -109,11 +114,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                             ? MeterLogLevel.Warning
                             : MeterLogLevel.Info,
                         RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                            ? $"The {store.Purpose} certificate came with {chain.Intermediates.Count} intermediate(s), and Windows will not put them on the wire: " +
+                            ? $"The {store.Listener} certificate came with {chain.Intermediates.Count} intermediate(s), and Windows will not put them on the wire: " +
                                "SChannel builds the chain it sends from this machine's certificate stores and ignores what a program hands it. " +
                                "Install them in the local computer's intermediate CA store, or run this meter on Linux, where they are sent."
-                            : $"The {store.Purpose} listener sends {chain.Intermediates.Count} intermediate(s) with its certificate.",
-                        "certificates", store.Purpose
+                            : $"The {store.Listener} listener sends {chain.Intermediates.Count} intermediate(s) with its certificate.",
+                        "certificates", store.Listener
                     );
 
             }
@@ -148,20 +153,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                     // over: a certificate running out next week with its
                     // successor already in the store is not a problem, it is
                     // the arrangement working.
-                    if (current?.Certificate is not null &&
+                    if (current is not null &&
                         store.Next is null &&
                         current.Certificate.NotAfter - now < CertificateExpiryWarning)
                     {
                         Log.Warning(
-                            $"The {store.Purpose} certificate runs out on {current.Certificate.NotAfter:yyyy-MM-dd} and nothing has been put in to follow it.",
-                            "certificates", store.Purpose
+                            $"The {store.Listener} certificate runs out on {current.Certificate.NotAfter:yyyy-MM-dd} and nothing has been put in to follow it.",
+                            "certificates", store.Listener
                         );
                     }
 
                 }
                 catch (Exception e)
                 {
-                    Log.Warning($"The {store.Purpose} certificates could not be checked: {e.Message}", "certificates", store.Purpose);
+                    Log.Warning($"The {store.Listener} certificates could not be checked: {e.Message}", "certificates", store.Listener);
                 }
 
             }
@@ -235,18 +240,102 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         #endregion
 
-        #region CertificateStoreFor(Purpose)
+        #region ListenerCertificatesFor(Listener)
 
         /// <summary>
-        /// The store a request names, or null when it names neither.
+        /// The certificates of the listener a request names, or null when it
+        /// names neither.
         /// </summary>
-        public CertificateStore? CertificateStoreFor(String? Purpose)
+        public ListenerCertificates? ListenerCertificatesFor(String? Listener)
 
-            => Purpose?.Trim().ToLowerInvariant() switch {
-                   "modbus"  => modbusCertificates,
-                   "web"     => webCertificates,
-                   _         => null
+            => Listener?.Trim().ToLowerInvariant() switch {
+                   ListenerCertificates.Modbus  => modbusCertificates,
+                   ListenerCertificates.Web     => webCertificates,
+                   _                            => null
                };
+
+        #endregion
+
+        #region (private) AdoptAtTheStart(File, Password, Certificate, Kind, Label, Usages)
+
+        /// <summary>
+        /// Put a certificate this meter was started with into the store, unless
+        /// it is there already - in which case whatever somebody did with it
+        /// since stands.
+        /// </summary>
+        /// <remarks>
+        /// From the file rather than from the certificate read out of it: a
+        /// PKCS#12 brings the intermediates above the certificate, and a
+        /// listener that does not send them leaves a client to find them.
+        /// </remarks>
+        private void AdoptAtTheStart(String                File,
+                                     String?               Password,
+                                     X509Certificate2      Certificate,
+                                     CertificateKind       Kind,
+                                     String                Label,
+                                     IEnumerable<String>?  Usages)
+        {
+
+            if (Certificates.ByFingerprint(CertificateEntry.ThumbprintOf(Certificate)) is not null)
+                return;
+
+            if (!Certificates.Import(System.IO.File.ReadAllBytes(File), Kind, Password, Label, Usages, out _, out var error))
+                Log.Warning($"'{Label}' could not be put into the certificate store: {error}", "certificates", "meter");
+
+        }
+
+        #endregion
+
+        #region (private) SignTheWebInterfaceItself()
+
+        /// <summary>
+        /// How long a certificate the web interface signs for itself is good for.
+        /// </summary>
+        public static readonly TimeSpan SelfSignedLifetime = TimeSpan.FromDays(825);
+
+        /// <summary>
+        /// Give the web interface a certificate it signed for itself, so that it
+        /// has something to show before anybody has been to a CA.
+        /// </summary>
+        /// <remarks>
+        /// Named so that it cannot be mistaken for the device certificate in a
+        /// log line: they are two identities, and nobody is to conflate them.
+        /// </remarks>
+        private void SignTheWebInterfaceItself()
+        {
+
+            using var key  = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+
+            var request    = new CertificateRequest($"CN={SerialNumber} web interface", key, HashAlgorithmName.SHA256);
+            var names      = new SubjectAlternativeNameBuilder();
+
+            names.AddDnsName  ("localhost");
+            names.AddDnsName  ($"{SerialNumber}.local");
+            names.AddIpAddress(IPAddress.Loopback);
+            names.AddIpAddress(IPAddress.IPv6Loopback);
+
+            request.CertificateExtensions.Add(names.Build());
+            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
+            request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([ new Oid("1.3.6.1.5.5.7.3.1", "serverAuth") ], false));
+
+            // A few minutes back, because a meter and whoever looks at it do not
+            // always agree about the time to the second.
+            var now                = TimeProvider.GetUtcNow();
+            using var certificate  = request.CreateSelfSigned(now.AddMinutes(-5), now.Add(SelfSignedLifetime));
+
+            if (!Certificates.Import(certificate.Export(X509ContentType.Pkcs12),
+                                     CertificateKind.TLSIdentity,
+                                     null,
+                                     "made by this meter at the first start",
+                                     [ ListenerCertificates.Web ],
+                                     out _,
+                                     out var error))
+            {
+                Log.Warning($"The web interface could not be given a certificate of its own: {error}", "certificates", ListenerCertificates.Web);
+            }
+
+        }
 
         #endregion
 
