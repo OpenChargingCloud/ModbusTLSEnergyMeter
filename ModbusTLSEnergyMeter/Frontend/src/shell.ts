@@ -145,7 +145,7 @@ export function shell(root:     HTMLElement,
                 <div class="sidebar-foot">
                     <div class="who" title="${auth.user?.roleDescription ?? 'Signed in with no role in this meter.'}">
                         <i class="fa-solid fa-user"></i>
-                        <span>${auth.user?.userId ?? '-'}</span>
+                        <span>${auth.user?.username ?? '-'}</span>
                     </div>
                     <div class="roles small muted">${auth.user?.roleTitle ?? 'no role here'}</div>
                     <button type="button" id="sign-out" class="btn small">Sign out</button>

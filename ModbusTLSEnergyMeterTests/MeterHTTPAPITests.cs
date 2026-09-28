@@ -120,11 +120,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var browser = await SignInAsAdministrator();
 
-            var me = await browser.GetJSON("api/v1/me");
+            var me = await browser.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(() => {
 
-                Assert.That(me?["userId"]?.ToString(),        Is.EqualTo(ModbusTLSEnergyMeter.DefaultAdminUser));
+                Assert.That(me?["username"]?.ToString(),      Is.EqualTo(ModbusTLSEnergyMeter.DefaultAdminUser));
                 Assert.That(me?["organization"]?.ToString(),  Is.EqualTo(ModbusTLSEnergyMeter.MeterKind.Organization));
                 Assert.That(me?["role"]?.ToString(),          Is.EqualTo("systemadmin"));
                 Assert.That(me?["roles"]?.Values<String>(),   Is.EqualTo(new[] { "systemadmin" }));
@@ -158,7 +158,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var browser = NewBrowser();
 
-            foreach (var path in new[] { "api/v1/me", "api/v1/status", "api/v1/meter",
+            foreach (var path in new[] { "api/v1/auth/me", "api/v1/status", "api/v1/clock", "api/v1/meter",
                                          "api/v1/configuration", "api/v1/configuration/dns" })
             {
                 Assert.That(await browser.StatusOf(HttpMethod.Get, path),
@@ -185,7 +185,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var browser = await SignIn("gwen", "Correct-Horse-1");
 
-            var me = await browser.GetJSON("api/v1/me");
+            var me = await browser.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(() => {
                 Assert.That(me?["role"]?.ToString(),                Is.EqualTo("guest"));
@@ -269,7 +269,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var browser = await SignIn("nora", "Correct-Horse-3");
 
-            var me = await browser.GetJSON("api/v1/me");
+            var me = await browser.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(async () => {
 
@@ -296,18 +296,26 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         /// <summary>
         /// An unknown path below /api answers as this API, not as the accounts
-        /// at "/".
+        /// at "/" - and the clock's old path is one of them now: the clock is
+        /// at /api/v1/clock on every node.
         /// </summary>
         [Test]
         public async Task AnUnknownAPIPath_IsAJSON404()
         {
 
-            using var browser  = await SignInAsAdministrator();
-            var (status, json) = await browser.Call(HttpMethod.Get, "api/v1/nonsense");
+            using var browser        = await SignInAsAdministrator();
+            var (status,   json)     = await browser.Call(HttpMethod.Get, "api/v1/nonsense");
+            var (oldClock, oldJSON)  = await browser.Call(HttpMethod.Get, "api/v1/configuration/time");
+            var (clock,    clockJSON) = await browser.Call(HttpMethod.Get, "api/v1/clock");
 
             Assert.Multiple(() => {
-                Assert.That(status,                     Is.EqualTo(HttpStatusCode.NotFound));
-                Assert.That(json?["error"]?.ToString(), Does.Contain("nonsense"));
+                Assert.That(status,                         Is.EqualTo(HttpStatusCode.NotFound));
+                Assert.That(json?["error"]?.ToString(),     Is.EqualTo("Unknown API path"));
+                Assert.That(json?["path"]?.ToString(),      Does.EndWith("/api/v1/nonsense"));
+                Assert.That(oldClock,                       Is.EqualTo(HttpStatusCode.NotFound));
+                Assert.That(oldJSON?["error"]?.ToString(),  Is.EqualTo("Unknown API path"));
+                Assert.That(clock,                          Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(clockJSON?["now"],              Is.Not.Null);
             });
 
         }
@@ -342,7 +350,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(json?["steps"]?[0]?["text"]?.ToString(),   Is.EqualTo("'not a host at all' is neither a name nor an address that can be asked."));
                 Assert.That(json?["steps"]?[0]?["level"]?.ToString(),  Is.EqualTo("error"));
 
-                Assert.That(said.Select(entry => entry.Message),       Is.EqualTo(new[] { $"'{ModbusTLSEnergyMeter.DefaultAdminUser}' asked this meter to test the time server 'not a host at all'." }));
+                Assert.That(said.Select(entry => entry.Message),       Is.EqualTo(new[] { $"'{ModbusTLSEnergyMeter.DefaultAdminUser}' asked this energy meter to test the time server 'not a host at all'." }));
                 Assert.That(said.Select(entry => entry.Tags),          Has.All.EquivalentTo(new[] { "nts", "test", "web" }));
 
             });
@@ -431,10 +439,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             // would pass every assertion above.
             using var rory = await SignIn("rory", password!);
 
-            var me = await rory.GetJSON("api/v1/me");
+            var me = await rory.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(() => {
-                Assert.That(me?["userId"]?.ToString(),              Is.EqualTo("rory"));
+                Assert.That(me?["username"]?.ToString(),            Is.EqualTo("rory"));
                 Assert.That(me?["role"]?.ToString(),                Is.EqualTo("viewer"));
                 Assert.That(me?["permissions"]?.Values<String>(),   Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read" }));
             });
@@ -583,7 +591,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             // And the account is still there, still an administrator: a refusal
             // that half-happened would be worse than either outcome.
-            var me = await administrator.GetJSON("api/v1/me");
+            var me = await administrator.GetJSON("api/v1/auth/me");
 
             Assert.That(me?["role"]?.ToString(), Is.EqualTo("systemadmin"));
 
@@ -616,7 +624,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             });
 
             // The session of the account that is gone goes with it.
-            Assert.That(await administrator.StatusOf(HttpMethod.Get, "api/v1/me"),
+            Assert.That(await administrator.StatusOf(HttpMethod.Get, "api/v1/auth/me"),
                         Is.EqualTo(HttpStatusCode.Unauthorized));
 
             var accounts = await nora.GetJSON("api/v1/accounts");
@@ -660,7 +668,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(account?["roleTitle"]?.ToString(),  Is.EqualTo("Guest"));
             });
 
-            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/me"),
+            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/auth/me"),
                         Is.EqualTo(HttpStatusCode.Unauthorized),
                         "and the old session is gone rather than quietly weaker");
 
@@ -668,7 +676,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             // one they were given, not the strongest of everything they ever held.
             using var again = await SignIn("rory", password);
 
-            var me = await again.GetJSON("api/v1/me");
+            var me = await again.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(() => {
                 Assert.That(me?["role"]?.ToString(),              Is.EqualTo("guest"));
@@ -703,7 +711,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             // And the password it refused to change still works.
             using var again = await SignInAsAdministrator();
 
-            Assert.That(await again.StatusOf(HttpMethod.Get, "api/v1/me"), Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(await again.StatusOf(HttpMethod.Get, "api/v1/auth/me"), Is.EqualTo(HttpStatusCode.OK));
 
         }
 
@@ -736,13 +744,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(newPassword,  Is.Not.Null.And.Not.Empty);
             });
 
-            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/me"),
+            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/auth/me"),
                         Is.EqualTo(HttpStatusCode.Unauthorized),
                         "the session that knew the old password is gone");
 
             using var afterwards = await SignIn("rory", newPassword!);
 
-            Assert.That((await afterwards.GetJSON("api/v1/me"))?["userId"]?.ToString(), Is.EqualTo("rory"));
+            Assert.That((await afterwards.GetJSON("api/v1/auth/me"))?["username"]?.ToString(), Is.EqualTo("rory"));
 
         }
 
@@ -814,7 +822,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var afterwards = await SignIn("rory", "Correct-Horse-9");
 
-            Assert.That((await afterwards.GetJSON("api/v1/me"))?["role"]?.ToString(), Is.EqualTo("viewer"));
+            Assert.That((await afterwards.GetJSON("api/v1/auth/me"))?["role"]?.ToString(), Is.EqualTo("viewer"));
 
         }
 
@@ -876,7 +884,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             await CreateUserFromBeforeTheGroupsAsync("olga", "Correct-Horse-4", User2OrganizationEdgeLabel.IsAdminReadOnly);
 
             using (var before = await SignIn("olga", "Correct-Horse-4"))
-                Assert.That((await before.GetJSON("api/v1/me"))?["permissions"]?.Values<String>(),
+                Assert.That((await before.GetJSON("api/v1/auth/me"))?["permissions"]?.Values<String>(),
                             Is.Empty,
                             "a role in the organization grants nothing by itself");
 
@@ -884,7 +892,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var after = await SignIn("olga", "Correct-Horse-4");
 
-            var me = await after.GetJSON("api/v1/me");
+            var me = await after.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(() => {
                 Assert.That(me?["role"]?.ToString(),               Is.EqualTo("auditor"));
@@ -917,7 +925,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var after = await SignIn("olga", "Correct-Horse-4");
 
-            var me = await after.GetJSON("api/v1/me");
+            var me = await after.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(() => {
                 Assert.That(me?["roles"]?.Values<String>(),        Is.EqualTo(new[] { "guest" }),
@@ -965,7 +973,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var administrator = await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, password);
 
-            Assert.That((await administrator.GetJSON("api/v1/me"))?["role"]?.ToString(), Is.EqualTo("systemadmin"));
+            Assert.That((await administrator.GetJSON("api/v1/auth/me"))?["role"]?.ToString(), Is.EqualTo("systemadmin"));
 
         }
 
@@ -1003,7 +1011,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.That(status, Is.EqualTo(HttpStatusCode.Created), $"{created}");
 
             using (var rory = await SignIn("rory", password))
-                Assert.That((await rory.GetJSON("api/v1/me"))?["roles"]?.Values<String>(),
+                Assert.That((await rory.GetJSON("api/v1/auth/me"))?["roles"]?.Values<String>(),
                             Is.EqualTo(new[] { "guest" }),
                             "the account made again holds the role of the one removed");
 
@@ -1011,7 +1019,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var afterwards = await SignIn("rory", password);
 
-            Assert.That((await afterwards.GetJSON("api/v1/me"))?["roles"]?.Values<String>(),
+            Assert.That((await afterwards.GetJSON("api/v1/auth/me"))?["roles"]?.Values<String>(),
                         Is.EqualTo(new[] { "guest" }),
                         "and after a restart");
 
@@ -1050,7 +1058,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.That(status, Is.EqualTo(HttpStatusCode.Created), $"{again}");
 
-            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/me"),
+            Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/auth/me"),
                         Is.EqualTo(HttpStatusCode.Unauthorized),
                         "a session of the account removed signs in the one made again");
 
@@ -1059,11 +1067,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var administratorAfterwards = NewBrowser(administrator.Cookies);
             using var roryAfterwards          = NewBrowser(rory.Cookies);
 
-            Assert.That(await administratorAfterwards.StatusOf(HttpMethod.Get, "api/v1/me"),
+            Assert.That(await administratorAfterwards.StatusOf(HttpMethod.Get, "api/v1/auth/me"),
                         Is.EqualTo(HttpStatusCode.OK),
                         "a session outlives a restart - without that, the next check proves nothing");
 
-            Assert.That(await roryAfterwards.StatusOf(HttpMethod.Get, "api/v1/me"),
+            Assert.That(await roryAfterwards.StatusOf(HttpMethod.Get, "api/v1/auth/me"),
                         Is.EqualTo(HttpStatusCode.Unauthorized),
                         "and after a restart");
 
@@ -1090,7 +1098,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var after = await SignIn("olga", "Correct-Horse-4");
 
-            Assert.That((await after.GetJSON("api/v1/me"))?["roles"]?.Values<String>(),
+            Assert.That((await after.GetJSON("api/v1/auth/me"))?["roles"]?.Values<String>(),
                         Is.EqualTo(new[] { "systemadmin" }));
 
         }
@@ -1117,7 +1125,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var browser = await SignIn("gwen", "Correct-Horse-1");
 
-            var me = await browser.GetJSON("api/v1/me");
+            var me = await browser.GetJSON("api/v1/auth/me");
 
             Assert.Multiple(() => {
                 Assert.That(me?["role"]?.ToString(),               Is.EqualTo("auditor"));
@@ -1135,6 +1143,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// <summary>
         /// A 403 names the roles that may do what was refused, so that whoever
         /// reads it knows whom to ask - and not only that the answer was no.
+        /// What was refused, and to whom, is in the log.
         /// </summary>
         [Test]
         public async Task ARefusal_SaysWhichRolesMay()
@@ -1144,21 +1153,22 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var browser = await SignIn("gwen", "Correct-Horse-1");
 
+            var before                 = meter!.Log.LastId;
             var (changing, notChanged) = await browser.Call(HttpMethod.Put, "api/v1/configuration/dns", new { enabled = false });
             var (reading,  notRead)    = await browser.Call(HttpMethod.Get, "api/v1/configuration");
+            var refusals               = meter.Log.Recent(50, before, "auth").Select(entry => entry.Message).ToArray();
 
             Assert.Multiple(() => {
 
-                Assert.That(changing,                                     Is.EqualTo(HttpStatusCode.Forbidden));
-                Assert.That(notChanged?["role"]?.ToString(),              Is.EqualTo("guest"));
-                Assert.That(notChanged?["required"]?.ToString(),          Is.EqualTo("dns:edit"));
-                Assert.That(notChanged?["granted"]?.Values<String>(),     Is.EqualTo(new[] { "meter:read" }));
-                Assert.That(notChanged?["rolesThatMay"]?.Values<String>(), Is.EqualTo(new[] { "systemadmin" }));
+                Assert.That(changing,                          Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(notChanged?["error"]?.ToString(),  Is.EqualTo("This needs the systemadmin role."));
 
                 // In the node's order, the viewer first.
-                Assert.That(reading,                                      Is.EqualTo(HttpStatusCode.Forbidden));
-                Assert.That(notRead?["required"]?.ToString(),             Is.EqualTo("configuration:read"));
-                Assert.That(notRead?["rolesThatMay"]?.Values<String>(),    Is.EqualTo(new[] { "viewer", "auditor", "systemadmin" }));
+                Assert.That(reading,                           Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(notRead?["error"]?.ToString(),     Is.EqualTo("This needs the viewer or auditor or systemadmin role."));
+
+                Assert.That(refusals,                          Has.Some.EqualTo("'gwen' was refused dns:edit on PUT /api/v1/configuration/dns; signed in as guest."));
+                Assert.That(refusals,                          Has.Some.EqualTo("'gwen' was refused configuration:read on GET /api/v1/configuration; signed in as guest."));
 
             });
 
@@ -1197,7 +1207,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var tess = await SignIn("tess", created?["password"]?.ToString()!);
 
-            var me              = await tess.GetJSON("api/v1/me");
+            var me              = await tess.GetJSON("api/v1/auth/me");
             var (_, roleTable)  = await tess.Call(HttpMethod.Get, "api/v1/accounts/roles");
             var timekeeper      = roleTable?["roles"]?.FirstOrDefault(role => role["role"]?.ToString() == "timekeeper");
 
@@ -1308,7 +1318,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// <summary>
         /// The key is made in the meter, the request goes to a CA, and what comes
         /// back becomes an identity of the listener it was asked for - shown from
-        /// the moment it is the newest valid one, without a restart.
+        /// the moment it is the newest valid one, without a restart, and written
+        /// into the log book as the store takes it rather than at the next
+        /// minute's check.
         /// </summary>
         /// <remarks>
         /// Asked without a key type: the meter's own default, which it used to
@@ -1350,8 +1362,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var issued      = signing.Create(issuer, validFrom, validFrom.AddDays(90), [ 0x01, .. RandomNumberGenerator.GetBytes(15) ]);
 
+            var beforeAnswer        = meter!.Log.LastId;
+
             var (answered, answer)  = await administrator.Call(HttpMethod.Put, $"api/v1/certificates/requests/{id}",
                                                                new { pem = issued.ExportCertificatePem() + "\n" + issuer.ExportCertificatePem() });
+
+            // Before anything asks what is shown: what is said here was said
+            // because the store changed.
+            var said              = meter.Log.Recent(50, beforeAnswer, "certificates").Select(entry => entry.Message).ToArray();
 
             var (_, after)        = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
             var (_, requests)     = await administrator.Call(HttpMethod.Get, "api/v1/certificates/requests");
@@ -1373,6 +1391,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(after?["shown"]?["modbus"]?["current"]?.ToString(),                          Is.EqualTo(answer?["certificate"]?["id"]?.ToString()),
                             "the newer one is shown from now on");
+
+                Assert.That(said,                                                                        Has.Some.Match("^Modbus/TLS clients are now shown '[^']*CN=meter-test-001[^']*'"),
+                            $"and the log book says so as the store takes it - it said: {String.Join(" | ", said)}");
 
                 Assert.That(requests?["requests"]?.First(one => one["id"]?.ToString() == id)?["state"]?.ToString(),
                             Is.EqualTo("answered"));

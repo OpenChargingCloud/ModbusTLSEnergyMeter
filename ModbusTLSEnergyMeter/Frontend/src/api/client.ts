@@ -222,9 +222,9 @@ export interface SessionStopped {
 }
 
 
-/** Who is signed in to the web interface. */
+/** Who is signed in to the web interface: every node's answer, and what a meter adds. */
 export interface Me {
-    userId:       string;
+    username:     string;
     name:         string | null;
     organization: string;
     /** Their strongest role on this meter, or null when they have none. */
@@ -933,7 +933,7 @@ export const api = {
     eventsURL: `${config.apiBase}/events`,
 
     auth: {
-        me:      ()                                 => meterAPI   <Me>  ('GET',  '/me'),
+        me:      ()                                 => meterAPI   <Me>  ('GET',  '/auth/me'),
         login:   (login: string, password: string)  => accountsAPI<void>('POST', '/auth/login', { login, password }),
         logout:  ()                                 => accountsAPI<void>('POST', '/auth/logout'),
 
@@ -964,8 +964,12 @@ export const api = {
     nts: {
         get:   ()                   => meterAPI<NTSConfiguration>('GET',  '/configuration/nts'),
         save:  (update: NTSUpdate)  => meterAPI<NTSConfiguration>('PUT',  '/configuration/nts', update),
-        /** Every server switched on, asked the way the clock check asks them, with every step in the log. */
-        sync:  ()                   => meterAPI<NTSSyncResult>   ('POST', '/configuration/nts/sync', {}),
+        /**
+         * Every server switched on, asked the way the clock check asks them,
+         * with every step in the log. The node answers with the whole NTS
+         * configuration, which the exchange has moved, and the result in it.
+         */
+        sync:  async ()             => (await meterAPI<NTSConfiguration & { result: NTSSyncResult }>('POST', '/configuration/nts/sync', {})).result,
         /**
          * Ask one time server everything: the name, the key exchange with its
          * certificate, the authenticated NTP request, each one written down as
@@ -977,7 +981,8 @@ export const api = {
         test:  (host?: string)      => meterAPI<TimeServerTest>  ('POST', '/configuration/nts/test', { host })
     },
 
-    clock:  () => meterAPI<Clock>('GET', '/configuration/time'),
+    /** What time it is here, and what that is worth - at the same path on every node. */
+    clock:  () => meterAPI<Clock>('GET', '/clock'),
 
     /**
      * The node's certificate store: what this meter believes, what its two

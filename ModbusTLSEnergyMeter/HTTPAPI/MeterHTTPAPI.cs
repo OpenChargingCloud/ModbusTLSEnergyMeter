@@ -17,13 +17,8 @@
 
 #region Usings
 
-using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Text;
 
-using Microsoft.Extensions.Logging;
-
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Illias;
@@ -40,22 +35,26 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 {
 
     /// <summary>
-    /// The JSON API of this energy meter, registered at "/api": what the meter
-    /// is measuring, how it is configured, and the few things about it that can
-    /// be changed from a browser.
+    /// The JSON API of this energy meter, registered at "/api": what every
+    /// node has - see <see cref="NodeHTTPAPI"/> - and what only a meter has on
+    /// top: what it is measuring, its signed values and charging sessions, its
+    /// signing keys, its accounts, its certificate signing requests, and its
+    /// log book to be checked.
     /// </summary>
     /// <remarks>
-    /// It lives in its own HTTPAPI below the account API so that an unknown
-    /// /api path answers with a JSON 404 rather than falling through to the
-    /// accounts at "/" - Hermod dispatches a request to the most specific
-    /// HTTPAPI first.
+    /// Signing out and who is signed in, the status and the clock, the
+    /// configuration, name resolution and the time servers, the certificate
+    /// store, the log and the event stream are the node's, as they are the
+    /// vehicle's and the local controller's; this class used to have its own
+    /// copy of all of them. What is left here is registered on top: see
+    /// MeterHTTPAPI.Accounts.cs, MeterHTTPAPI.Certificates.cs and
+    /// MeterHTTPAPI.SignedValues.cs.
     ///
     /// Signing in is not here: that is the node's <see cref="HTTPExtAPI"/>'s
     /// "/ext/auth/login", and the session cookie it sets is what every resource
-    /// below is read with. This API only ever asks who the cookie belongs to
-    /// and what the groups of that person's roles allow.
+    /// below is read with.
     /// </remarks>
-    public partial class MeterHTTPAPI : org.GraphDefined.Vanaheimr.Hermod.HTTP.HTTPAPI
+    public partial class MeterHTTPAPI : NodeHTTPAPI
     {
 
         #region Data
@@ -63,7 +62,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// <summary>
         /// The default root path of this API.
         /// </summary>
-        public static readonly HTTPPath  DefaultAPIPath      = HTTPPath.Parse("/api");
+        public static readonly HTTPPath  DefaultAPIPath          = HTTPPath.Parse("/api");
 
         /// <summary>
         /// What the files of the web interface are called as resources of this
@@ -72,70 +71,24 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// </summary>
         public const           String    FrontendResourcePrefix  = "cloud.charging.open.EnergyMeters.ModbusTLS.HTTPRoot.";
 
-        /// <summary>
-        /// The name of the Server-Sent Events stream.
-        /// </summary>
-        public const           String    EventSourceName     = "events";
-
-        /// <summary>
-        /// The sub-event every log entry is published as.
-        /// </summary>
-        public const           String    LogEventName        = "log";
-
-        /// <summary>
-        /// How long an event stream stays silent before a comment is sent down
-        /// it instead.
-        /// </summary>
-        /// <remarks>
-        /// Silence is how an event stream waits, and a proxy in front of the
-        /// meter cannot tell it from a meter that has gone: nginx gives up on an
-        /// upstream that has sent nothing for 60 seconds. Fifteen seconds is
-        /// what the HTML standard suggests for exactly this, and a browser skips
-        /// a comment.
-        /// </remarks>
-        public static readonly TimeSpan  DefaultEventStreamHeartbeat = TimeSpan.FromSeconds(15);
-
-        /// <summary>
-        /// The most entries one request for the log may ask for.
-        /// </summary>
-        public const           Int32     MaxLogPageSize      = 2_000;
-
-        /// <summary>
-        /// How many it gets when it does not say.
-        /// </summary>
-        public const           Int32     DefaultLogPageSize  = 500;
-
-        private readonly ModbusTLSEnergyMeter     meter;
-        private readonly HTTPExtAPI               accounts;
-        private readonly ILogger                  logger;
-        private readonly DateTimeOffset           startedAt;
-
-        /// <summary>
-        /// Ends every open event stream when this meter stops, which the
-        /// request's own token knows nothing about.
-        /// </summary>
-        private readonly CancellationTokenSource  shutdown = new ();
+        private readonly ModbusTLSEnergyMeter  meter;
+        private readonly DateTimeOffset        startedAt;
 
         #endregion
 
         #region Properties
 
         /// <summary>
-        /// The version reported by the status resource.
+        /// The meter this API speaks for.
         /// </summary>
-        public String                 Version   { get; }
+        public ModbusTLSEnergyMeter  Meter
+            => meter;
 
         /// <summary>
-        /// The stream every browser hangs on.
+        /// Who is signed in, and what they belong to: the node's accounts.
         /// </summary>
-        public IHTTPEventSource<JObject>  Events    { get; }
-
-        /// <summary>
-        /// How long an event stream stays silent before a comment is sent down
-        /// it; <see cref="DefaultEventStreamHeartbeat"/> unless set, and never
-        /// when set to zero.
-        /// </summary>
-        public TimeSpan                   EventStreamHeartbeat { get; set; } = DefaultEventStreamHeartbeat;
+        private HTTPExtAPI accounts
+            => ExtAPI;
 
         #endregion
 
@@ -147,36 +100,21 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// <param name="Meter">The meter this API speaks for.</param>
         /// <param name="Accounts">Who is signed in, and what they belong to.</param>
         /// <param name="APIPath">The root path of the API, "/api" by default.</param>
-        /// <param name="Logger">Where this API writes what was done through it.</param>
         public MeterHTTPAPI(ModbusTLSEnergyMeter  Meter,
                             HTTPExtAPI            Accounts,
-                            HTTPPath?             APIPath   = null,
-                            ILogger?              Logger    = null)
+                            HTTPPath?             APIPath   = null)
 
             : base(Meter.HTTPServer,
-                   RootPath:     APIPath ?? DefaultAPIPath,
-                   Description:  I18NString.Create("The JSON API of this energy meter"))
+                   Meter,
+                   Accounts,
+                   Meter.Log,
+                   APIPath ?? DefaultAPIPath,
+                   Meter.Version)
 
         {
 
             this.meter      = Meter;
-            this.accounts   = Accounts;
-            this.logger     = Logger ?? Meter.Logger;
             this.startedAt  = Meter.TimeProvider.GetUtcNow();
-            this.Version    = Meter.Version;
-
-            // Hermod caches the last events and replays them to a new client.
-            // The browser ignores everything older than the snapshot it loaded,
-            // so a replay costs nothing but bytes; what it buys is that a
-            // browser which reconnects after a hiccup gets what it missed.
-            this.Events     = this.AddJSONEventSource(
-                                  HTTPEventSource_Id.Parse(EventSourceName),
-                                  MaxNumberOfCachedEvents:  500,
-                                  RetryInterval:            TimeSpan.FromSeconds(2),
-                                  EnableLogging:            false
-                              );
-
-            Meter.Log.OnLogged += entry => Publish(LogEventName, entry.ToJSON());
 
             RegisterURLTemplates();
 
@@ -187,140 +125,102 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #region (private) RegisterURLTemplates()
 
+        /// <summary>
+        /// What only a meter has, on top of what every node has.
+        /// </summary>
         private void RegisterURLTemplates()
         {
 
-            AddHandler(HTTPPath.Root + "v1/me",                        Me,                    HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/status",                    GetStatus,             HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/meter",                      GetMeter,            HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/meter/registers",            GetRegisters,        HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/meter/mode",                 PutMeterMode,        HTTPMethod.PUT);
+            AddHandler(HTTPPath.Root + "v1/meter/energy/reset",         PostResetEnergy,     HTTPMethod.POST);
 
-            AddHandler(HTTPPath.Root + "v1/meter",                     GetMeter,              HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/meter/registers",           GetRegisters,          HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/meter/mode",                PutMeterMode,          HTTPMethod.PUT);
-            AddHandler(HTTPPath.Root + "v1/meter/energy/reset",        PostResetEnergy,       HTTPMethod.POST);
-
-            AddHandler(HTTPPath.Root + "v1/configuration",             GetConfiguration,      HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/configuration/dns",         GetDNSConfiguration,   HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/configuration/dns",         PutDNSConfiguration,   HTTPMethod.PUT);
-            AddHandler(HTTPPath.Root + "v1/configuration/nts",         GetNTSConfiguration,   HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/configuration/nts",         PutNTSConfiguration,   HTTPMethod.PUT);
-            AddHandler(HTTPPath.Root + "v1/configuration/nts/sync",    PostNTSSync,           HTTPMethod.POST);
-            AddHandler(HTTPPath.Root + "v1/configuration/nts/test",    PostNTSTest,           HTTPMethod.POST);
-            AddHandler(HTTPPath.Root + "v1/configuration/time",        GetClock,              HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/configuration/certificates", GetCertificates,      HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/configuration/certificates", GetCertificates,     HTTPMethod.GET);
 
             RegisterCertificateTemplates();
             RegisterAccountTemplates();
             RegisterSignedValueTemplates();
 
-            AddHandler(HTTPPath.Root + "v1/logs",                      GetLogs,               HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/logs/verify",               GetLogVerification,    HTTPMethod.GET);
-
-            AddHandler(HTTPMethod.GET,
-                       HTTPPath.Root + "v1/events",
-                       HTTPContentType.Text.EVENTSTREAM,
-                       StreamEvents);
-
-            // Everything else below /api answers with a JSON 404 rather than
-            // falling through to the account API at "/".
-            foreach (var method in new[] { HTTPMethod.GET, HTTPMethod.HEAD, HTTPMethod.POST, HTTPMethod.PUT, HTTPMethod.PATCH, HTTPMethod.DELETE })
-                AddHandler(HTTPPath.Root + "{path..}", UnknownPath, method);
+            AddHandler(HTTPPath.Root + "v1/logs/verify",                GetLogVerification,  HTTPMethod.GET);
 
         }
 
         #endregion
 
-
-        #region (private) Me              (Request)
+        #region (protected override) ProductMe(User) / ProductStatus() / ToReadTheClock / ToReadTheLog
 
         /// <summary>
-        /// GET /api/v1/me: who is signed in, and what they may do here.
+        /// What a meter says about who is signed in beyond every node's: their
+        /// name and organization, and their strongest role here - as this meter
+        /// spells it and as a person would say it, with what it grants.
         /// </summary>
         /// <remarks>
-        /// The permissions travel to the browser so that a page can grey out
-        /// what this person may not do, rather than offering it and letting
-        /// them find out by being refused. They are a copy of what this meter
-        /// enforces and not the enforcement: every request is checked again on
-        /// arrival, so a browser that edits this list gains nothing but a
-        /// button that answers 403.
-        ///
         /// The role travels twice: once as this meter spells it and once as a
         /// person would say it. Every page that tells somebody what they may
         /// not do here names their role in the same breath, and "systemadmin"
         /// is not a thing anybody says. Sending the readable form with the role
         /// it belongs to is one field; the alternative is every page fetching
-        /// the role table to translate one word.
+        /// the role table to translate one word. Null for somebody who holds no
+        /// role here, so that a page can fall back to its own wording.
         /// </remarks>
-        private Task<HTTPResponse> Me(HTTPRequest Request)
+        protected override IEnumerable<JProperty> ProductMe(IUser User)
         {
 
-            if (!TryGetUser(Request, out var user, out var unauthorized))
-                return Task.FromResult(unauthorized);
+            var role = MeterAccess.Strongest(meter.Access, meter.RolesOf(User));
 
-            var roles       = meter.RolesOf(user);
-            var role        = MeterAccess.Strongest(meter.Access, roles);
-
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK,
-                           new JObject(
-                               new JProperty("userId",           user.Id.ToString()),
-                               new JProperty("name",             user.Name.FirstText()),
-                               new JProperty("organization",     meter.Kind.Organization),
-                               new JProperty("role",             role?.Name),
-                               new JProperty("roles",            new JArray(roles.Select(one => one.Name))),
-                               new JProperty("roleTitle",        role is not null ? MeterAccess.TitleOf(role)       : null),
-                               new JProperty("roleDescription",  role is not null ? MeterAccess.DescriptionOf(role) : null),
-
-                               // Spelled out resource by resource, so that "*" never
-                               // reaches a page: "meter:read", "nts:run", ...
-                               new JProperty("permissions",      new JArray(meter.PermissionsOf(user).Select(permission => permission.ToString())))
-                           ))
-                   );
+            yield return new JProperty("name",             User.Name.FirstText());
+            yield return new JProperty("organization",     meter.Kind.Organization);
+            yield return new JProperty("role",             role?.Name);
+            yield return new JProperty("roleTitle",        role is not null ? MeterAccess.TitleOf(role)       : null);
+            yield return new JProperty("roleDescription",  role is not null ? MeterAccess.DescriptionOf(role) : null);
 
         }
-
-        #endregion
-
-        #region (private) GetStatus       (Request)
 
         /// <summary>
-        /// GET /api/v1/status: what this meter is and how long it has been it.
+        /// What the status of a meter says beyond every node's: which meter it
+        /// is, where Modbus/TLS listens, and where the web interface is.
         /// </summary>
-        private Task<HTTPResponse> GetStatus(HTTPRequest Request)
+        protected override IEnumerable<JProperty> ProductStatus()
         {
 
-            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
-                return Task.FromResult(refused);
+            yield return new JProperty("serialNumber",  meter.SerialNumber);
+            yield return new JProperty("device",        meter.Device.DisplayName);
 
-            var now = meter.TimeProvider.GetUtcNow();
+            yield return new JProperty("modbus",        new JObject(
+                             new JProperty("address",        meter.ListenAddress.ToString()),
+                             new JProperty("port",           meter.ListenPort),
+                             new JProperty("running",        meter.IsRunning),
+                             new JProperty("baseAddress",    meter.Device.BaseAddress),
+                             new JProperty("registerCount",  meter.Device.RegisterCount)
+                         ));
 
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK,
-                           new JObject(
-
-                               new JProperty("version",       Version),
-                               new JProperty("serialNumber",  meter.SerialNumber),
-                               new JProperty("device",        meter.Device.DisplayName),
-                               new JProperty("startedAt",     startedAt.ToString("o")),
-                               new JProperty("uptime_s",      (now - startedAt).TotalSeconds),
-
-                               new JProperty("modbus",        new JObject(
-                                   new JProperty("address",        meter.ListenAddress.ToString()),
-                                   new JProperty("port",           meter.ListenPort),
-                                   new JProperty("running",        meter.IsRunning),
-                                   new JProperty("baseAddress",    meter.Device.BaseAddress),
-                                   new JProperty("registerCount",  meter.Device.RegisterCount)
-                               )),
-
-                               new JProperty("web",           new JObject(
-                                   new JProperty("url",            meter.WebInterfaceURL.ToString())
-                               ))
-
-                           ))
-                   );
+            yield return new JProperty("web",           new JObject(
+                             new JProperty("url",            meter.WebInterfaceURL.ToString())
+                         ));
 
         }
 
+        /// <summary>
+        /// Reading the clock needs the reading permission of the time servers,
+        /// as it did at its old path: what time it is here is what every
+        /// reading is stamped with, and whether that is worth anything is the
+        /// time servers' business.
+        /// </summary>
+        protected override Permission? ToReadTheClock
+            => Permission.Read(NodeResources.NTS);
+
+        /// <summary>
+        /// The log and its event stream need the meter's own "log:read": the
+        /// log holds the addresses peers connect from and every certificate
+        /// that was turned away - which is more than somebody allowed to watch
+        /// a meter's readings was given.
+        /// </summary>
+        protected override Permission? ToReadTheLog
+            => Permission.Read(MeterAccess.Log);
+
         #endregion
+
 
         #region (private) GetMeter        (Request)
 
@@ -487,193 +387,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #endregion
 
 
-        #region (private) GetConfiguration(Request)
-
-        /// <summary>
-        /// GET /api/v1/configuration: every section at once, for a page that
-        /// would otherwise ask three times.
-        /// </summary>
-        private Task<HTTPResponse> GetConfiguration(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(NodeResources.Configuration), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK,
-                           new JObject(
-                               new JProperty("file",  meter.ConfigFile.Path),
-                               new JProperty("dns",   meter.DNSConfigurationJSON()),
-                               new JProperty("nts",   meter.NTSConfigurationJSON()),
-                               new JProperty("time",  meter.ClockJSON())
-                           ))
-                   );
-
-        }
-
-        #endregion
-
-        #region (private) GetDNSConfiguration(Request) / PutDNSConfiguration(Request)
-
-        /// <summary>
-        /// GET /api/v1/configuration/dns: how this meter resolves names.
-        /// </summary>
-        private Task<HTTPResponse> GetDNSConfiguration(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(NodeResources.DNS), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.DNSConfigurationJSON()));
-
-        }
-
-        /// <summary>
-        /// PUT /api/v1/configuration/dns: change what may be changed about it.
-        /// Answers with the whole section as it now stands, so that the page
-        /// does not have to ask again to find out what it got.
-        /// </summary>
-        private Task<HTTPResponse> PutDNSConfiguration(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Edit(NodeResources.DNS), true, out var user, out var refused))
-                return Task.FromResult(refused);
-
-            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
-                return Task.FromResult(errorResponse);
-
-            if (!meter.TryUpdateDNSConfiguration(json, out var error))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
-
-            meter.Log.Notice($"'{user.Id}' changed the name resolution of this meter.", "dns", "web");
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.DNSConfigurationJSON()));
-
-        }
-
-        #endregion
-
-        #region (private) GetNTSConfiguration(Request) / PutNTSConfiguration(Request) / PostNTSSync(Request) / PostNTSTest(Request)
-
-        /// <summary>
-        /// GET /api/v1/configuration/nts: where this meter reads the time.
-        /// </summary>
-        private Task<HTTPResponse> GetNTSConfiguration(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(NodeResources.NTS), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.NTSConfigurationJSON()));
-
-        }
-
-        /// <summary>
-        /// PUT /api/v1/configuration/nts: change the time servers or the rules
-        /// they are held to. What is sent is laid over what is in effect, and
-        /// the answer is the whole group as it then stands.
-        /// </summary>
-        private Task<HTTPResponse> PutNTSConfiguration(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Edit(NodeResources.NTS), true, out var user, out var refused))
-                return Task.FromResult(refused);
-
-            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
-                return Task.FromResult(errorResponse);
-
-            if (!meter.TryUpdateNTSConfiguration(json, out var error))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
-
-            meter.Log.Notice($"'{user.Id}' changed the time source of this meter.", "nts", "web");
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.NTSConfigurationJSON()));
-
-        }
-
-        /// <summary>
-        /// POST /api/v1/configuration/nts/sync: check the clock now, and say
-        /// what the time server answered.
-        /// </summary>
-        /// <remarks>
-        /// A POST although it changes nothing here, because it makes this meter
-        /// send traffic to a host somebody named - which is not something to
-        /// leave sitting in a URL that a browser may repeat, prefetch or put in
-        /// a history.
-        /// </remarks>
-        private async Task<HTTPResponse> PostNTSSync(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Run(NodeResources.NTS), true, out var user, out var refused))
-                return refused;
-
-            meter.Log.Notice($"'{user.Id}' asked this meter to check its clock.", "nts", "web");
-
-            return JSONResponse(
-                       Request,
-                       HTTPStatusCode.OK,
-                       await meter.SyncTimeAsync(Request.CancellationToken)
-                   );
-
-        }
-
-        /// <summary>
-        /// POST /api/v1/configuration/nts/test with an optional {"host"}: ask
-        /// one time server everything there is to ask, and say where it got
-        /// to.
-        /// </summary>
-        /// <remarks>
-        /// The host names the server to ask; left out, it is the single
-        /// client's. The page sends the host of the row whose Test was pressed,
-        /// as it is read, and the command line what was typed after syncNTS -
-        /// so that the line this writes into the log is the same line from
-        /// both, apart from who asked.
-        ///
-        /// A POST and at the diagnostics permission, for the same reasons as
-        /// the sync beside it. Like the sync, it does not step the clock.
-        /// </remarks>
-        private async Task<HTTPResponse> PostNTSTest(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Run(NodeResources.NTS), true, out var user, out var refused))
-                return refused;
-
-            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
-                return errorResponse;
-
-            var host = json.Value<String>("host")?.Trim();
-
-            meter.Log.Notice($"'{user.Id}' asked this meter to test {(host is null ? "its time server" : $"the time server '{host}'")}.",
-                             "nts", "test", "web");
-
-            return JSONResponse(
-                       Request,
-                       HTTPStatusCode.OK,
-                       await meter.TestTimeServerAsync(host, Request.CancellationToken)
-                   );
-
-        }
-
-        #endregion
-
-        #region (private) GetClock        (Request)
-
-        /// <summary>
-        /// GET /api/v1/configuration/time: what time it is here, and what that
-        /// is worth.
-        /// </summary>
-        private Task<HTTPResponse> GetClock(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(NodeResources.NTS), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.ClockJSON()));
-
-        }
-
-        #endregion
-
         #region (private) GetCertificates (Request)
 
         /// <summary>
@@ -714,57 +427,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
                                new JProperty("sunSpecRoles",  new JArray(SunSpecRoles.AllMandatory))
 
-                           ))
-                   );
-
-        }
-
-        #endregion
-
-        #region (private) GetLogs         (Request)
-
-        /// <summary>
-        /// GET /api/v1/logs?limit=&amp;after=&amp;tag=: what happened, oldest of
-        /// the returned entries first.
-        /// </summary>
-        /// <remarks>
-        /// This is the snapshot a browser loads before it starts following the
-        /// event stream; "lastId" says how far it reaches, and everything the
-        /// stream delivers with a greater id is new.
-        ///
-        /// Reading the configuration and not merely the meter, because the log
-        /// holds the addresses peers connect from and every certificate that
-        /// was turned away - which is more than somebody allowed to watch a
-        /// meter's readings was given.
-        /// </remarks>
-        private Task<HTTPResponse> GetLogs(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Log), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            var limit = Request.QueryString.GetInt32 ("limit") ?? DefaultLogPageSize;
-            var after = Request.QueryString.GetUInt64("after");
-            var tag   = Request.QueryString.GetString("tag");
-
-            if (limit < 1 || limit > MaxLogPageSize)
-                return Task.FromResult(
-                           ErrorJSON(Request, HTTPStatusCode.BadRequest, $"'limit' must be between 1 and {MaxLogPageSize}.")
-                       );
-
-            var entries = meter.Log.Recent(limit, after, tag).ToArray();
-
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK,
-                           new JObject(
-                               // The whole log's last id and not the last of
-                               // this page: a page filtered by a tag would
-                               // otherwise make the browser ask again for
-                               // everything between the two.
-                               new JProperty("lastId",    meter.Log.LastId),
-                               new JProperty("capacity",  meter.Log.Capacity),
-                               new JProperty("tags",      new JArray(meter.Log.KnownTags)),
-                               new JProperty("entries",   new JArray(entries.Select(entry => entry.ToJSON())))
                            ))
                    );
 
@@ -843,346 +505,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
                            ))
                    );
-
-        }
-
-        #endregion
-
-        #region (private) StreamEvents    (Request)
-
-        /// <summary>
-        /// GET /api/v1/events: the Server-Sent Events stream every browser
-        /// hangs on. Modelled on Hermod's MapEventSource, with the permission
-        /// checked first and without opening the stream to other origins.
-        /// </summary>
-        /// <remarks>
-        /// Two things in here are for a proxy in front of the meter, and both
-        /// were learned from nginx as it comes - by the vehicle, whose stream
-        /// this is.
-        ///
-        /// "X-Accel-Buffering: no", because nginx buffers what it passes on,
-        /// and a buffered event stream reaches the browser as nothing at all -
-        /// not even its header - until a buffer is full or the meter has been
-        /// silent long enough for nginx to give up on it. The browser never
-        /// sees the stream open, so the Logs page says "reconnecting ..." and
-        /// does not ask for its snapshot either. Measured behind nginx with the
-        /// vehicle: the header came after 72 seconds, and the stream ended
-        /// 98 ms later.
-        ///
-        /// And a comment whenever the stream has been silent for
-        /// <see cref="EventStreamHeartbeat"/>, because the 60 seconds after
-        /// which nginx gives up are an ordinary pause for a meter that nothing
-        /// is reading from.
-        ///
-        /// The loop that writes the events and the comments is Hermod's
-        /// WriteEvents, the one Hermod's own MapEventSource has used since
-        /// 524b3095: it waits for the next event across heartbeats rather than
-        /// asking for it again, and however it ends, it stops the enumerator
-        /// before it lets go of it.
-        /// </remarks>
-        private Task<HTTPResponse> StreamEvents(HTTPRequest Request)
-        {
-
-            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Log), false, out _, out var refused))
-                return Task.FromResult(refused);
-
-            var clientId = Request.RemoteSocket.ToString();
-
-            return Task.FromResult(
-                       new HTTPResponse.Builder(Request) {
-
-                           HTTPStatusCode    = HTTPStatusCode.OK,
-                           Server            = HTTPServer.HTTPServerName,
-                           ContentType       = HTTPContentType.Text.EVENTSTREAM,
-                           CacheControl      = "no-cache",
-                           Connection        = ConnectionType.KeepAlive,
-                           X_AccelBuffering  = "no",
-
-                           HTTPSSEWorker     = async (response, stream) => {
-
-                               // Either the browser going away or this meter
-                               // shutting down ends the stream. The second one
-                               // is not something the request's own token knows
-                               // about - see CloseEventStreams().
-                               using var ending = CancellationTokenSource.CreateLinkedTokenSource(
-                                                      Request.CancellationToken,
-                                                      shutdown.Token
-                                                  );
-
-                               try
-                               {
-
-                                   await stream.WriteAsync("retry: ");
-                                   await stream.WriteAsync(((UInt32) Events.RetryInterval.TotalMilliseconds).ToString());
-                                   await stream.WriteAsync("\n\n");
-
-                                   // The preamble has to leave the buffer now,
-                                   // not with the first event: on a quiet meter
-                                   // the browser would otherwise wait for its
-                                   // first byte until its own read timeout
-                                   // expired.
-                                   await stream.FlushAsync(ending.Token);
-
-                                   // Returns when the events end, and throws when
-                                   // the stream cannot be written - a heartbeat
-                                   // to a browser that has gone - or the meter
-                                   // stops.
-                                   await stream.WriteEvents(
-                                             Events.GetAllEventsGreater(
-                                                 clientId,
-                                                 Request.GetHeaderField(HTTPRequestHeaderField.LastEventId),
-                                                 ending.Token
-                                             ),
-                                             EventStreamHeartbeat,
-                                             ending.Token
-                                         );
-
-                               }
-                               catch (OperationCanceledException)
-                               {
-                                   await Events.Unsubscribe(clientId);
-                               }
-                               catch (ObjectDisposedException)
-                               {
-                                   await Events.Unsubscribe(clientId);
-                               }
-                               catch (Exception e)
-                               {
-                                   await Events.Unsubscribe(clientId);
-
-                                   // Not through the event log: an event stream
-                                   // that ends because the browser went away is
-                                   // the normal end of one, and logging it here
-                                   // would publish an event to the very streams
-                                   // that are closing.
-                                   System.Diagnostics.Debug.WriteLine($"The event stream of {clientId} ended: {e.Message}");
-                               }
-
-                           }
-
-                       }.AsImmutable
-                   );
-
-        }
-
-        #endregion
-
-        #region CloseEventStreams()
-
-        /// <summary>
-        /// End every open event stream, so that the HTTP server can stop.
-        /// </summary>
-        /// <remarks>
-        /// An SSE response never completes by itself: it is a write loop
-        /// waiting for the next event. Without this the server would wait for
-        /// every browser that still has the page open.
-        /// </remarks>
-        public void CloseEventStreams()
-        {
-            try   { shutdown.Cancel(); }
-            catch { }
-        }
-
-        #endregion
-
-        #region (private) Publish        (SubEvent, JSON)
-
-        /// <summary>
-        /// Hands an event to every browser. Fire-and-forget on purpose: this is
-        /// called from inside whatever wrote the log entry, and none of those
-        /// should wait for a slow browser.
-        /// </summary>
-        private void Publish(String   SubEvent,
-                             JObject  JSON)
-        {
-
-            Events.SubmitEvent(SubEvent, JSON).
-                   ContinueWith(task => System.Diagnostics.Debug.WriteLine($"Publishing a '{SubEvent}' event failed: {task.Exception?.GetBaseException().Message}"),
-                                TaskContinuationOptions.OnlyOnFaulted);
-
-        }
-
-        #endregion
-
-        #region (private) UnknownPath     (Request)
-
-        private Task<HTTPResponse> UnknownPath(HTTPRequest Request)
-
-            => Task.FromResult(
-                   ErrorJSON(Request, HTTPStatusCode.NotFound, $"Unknown resource '{Request.Path}'.")
-               );
-
-        #endregion
-
-
-        #region (private) TryGetUser  (Request, out User, out Unauthorized)
-
-        /// <summary>
-        /// The person behind the session cookie, or the 401 that says there is
-        /// none.
-        /// </summary>
-        private Boolean TryGetUser(HTTPRequest                             Request,
-                                   [NotNullWhen(true)]  out IUser?         User,
-                                   [NotNullWhen(false)] out HTTPResponse?  Unauthorized)
-        {
-
-            if (accounts.TryGetHTTPUser(Request, out var user) && user is not null)
-            {
-                User          = user;
-                Unauthorized  = null;
-                return true;
-            }
-
-            User          = null;
-            Unauthorized  = ErrorJSON(Request, HTTPStatusCode.Unauthorized, "Sign in first.");
-            return false;
-
-        }
-
-        #endregion
-
-        #region (private) TryAuthorize(Request, Required, StateChanging, out User, out Refused)
-
-        /// <summary>
-        /// The person behind the request, when they are allowed to do this - or
-        /// the response that says why not.
-        /// </summary>
-        /// <remarks>
-        /// Three refusals, in the order they have to happen: a request from
-        /// another site is turned away before it is read at all, a request
-        /// without a session is a 401, and a request from somebody signed in
-        /// who may not do this is a 403 naming the permission they are short
-        /// of. The difference between the last two matters to a browser: 401
-        /// means sign in again, 403 means signing in again will not help.
-        ///
-        /// What somebody may do is the node's to answer, from the groups they
-        /// are in at this moment: the meter's roles, the node's, and those the
-        /// configuration file adds or redefines.
-        /// </remarks>
-        /// <param name="Request">The request.</param>
-        /// <param name="Required">What this request needs permission to do: an operation on a resource.</param>
-        /// <param name="StateChanging">Whether it changes something, and is therefore also checked for being cross-site.</param>
-        /// <param name="User">The person behind it.</param>
-        /// <param name="Refused">The response to send instead.</param>
-        internal Boolean TryAuthorize(HTTPRequest                             Request,
-                                     Permission                              Required,
-                                     Boolean                                 StateChanging,
-                                     [NotNullWhen(true)]  out IUser?         User,
-                                     [NotNullWhen(false)] out HTTPResponse?  Refused)
-        {
-
-            User = null;
-
-            if (StateChanging && RefuseCrossSite(Request) is HTTPResponse crossSite)
-            {
-                Refused = crossSite;
-                return false;
-            }
-
-            if (!TryGetUser(Request, out User, out Refused))
-                return false;
-
-            if (!meter.IsAllowed(User, [ Required ]))
-            {
-
-                Refused = JSONResponse(Request, HTTPStatusCode.Forbidden,
-                              new JObject(
-                                  new JProperty("error",     $"'{User.Id}' may not do this."),
-                                  new JProperty("required",  Required.ToString()),
-                                  new JProperty("role",      MeterAccess.Strongest(meter.Access, meter.RolesOf(User))?.Name),
-                                  new JProperty("granted",   new JArray(meter.PermissionsOf(User).Select(permission => permission.ToString()))),
-
-                                  // Who could, so that a refusal says whom to ask.
-                                  new JProperty("rolesThatMay",  new JArray(meter.Access.RolesAllowing([ Required ]).
-                                                                                         Select(role => role.Name)))
-                              ));
-
-                User = null;
-                return false;
-
-            }
-
-            Refused = null;
-            return true;
-
-        }
-
-        #endregion
-
-        #region (private static) RefuseCrossSite(Request)
-
-        /// <summary>
-        /// The 403 for a request that another site made the browser send, or
-        /// null when the request is our own page's.
-        /// </summary>
-        /// <remarks>
-        /// The session cookie is SameSite=strict, so a cross-site request would
-        /// arrive without a session anyway. This is the second lock on the same
-        /// door: browsers say where a request came from (Sec-Fetch-Site,
-        /// Origin), and a state-changing request from anywhere but this origin
-        /// is refused before it is even read.
-        /// </remarks>
-        private static HTTPResponse? RefuseCrossSite(HTTPRequest Request)
-        {
-
-            var site = Request.GetHeaderField("Sec-Fetch-Site");
-
-            if (site is not null && site is not ("same-origin" or "none"))
-                return ErrorJSON(Request, HTTPStatusCode.Forbidden, "Cross-site requests are refused.");
-
-            var origin = Request.GetHeaderField("Origin");
-
-            if (origin is not null && origin != "null")
-            {
-
-                var host = Request.GetHeaderField("Host") ?? "";
-
-                if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) ||
-                    !uri.Authority.Equals(host, StringComparison.OrdinalIgnoreCase))
-                {
-                    return ErrorJSON(Request, HTTPStatusCode.Forbidden, "Cross-site requests are refused.");
-                }
-
-            }
-
-            return null;
-
-        }
-
-        #endregion
-
-        #region (private static) TryParseJSONObject(Request, out JSON, out ErrorResponse)
-
-        /// <summary>
-        /// The request body as a JSON object, or the 400 response describing
-        /// what is wrong with it.
-        /// </summary>
-        internal static Boolean TryParseJSONObject(HTTPRequest                             Request,
-                                                  [NotNullWhen(true)]  out JObject?       JSON,
-                                                  [NotNullWhen(false)] out HTTPResponse?  ErrorResponse)
-        {
-
-            JSON           = null;
-            ErrorResponse  = null;
-
-            var text = Request.HTTPBodyAsUTF8String;
-
-            if (String.IsNullOrWhiteSpace(text))
-            {
-                ErrorResponse = ErrorJSON(Request, HTTPStatusCode.BadRequest, "The request body must be a JSON object!");
-                return false;
-            }
-
-            try
-            {
-                JSON = JObject.Parse(text);
-                return true;
-            }
-            catch (JsonException e)
-            {
-                ErrorResponse = ErrorJSON(Request, HTTPStatusCode.BadRequest, $"Invalid JSON: {e.Message}");
-                return false;
-            }
 
         }
 
@@ -1296,32 +618,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                        UInt16    Offset)
 
             => ((UInt32) Registers[Offset] << 16) | Registers[Offset + 1];
-
-        #endregion
-
-        #region (private static) ErrorJSON(...) / JSONResponse(...)
-
-        internal static HTTPResponse ErrorJSON(HTTPRequest     Request,
-                                              HTTPStatusCode  StatusCode,
-                                              String          Message)
-
-            => JSONResponse(
-                   Request,
-                   StatusCode,
-                   new JObject(new JProperty("error", Message))
-               );
-
-
-        internal static HTTPResponse JSONResponse(HTTPRequest     Request,
-                                                 HTTPStatusCode  StatusCode,
-                                                 JToken          JSON)
-
-            => new HTTPResponse.Builder(Request) {
-                   HTTPStatusCode  = StatusCode,
-                   ContentType     = HTTPContentType.Application.JSON_UTF8,
-                   Content         = Encoding.UTF8.GetBytes(JSON.ToString(Formatting.None)),
-                   CacheControl    = "no-store"
-               }.AsImmutable;
 
         #endregion
 

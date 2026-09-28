@@ -224,6 +224,13 @@ account back.
 
 ## The JSON API
 
+The routes every node has are the node's: signing out and who is signed in, the
+status and the clock, the configuration, name resolution and the time servers,
+the certificate store, the log and its event stream, and a JSON 404 for any
+other path below `/api`. They are WWCP_Node's `NodeHTTPAPI`, the same routes and
+the same answers on every kind of node, and the meter's API adds what only a
+meter has on top.
+
 Everything below `/api/v1` needs the session cookie, and each resource names
 the permission it wants: an operation - `read`, `edit` or `run` - on a resource,
 written `meter:edit`, as on every node. The resources are the node's -
@@ -231,11 +238,11 @@ written `meter:edit`, as on every node. The resources are the node's -
 
 | Resource | read | edit | run |
 |----------|------|------|-----|
-| `meter` | its status, the readings, the registers, the signed readings, the sessions | the meter mode, clearing the energy counters | starting and stopping a session |
-| `configuration` | every section at once | | |
-| `dns` | the name servers | changing them | |
+| `meter` | the readings, the registers, the signed readings, the sessions | the meter mode, clearing the energy counters | starting and stopping a session |
+| `configuration` | what the node is made of | | |
+| `dns` | the name servers | changing them | looking a name up |
 | `nts` | the time servers, and the clock | changing them | asking one: `sync`, `test` |
-| `certificates` | the stores and the accepted client CAs | a key and its request, a certificate, a CA | |
+| `certificates` | the store and the signing requests | a key and its request, a certificate, a CA | |
 | `keys` | the signing keys | making one, choosing the default, throwing one away | |
 | `log` | the log, the log book, the event stream | | |
 | `accounts` | who may sign in, and as what | making one, giving a role, resetting a password, taking one away | |
@@ -262,10 +269,12 @@ who may talk to it at all, and which key it signs with is what a bill can be
 checked against. Somebody who may repoint a name server has not thereby been
 handed the identity of the device.
 
-An account in several of these groups may do what any of them allows, and one
-in none of them may do nothing at all. A refusal says what was needed, what the
-account was granted and which roles would have been allowed - `required`,
-`granted` and `rolesThatMay` - so that it also says whom to ask.
+The status needs a sign-in and nothing more, as on every node. An account in
+several of these groups may do what any of them allows, and one in none of them
+may do nothing else at all. A refusal names the roles that would have been
+allowed - "This needs the viewer or auditor or systemadmin role." - so that it
+also says whom to ask, and the log says what was refused and to whom, tagged
+`auth`.
 
 The roles are data, so the configuration file can add one or say differently
 what one of the meter's may do, under `roles` - here for somebody who looks
@@ -284,7 +293,7 @@ that quietly grants nothing - and so does one that tries to say what
 
 The names in the tables are what the API speaks. What a page shows is the
 readable form - "Auditor" rather than `auditor`, and a role from the file by its
-name - and it travels with the strongest role in `/api/v1/me` rather than being
+name - and it travels with the strongest role in `/api/v1/auth/me` rather than being
 looked up, because every page that tells somebody what they may not do here
 names their role in the same sentence and none of them should need a second
 request to translate one word. The names of the roles in the organization from
@@ -293,23 +302,25 @@ mean the group they were moved into.
 
 | Resource | |
 |----------|---|
-| `GET  /api/v1/me` | who is signed in, their roles - the strongest as this meter spells it and as a person would say it - and their permissions, spelled out: `meter:read`, `nts:run`, ... |
-| `GET  /api/v1/status` | serial, uptime, both listeners |
+| `POST /api/v1/auth/logout` | sign out: the session ends, and its cookie with it |
+| `GET  /api/v1/auth/me` | who is signed in, their roles - the strongest as this meter spells it and as a person would say it - and their permissions, spelled out: `meter:read`, `nts:run`, ... |
+| `GET  /api/v1/status` | the version, how long it has run, the sessions and the log - and the meter's serial and both listeners |
 | `GET  /api/v1/meter` | the readings with scale factors applied, the mode, and what the simulated site is doing |
 | `GET  /api/v1/meter/registers?start=&count=` | the raw register block |
 | `PUT  /api/v1/meter/mode` | `{"mode": 0\|1\|2}` or `{"mode": "net"\|"import"\|"export"}` |
 | `POST /api/v1/meter/energy/reset` | clear both energy counters |
-| `GET  /api/v1/configuration` | every section at once |
+| `GET  /api/v1/configuration` | what the node is made of: its web server, its accounts, its log and its time |
 | `GET/PUT /api/v1/configuration/dns` | how it resolves names |
+| `POST /api/v1/configuration/dns/query` | `{"name", "recordTypes", "server"}`: look one name up |
 | `GET/PUT /api/v1/configuration/nts` | where it reads the time |
 | `POST /api/v1/configuration/nts/sync` | check the clock now |
 | `POST /api/v1/configuration/nts/test` | `{"host": "ptbtime2.ptb.de"}`: ask one time server everything, step by step |
-| `GET  /api/v1/configuration/time` | what time it is, and what that is worth |
+| `GET  /api/v1/clock` | what time it is, and what that is worth - at the path every node has it at |
 | `GET  /api/v1/configuration/certificates` | the certificate Modbus/TLS clients are shown now, the CA the meter was started with, and the SunSpec roles |
 | `GET  /api/v1/certificates` | the certificate store: every certificate by kind, and what each listener shows now and next |
 | `POST /api/v1/certificates` | put one in: `{"kind", "content" (base64), "password", "label", "usages"}` |
 | `POST /api/v1/certificates/reload` | read the store's directory again |
-| `GET/PATCH/DELETE /api/v1/certificates/{id}` | one certificate: rename it, switch it on or off, say what it is for, or take it out |
+| `GET/PATCH/DELETE /api/v1/certificates/{id}` | one certificate: rename it, switch it on or off, say what it is for, or take it out - refused while it is the only one a listener could show, or the last CA Modbus/TLS clients may be issued by |
 | `GET/POST /api/v1/certificates/requests` | the keys made here and their signing requests; make one |
 | `GET  /api/v1/certificates/requests/{id}` | that request, as a file |
 | `PUT  /api/v1/certificates/requests/{id}` | `{"pem": ...}`, the signed certificate coming back |
@@ -1026,7 +1037,7 @@ again.
 "Legal time" is not a claim this meter can make on its own. It holds only while
 a check against a time source **the operator has vouched for** is both recent
 enough and close enough; without a named authority this is an ordinary clock
-that happens to be checked, and `/api/v1/configuration/time` says so in as many
+that happens to be checked, and `/api/v1/clock` says so in as many
 words.
 
 

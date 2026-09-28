@@ -22,6 +22,8 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
+using Newtonsoft.Json.Linq;
+
 using cloud.charging.open.protocols.WWCP.Node.Certificates;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
@@ -253,6 +255,119 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    ListenerCertificates.Web     => webCertificates,
                    _                            => null
                };
+
+        #endregion
+
+        #region ShownOn(Id)
+
+        /// <summary>
+        /// The listeners that show the certificate with the given id now.
+        /// </summary>
+        public IEnumerable<String> ShownOn(String? Id)
+
+            => ListenerCertificates.All.Where(listener => Id is not null &&
+                                                          ListenerCertificatesFor(listener)?.Current?.Entry.Id == Id);
+
+        #endregion
+
+        #region (protected override) CompleteCertificatesJSON(JSON)
+
+        /// <summary>
+        /// What a meter's store says beyond every node's: the listeners an
+        /// identity may be told it is for, on each identity the listeners that
+        /// show it now, and for each listener what it shows now and what takes
+        /// over next - so that a page can mark them without asking twice.
+        /// </summary>
+        protected override void CompleteCertificatesJSON(JObject JSON)
+        {
+
+            JSON["listeners"] = new JArray(Certificates.Listeners);
+
+            if (JSON["certificates"]?[CertificateKind.TLSIdentity.AsText()] is JArray identities)
+                foreach (var identity in identities.OfType<JObject>())
+                    identity["shownOn"] = new JArray(ShownOn(identity["id"]?.Value<String>()));
+
+            var shown = new JObject();
+
+            foreach (var listener in ListenerCertificates.All)
+            {
+
+                var certificatesOf  = ListenerCertificatesFor(listener);
+                var next            = certificatesOf?.Next;
+
+                shown.Add(listener, new JObject(
+                                        new JProperty("current",  certificatesOf?.Current?.Entry.Id),
+                                        new JProperty("next",     next?.Id),
+                                        new JProperty("nextAt",   next?.NotBefore.UtcDateTime),
+                                        new JProperty("used",     listener == ListenerCertificates.Modbus || HTTPS)
+                                    ));
+
+            }
+
+            JSON["shown"] = shown;
+
+        }
+
+        #endregion
+
+        #region (override) WhatWouldLose(Entry, ActiveAfter, UsagesAfter)
+
+        /// <summary>
+        /// What of this meter a change of a certificate would leave with
+        /// nothing: a listener, when it is the only certificate the listener
+        /// could show, or the Modbus/TLS clients, when it is the last CA they
+        /// may be issued by - as the sentence of the 409 the node's API refuses
+        /// the change with, or null.
+        /// </summary>
+        /// <remarks>
+        /// Asked by the node before a certificate is switched off, told other
+        /// listeners or deleted, and before any of it is done. Nothing of the
+        /// meter names a certificate - the listeners choose among what is
+        /// valid - so there is no <see cref="WWCPNode.WhatUses"/> of its own.
+        /// </remarks>
+        /// <param name="Entry">The certificate as it is now.</param>
+        /// <param name="ActiveAfter">Whether it would be switched on afterwards; false for a deletion.</param>
+        /// <param name="UsagesAfter">What it would be for afterwards, as the store keeps usages; null for every use.</param>
+        public override String? WhatWouldLose(CertificateEntry        Entry,
+                                              Boolean                 ActiveAfter,
+                                              IReadOnlyList<String>?  UsagesAfter)
+        {
+
+            if (Entry.Kind == CertificateKind.TLSIdentity)
+            {
+
+                foreach (var listener in ListenerCertificates.All)
+                {
+
+                    // The web interface shows nothing without HTTPS, and so
+                    // cannot be left with nothing either.
+                    if (listener == ListenerCertificates.Web && !HTTPS)
+                        continue;
+
+                    var candidates     = ListenerCertificatesFor(listener)?.Candidates ?? [];
+                    var stillShowable  = ActiveAfter && (UsagesAfter is null || UsagesAfter.Contains(listener));
+
+                    if (!stillShowable && candidates.Count == 1 && candidates[0].Id == Entry.Id)
+                        return $"That is the only certificate the {listener} listener could show. Put another one in first.";
+
+                }
+
+            }
+
+            if (Entry.Kind == CertificateKind.ClientRoot && !ActiveAfter)
+            {
+
+                var usable = ClientRoots.Usable;
+
+                if (usable.Count == 1 && usable[0].Id == Entry.Id)
+                    return "That is the last CA Modbus/TLS clients may be issued by. Put another one in first - " +
+                           "otherwise no charging station could connect.";
+
+            }
+
+            return null;
+
+        }
 
         #endregion
 

@@ -166,7 +166,7 @@ describe('a stream that stops', () => {
             await Promise.resolve();
 
             assert.equal(askedFor.length, 1, 'nobody asked the meter anything');
-            assert.match(askedFor[0]!, /\/api\/v1\/me$/);
+            assert.match(askedFor[0]!, /\/api\/v1\/auth\/me$/);
 
             store.stop();
         }

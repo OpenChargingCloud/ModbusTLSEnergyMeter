@@ -660,6 +660,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                     "certificates", ListenerCertificates.Web
                 );
 
+            // Whatever changes the store - a page, a signing request answered,
+            // the directory read again - may change what a listener shows, and
+            // that is said at once rather than at the next minute's check.
+            Certificates.OnChanged += () => {
+                modbusCertificates.CheckRollover();
+                webCertificates.   CheckRollover();
+            };
+
             #endregion
 
             #region The device and its frontend

@@ -84,7 +84,7 @@ export const accountsPage: Page = {
                     <h2><i class="fa-solid fa-user"></i> Your account</h2>
 
                     <table class="kv">
-                        <tr><td>Signed in as</td><td><code>${me?.userId ?? '-'}</code></td></tr>
+                        <tr><td>Signed in as</td><td><code>${me?.username ?? '-'}</code></td></tr>
                         <tr><td>Role</td><td>${me?.roleTitle ?? 'none'}</td></tr>
                     </table>
 
@@ -412,7 +412,7 @@ export const accountsPage: Page = {
 
                             // Demoting yourself takes away what this page needs to
                             // draw itself, so there is nothing to come back to.
-                            if (userId === auth.user?.userId) {
+                            if (userId === auth.user?.username) {
                                 await auth.refresh();
                                 navigate('/meter');
                                 return;
@@ -480,7 +480,7 @@ export const accountsPage: Page = {
             for (const button of content.querySelectorAll<HTMLElement>('[data-remove]')) {
 
                 const userId = button.dataset['remove'] ?? '';
-                const isYou  = userId === auth.user?.userId;
+                const isYou  = userId === auth.user?.username;
 
                 button.addEventListener('click', () => {
 
