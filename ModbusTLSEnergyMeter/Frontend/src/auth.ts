@@ -1,4 +1,5 @@
 import { api, ApiError, onUnauthorized, type Me, type Operation, type Resource } from './api/client';
+import { fromURL } from './basePath';
 
 type Listener = (user: Me | null) => void;
 
@@ -81,7 +82,10 @@ class AuthState {
     readonly requireSignIn = (url: URL): string | null =>
         this.user
             ? null
-            : `/login?next=${encodeURIComponent(url.pathname + url.search)}`;
+            // The route and not the address bar's path: what comes back here
+            // goes through the router, which puts the base back on. Carrying
+            // "/EV/logs" through a sign-in would come back as "/EV/EV/logs".
+            : `/login?next=${encodeURIComponent(fromURL(url.pathname) + url.search)}`;
 
 }
 

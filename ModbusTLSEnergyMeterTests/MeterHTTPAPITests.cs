@@ -152,14 +152,21 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// <summary>
         /// No session, no answer - not even to the resources that only read.
         /// </summary>
+        /// <remarks>
+        /// The reads only a meter has. What every node reads - its status, who
+        /// is signed in, its clock, its configuration, its log and its store -
+        /// is asked by the node's conformance suite, in MeterConformance.
+        /// </remarks>
         [Test]
         public async Task WithoutSigningIn_EverythingIs401()
         {
 
             using var browser = NewBrowser();
 
-            foreach (var path in new[] { "api/v1/auth/me", "api/v1/status", "api/v1/clock", "api/v1/meter",
-                                         "api/v1/configuration", "api/v1/configuration/dns" })
+            foreach (var path in new[] { "api/v1/meter",              "api/v1/meter/registers",  "api/v1/configuration/certificates",
+                                         "api/v1/accounts",           "api/v1/accounts/roles",   "api/v1/certificates/requests",
+                                         "api/v1/signedMeterValues",  "api/v1/sessions",         "api/v1/keys",
+                                         "api/v1/logs/verify" })
             {
                 Assert.That(await browser.StatusOf(HttpMethod.Get, path),
                             Is.EqualTo(HttpStatusCode.Unauthorized),
@@ -285,73 +292,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(await browser.StatusOf(HttpMethod.Get, "api/v1/meter"),
                             Is.EqualTo(HttpStatusCode.Forbidden));
-
-            });
-
-        }
-
-        #endregion
-
-        #region AnUnknownAPIPath_IsAJSON404()
-
-        /// <summary>
-        /// An unknown path below /api answers as this API, not as the accounts
-        /// at "/" - and the clock's old path is one of them now: the clock is
-        /// at /api/v1/clock on every node.
-        /// </summary>
-        [Test]
-        public async Task AnUnknownAPIPath_IsAJSON404()
-        {
-
-            using var browser        = await SignInAsAdministrator();
-            var (status,   json)     = await browser.Call(HttpMethod.Get, "api/v1/nonsense");
-            var (oldClock, oldJSON)  = await browser.Call(HttpMethod.Get, "api/v1/configuration/time");
-            var (clock,    clockJSON) = await browser.Call(HttpMethod.Get, "api/v1/clock");
-
-            Assert.Multiple(() => {
-                Assert.That(status,                         Is.EqualTo(HttpStatusCode.NotFound));
-                Assert.That(json?["error"]?.ToString(),     Is.EqualTo("Unknown API path"));
-                Assert.That(json?["path"]?.ToString(),      Does.EndWith("/api/v1/nonsense"));
-                Assert.That(oldClock,                       Is.EqualTo(HttpStatusCode.NotFound));
-                Assert.That(oldJSON?["error"]?.ToString(),  Is.EqualTo("Unknown API path"));
-                Assert.That(clock,                          Is.EqualTo(HttpStatusCode.OK));
-                Assert.That(clockJSON?["now"],              Is.Not.Null);
-            });
-
-        }
-
-        #endregion
-
-        #region ATimeServerTest_SaysWhoAskedAndWhereItGotTo()
-
-        /// <summary>
-        /// The Test of one time server, as the NTS page sends it: the answer is
-        /// the steps, and the log says who asked, before anything is asked.
-        /// </summary>
-        /// <remarks>
-        /// With a host that is neither a name nor an address, so that the test
-        /// ends at its first step and nothing leaves the machine.
-        /// </remarks>
-        [Test]
-        public async Task ATimeServerTest_SaysWhoAskedAndWhereItGotTo()
-        {
-
-            using var browser  = await SignInAsAdministrator();
-
-            var before         = meter!.Log.LastId;
-            var (status, json) = await browser.Call(HttpMethod.Post, "api/v1/configuration/nts/test", new { host = "not a host at all" });
-            var said           = meter.Log.Recent(50, before, "test").ToArray();
-
-            Assert.Multiple(() => {
-
-                Assert.That(status,                                    Is.EqualTo(HttpStatusCode.OK));
-                Assert.That(json?["ok"]?.Value<Boolean>(),             Is.False);
-                Assert.That(json?["host"]?.ToString(),                 Is.EqualTo("not a host at all"));
-                Assert.That(json?["steps"]?[0]?["text"]?.ToString(),   Is.EqualTo("'not a host at all' is neither a name nor an address that can be asked."));
-                Assert.That(json?["steps"]?[0]?["level"]?.ToString(),  Is.EqualTo("error"));
-
-                Assert.That(said.Select(entry => entry.Message),       Is.EqualTo(new[] { $"'{ModbusTLSEnergyMeter.DefaultAdminUser}' asked this energy meter to test the time server 'not a host at all'." }));
-                Assert.That(said.Select(entry => entry.Tags),          Has.All.EquivalentTo(new[] { "nts", "test", "web" }));
 
             });
 

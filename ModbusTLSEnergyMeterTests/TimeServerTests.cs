@@ -35,14 +35,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
     /// </summary>
     /// <remarks>
     /// Nothing here reaches a time server: what is measured is which question
-    /// the meter decides to put, on which ports, and what it says when it
-    /// decides it cannot put one at all. Where a question would go out, name
-    /// resolution is switched off, so that the first step is written and
-    /// everything after it fails at once.
+    /// the meter decides to put, and on which ports. Where a question would go
+    /// out, name resolution is switched off, so that the first step is written
+    /// and everything after it fails at once.
     ///
     /// The charging station's tests of its test, which it took from the
-    /// vehicle, in one place. The meters are constructed and never started,
-    /// as in the tests of the nts section, and one PKI serves them all.
+    /// vehicle, in one place. What the test says when it asks nobody is asked
+    /// by the node's conformance suite, in MeterConformance; these three ask
+    /// more than WWCP_Node's own tests of it do, and stay until those take
+    /// them over. The meters are constructed and never started, as in the
+    /// tests of the nts section, and one PKI serves them all.
     /// </remarks>
     [TestFixture]
     public class TimeServerTests
@@ -151,60 +153,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
-
-        #region SomethingThatIsNeitherIsRefused()
-
-        /// <summary>
-        /// Not a name and not an address: said, and nothing asked.
-        /// </summary>
-        [Test]
-        public async Task SomethingThatIsNeitherIsRefused()
-        {
-
-            await using var meter = Meter();
-
-            var before  = meter.Log.LastId;
-            var result  = await meter.TestTimeServerAsync("not a host at all");
-
-            Assert.Multiple(() => {
-                Assert.That(result.Value<Boolean>("ok"),  Is.False);
-                Assert.That(Steps(result),                Is.EqualTo(new[] { "'not a host at all' is neither a name nor an address that can be asked." }));
-                Assert.That(meter.Log.Recent(50, before, "test"),  Is.Empty, "nothing was asked, so there is nothing to log");
-            });
-
-        }
-
-        #endregion
-
-        #region NothingIsAskedWhileTimeSynchronisationIsOff()
-
-        /// <summary>
-        /// Switched off means switched off, for the test as much as for the
-        /// meter's own checks.
-        /// </summary>
-        /// <remarks>
-        /// A test that quietly asked anyway would be a meter sending traffic
-        /// somebody switched off - and the page would be showing an answer from
-        /// a server this meter is not using.
-        /// </remarks>
-        [Test]
-        public async Task NothingIsAskedWhileTimeSynchronisationIsOff()
-        {
-
-            await using var meter = Meter("""{ "nts": { "enabled": false } }""");
-
-            var before  = meter.Log.LastId;
-            var result  = await meter.TestTimeServerAsync("ptbtime2.ptb.de");
-
-            Assert.Multiple(() => {
-                Assert.That(result.Value<Boolean>("ok"),  Is.False);
-                Assert.That(Steps(result),                Is.EqualTo(new[] { "Time synchronisation is switched off on this energy meter, so nothing was asked." }));
-                Assert.That(meter.Log.Recent(50, before, "test"),  Is.Empty);
-            });
-
-        }
-
-        #endregion
 
         #region AnAddressIsAskedWithTheCookiesOfTheSingleClientsExchange()
 

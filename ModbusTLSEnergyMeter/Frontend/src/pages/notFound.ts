@@ -2,6 +2,7 @@ import { auth } from '../auth';
 import { html, render } from '../html';
 import type { Page } from '../router';
 import { shell, visibleMenu } from '../shell';
+import { toURL } from '../basePath';
 
 export const notFoundPage: Page = {
 
@@ -24,8 +25,8 @@ export const notFoundPage: Page = {
                 <p class="muted">
                     ${pages.length > 0
                           ? html`This meter has
-                                 ${pages.map((entry, index) => html`${index > 0 ? ' and ' : ''}<a href="${entry.path}">${entry.label}</a>`)}.`
-                          : html`<a href="/login">Sign in</a> to see what this meter has.`}
+                                 ${pages.map((entry, index) => html`${index > 0 ? ' and ' : ''}<a href="${toURL(entry.path)}">${entry.label}</a>`)}.`
+                          : html`<a href="${toURL('/login')}">Sign in</a> to see what this meter has.`}
                 </p>
             </section>
         `);

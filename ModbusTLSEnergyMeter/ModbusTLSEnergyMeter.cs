@@ -192,6 +192,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         private           Task?                    runTask;
 
+        private           Int32                    disposed;
+
         #endregion
 
         #region Properties
@@ -840,10 +842,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 catch (OperationCanceledException)  { }
             }
 
-            // Before the server: an event stream never completes by itself, so a
-            // browser with the page still open would otherwise hold the
-            // shutdown for as long as it stayed open.
-            API.CloseEventStreams();
+            // The event streams of the JSON API are not ended here: the node
+            // ends them itself before it asks this, as for every kind of node.
 
         }
 
@@ -853,10 +853,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         /// <summary>
         /// Stop, and let go of the Modbus/TLS side before the node lets go of the
-        /// log.
+        /// log - once.
         /// </summary>
+        /// <remarks>
+        /// A meter in a using block that was also disposed by hand is asked
+        /// twice, and what was let go of the first time cannot be let go of
+        /// again: the Modbus/TLS frontend cancels a token source it has already
+        /// disposed, and throws.
+        /// </remarks>
         public override async ValueTask DisposeAsync()
         {
+
+            if (Interlocked.Exchange(ref disposed, 1) == 1)
+                return;
 
             await Stop();
 

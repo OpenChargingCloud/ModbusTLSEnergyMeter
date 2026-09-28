@@ -4,6 +4,7 @@ import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
 import { shell } from '../shell';
 import { errorMessage, field, whileSaving } from '../ui';
+import { toURL } from '../basePath';
 
 /**
  * The largest file this page will offer to import.
@@ -299,7 +300,7 @@ export const certificatesPage: Page = {
                     <p class="hint">
                         Neither believed nor presented: the certificates of servers this meter connects to, kept so
                         that one can be recognised by its fingerprint - the fingerprint a time server can be held to
-                        on the <a href="/configuration/nts">NTS</a> page.
+                        on the <a href="${toURL('/configuration/nts')}">NTS</a> page.
                     </p>
                     <div class="cards stacked">
                         ${store.recognised.map(kind => kindCard(kind))}
