@@ -361,6 +361,13 @@ export const certificatesPage: Page = {
 
             const store  = current!;
             const kinds  = kindsShown();
+
+            // Drawn as the kind chosen, as the browser would choose it anyway,
+            // so that an untouched form is one: where a select draws no option
+            // as selected, the browser shows the first, but its defaultSelected
+            // stays false - and a page that asks before a draft is thrown
+            // away, holding each control against how it was drawn, would ask
+            // about one nobody had begun.
             const first  = kinds[0];
             const off    = busy ? html`disabled` : '';
 
@@ -385,7 +392,7 @@ export const certificatesPage: Page = {
                         <label>What it is for
                             <select name="kind" id="import-kind" ${off}>
                                 ${kinds.map(kind => html`
-                                    <option value="${kind}">${store.kinds[kind].description}</option>
+                                    <option value="${kind}" ${kind === first ? html`selected` : ''}>${store.kinds[kind].description}</option>
                                 `)}
                             </select>
                         </label>
@@ -618,6 +625,10 @@ export const certificatesPage: Page = {
             const asked  = requests!;
             const off    = busy ? html`disabled` : '';
 
+            // Drawn as the listener chosen, as importCard draws its kind, and
+            // for the same reason.
+            const first  = asked.listeners[0];
+
             return html`
                 <section class="card">
 
@@ -628,7 +639,7 @@ export const certificatesPage: Page = {
                         <label>Which listener it is for
                             <select name="listener" id="request-listener" ${off}>
                                 ${asked.listeners.map(listener => html`
-                                    <option value="${listener}">${usageName(listener)}</option>
+                                    <option value="${listener}" ${listener === first ? html`selected` : ''}>${usageName(listener)}</option>
                                 `)}
                             </select>
                         </label>
