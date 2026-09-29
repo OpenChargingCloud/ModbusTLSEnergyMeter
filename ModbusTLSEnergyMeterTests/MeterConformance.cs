@@ -111,6 +111,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             File.WriteAllText(configuration, Configuration.ToString());
 
+            // Both ports afresh at every call, the web interface's and the
+            // Modbus/TLS listener's: the kit makes the meter again where one
+            // it was handed was taken before the meter could bind it.
             return new ModbusTLSEnergyMeter(
                        SerialNumber:       "meter-conformance",
                        ServerPfxPath:      Path.Combine(pki, "server.pfx"),

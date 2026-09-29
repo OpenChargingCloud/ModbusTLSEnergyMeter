@@ -55,7 +55,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         private ModbusTLSEnergyMeter?  meter;
         private String?                workingDirectory;
         private String?                pkiDirectory;
-        private Int32                  modbusPort;
 
         #endregion
 
@@ -77,23 +76,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await new ModbusPKI().BuildPKI(pkiDirectory);
 
-            modbusPort = TestPorts.Free();
-
-            meter = new ModbusTLSEnergyMeter(
+            meter = await TestPorts.StartedOnFreshPorts(() => new ModbusTLSEnergyMeter(
                         SerialNumber:       "meter-log-001",
                         ServerPfxPath:      Path.Combine(pkiDirectory, "server.pfx"),
                         ServerPfxPassword:  "demo",
                         ClientCACertPath:   Path.Combine(pkiDirectory, "issuing-clients-ca.crt"),
                         ListenAddress:      NetIPAddress.Loopback,
-                        ListenPort:         modbusPort,
+                        ListenPort:         TestPorts.Free(),
                         HTTPHostname:       IPv4Address.Localhost,
                         HTTPPort:           IPPort.Parse(TestPorts.Free()),
                         DataPath:           Path.Combine(workingDirectory, "data"),
                         ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory, "configuration.json")),
                         LogToConsole:       false
-                    );
-
-            await meter.Start();
+                    ));
 
         }
 
@@ -482,7 +477,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var client       = new HermodModbusTCPClient(
                                    IPv4Address.Localhost,
-                                   IPPort.Parse(modbusPort),
+                                   IPPort.Parse(meter!.ListenPort),
                                    UnitAddress:                 1,
                                    StartingAddressOffset:       1,
                                    RemoteCertificateValidator:  (a, b, c, d, e) => TLSValidationResult.Success(),

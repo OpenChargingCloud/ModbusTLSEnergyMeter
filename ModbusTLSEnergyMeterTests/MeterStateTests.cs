@@ -144,10 +144,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Int16         scaleFactor;
             UInt32        writtenDown;
 
-            await using (var before = NewMeter())
+            await using (var before = await TestPorts.StartedOnFreshPorts(NewMeter))
             {
-
-                await before.Start();
 
                 scaleFactor = before.Device.EnergyCounters.ScaleFactor;
 
@@ -167,8 +165,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var onDisk = JObject.Parse(File.ReadAllText(StatePath));
 
-            await using var after = NewMeter();
-            await after.Start();
+            await using var after = await TestPorts.StartedOnFreshPorts(NewMeter);
 
             var back = after.Device.EnergyCounters;
 
@@ -220,16 +217,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Int16 scaleFactor;
 
-            await using (var before = NewMeter())
+            await using (var before = await TestPorts.StartedOnFreshPorts(NewMeter))
             {
-                await before.Start();
                 scaleFactor = before.Device.EnergyCounters.ScaleFactor;
             }
 
             WriteState(tenTimesTooMuch, 0, (Int16) (scaleFactor + 1));
 
-            await using var after = NewMeter();
-            await after.Start();
+            await using var after = await TestPorts.StartedOnFreshPorts(NewMeter);
 
             Assert.Multiple(() => {
 
@@ -261,10 +256,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Directory.CreateDirectory(DataPath);
             File.WriteAllText(StatePath, "{ this is not what a meter wrote ");
 
-            await using var meter = NewMeter();
+            var starting = TestPorts.StartedOnFreshPorts(NewMeter);
 
-            Assert.DoesNotThrowAsync(async () => await meter.Start(),
+            Assert.DoesNotThrowAsync(async () => await starting,
                                      "an unreadable file stopped the meter from starting");
+
+            await using var meter = await starting;
 
             Assert.That(Said(meter, "meter"), Does.Contain("start at zero"),
                         "the meter started at zero without saying why");
@@ -283,8 +280,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         public async Task AMeterThatNeverRanBefore_SaysNothingAboutCounters()
         {
 
-            await using var meter = NewMeter();
-            await meter.Start();
+            await using var meter = await TestPorts.StartedOnFreshPorts(NewMeter);
 
             var said = Said(meter, "meter");
 

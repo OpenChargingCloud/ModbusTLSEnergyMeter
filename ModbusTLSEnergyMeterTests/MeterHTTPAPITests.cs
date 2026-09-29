@@ -61,7 +61,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         private ModbusTLSEnergyMeter?  meter;
         private String?                workingDirectory;
-        private Int32                  httpPort;
 
         #endregion
 
@@ -81,10 +80,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await new ModbusPKI().BuildPKI(Path.Combine(workingDirectory, "pki"));
 
-            httpPort = TestPorts.Free();
-            meter    = NewMeter();
-
-            await meter.Start();
+            meter = await TestPorts.StartedOnFreshPorts(NewMeter);
 
         }
 
@@ -900,10 +896,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             File.Move(Path.Combine(accounts, ModbusTLSEnergyMeter.DefaultAccountsDatabaseFile),
                       Path.Combine(accounts, HTTPExtAPI.DefaultHTTPExtAPI_DatabaseFileName));
 
-            httpPort = TestPorts.Free();
-            meter    = NewMeter();
-
-            await meter.Start();
+            meter = await TestPorts.StartedOnFreshPorts(NewMeter);
 
             Assert.Multiple(() => {
                 Assert.That(meter.GeneratedPassword,                                                              Is.Null, "no new administrator was made");
@@ -1475,8 +1468,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #region (private) Helpers
 
         /// <summary>
-        /// The meter under test, on the working directory and the HTTP port
-        /// of this test: the same at the start and after a restart.
+        /// The meter under test, on the working directory of this test - the
+        /// same at the start and after a restart - and on ports nobody has
+        /// been handed yet.
         /// </summary>
         private ModbusTLSEnergyMeter NewMeter()
 
@@ -1488,7 +1482,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    ListenAddress:      NetIPAddress.Loopback,
                    ListenPort:         TestPorts.Free(),
                    HTTPHostname:       IPv4Address.Localhost,
-                   HTTPPort:           IPPort.Parse(httpPort),
+                   HTTPPort:           IPPort.Parse(TestPorts.Free()),
                    DataPath:           Path.Combine(workingDirectory!, "data"),
                    ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                    LogToConsole:       false
@@ -1508,10 +1502,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await meter!.DisposeAsync();
 
-            httpPort = TestPorts.Free();
-            meter    = NewMeter();
-
-            await meter.Start();
+            meter = await TestPorts.StartedOnFreshPorts(NewMeter);
 
         }
 
@@ -1526,10 +1517,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             WriteRolesIntoTheConfiguration(Roles);
 
-            httpPort = TestPorts.Free();
-            meter    = NewMeter();
-
-            await meter.Start();
+            meter = await TestPorts.StartedOnFreshPorts(NewMeter);
 
         }
 
@@ -1624,7 +1612,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                );
 
         private Browser NewBrowser(CookieContainer? Cookies = null)
-            => new ($"http://127.0.0.1:{httpPort}/", Cookies);
+            => new ($"http://127.0.0.1:{meter!.HTTPPort}/", Cookies);
 
         private async Task<Browser> SignInAsAdministrator()
             => await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, meter!.GeneratedPassword!);
