@@ -407,7 +407,7 @@ can be added and removed and timeouts changed. The NTS page is the group of time
 servers: each one is added, changed, switched off or deleted on its own, in a
 dialog, and tested on its own in another, step by step; the rules the group is
 held to, who stands behind legal time and the clock as it stands have a card
-each; **Check the clock now** asks them all. Each save writes the configuration
+each; **Sync now** asks them all. Each save writes the configuration
 file before the change takes effect, and sends only what its form shows - the
 rest of the section stays as it was. Accounts is the one page everybody signed
 in can reach, because everybody has a password of their own to change; what an
