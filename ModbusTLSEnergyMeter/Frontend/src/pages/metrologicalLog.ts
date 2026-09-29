@@ -228,17 +228,19 @@ function verdictOf(result: Awaited<ReturnType<typeof api.verifyLog>>): HTMLFragm
                          </p>`
                   : html`<p class="form-error">${result.firstProblem}</p>`}
 
-            <table class="kv">
-                <tr><td>Head</td><td class="wrap"><code>${result.head}</code></td></tr>
-                <tr><td>Where</td><td class="wrap">${result.path}</td></tr>
-                <tr><td>Kept</td><td>${(result.keepDays ?? 0) > 0 ? `${result.keepDays} days` : 'whole - nothing is thrown away'}</td></tr>
-                ${(result.files ?? []).map(file => html`
-                    <tr>
-                        <td>${file.name}</td>
-                        <td>${file.entries} lines - ${file.intact ? 'intact' : file.problem}</td>
-                    </tr>
-                `)}
-            </table>
+            <div class="table-scroll">
+                <table class="kv">
+                    <tr><td>Head</td><td class="wrap"><code>${result.head}</code></td></tr>
+                    <tr><td>Where</td><td class="wrap">${result.path}</td></tr>
+                    <tr><td>Kept</td><td>${(result.keepDays ?? 0) > 0 ? `${result.keepDays} days` : 'whole - nothing is thrown away'}</td></tr>
+                    ${(result.files ?? []).map(file => html`
+                        <tr>
+                            <td>${file.name}</td>
+                            <td>${file.entries} lines - ${file.intact ? 'intact' : file.problem}</td>
+                        </tr>
+                    `)}
+                </table>
+            </div>
 
             <p class="hint">
                 The signing key sits beside the log, so this says the files were not edited by

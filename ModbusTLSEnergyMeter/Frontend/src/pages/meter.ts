@@ -109,11 +109,13 @@ export const meterPage: Page = {
 
                         <h2><i class="fa-solid fa-gauge-high"></i> Energy</h2>
 
-                        <table class="kv">
-                            <tr><td>Imported</td><td id="imported">-</td></tr>
-                            <tr><td>Exported</td><td id="exported">-</td></tr>
-                            <tr><td>Frequency</td><td id="frequency">-</td></tr>
-                        </table>
+                        <div class="table-scroll">
+                            <table class="kv">
+                                <tr><td>Imported</td><td id="imported">-</td></tr>
+                                <tr><td>Exported</td><td id="exported">-</td></tr>
+                                <tr><td>Frequency</td><td id="frequency">-</td></tr>
+                            </table>
+                        </div>
 
                         <p class="hint">
                             Both counters only ever grow, as a meter's do: whichever way power is
@@ -126,12 +128,14 @@ export const meterPage: Page = {
 
                         <h2><i class="fa-solid fa-sun"></i> The simulated site</h2>
 
-                        <table class="kv">
-                            <tr><td>Load</td><td id="load">-</td></tr>
-                            <tr><td>Generation</td><td id="generation">-</td></tr>
-                            <tr><td>Time of day</td><td id="time-of-day">-</td></tr>
-                            <tr><td>A day takes</td><td id="day-length">-</td></tr>
-                        </table>
+                        <div class="table-scroll">
+                            <table class="kv">
+                                <tr><td>Load</td><td id="load">-</td></tr>
+                                <tr><td>Generation</td><td id="generation">-</td></tr>
+                                <tr><td>Time of day</td><td id="time-of-day">-</td></tr>
+                                <tr><td>A day takes</td><td id="day-length">-</td></tr>
+                            </table>
+                        </div>
 
                         <p class="hint">
                             Not registers: this is what the site behind the meter is doing, and the
@@ -144,17 +148,19 @@ export const meterPage: Page = {
 
                         <h2><i class="fa-solid fa-circle-info"></i> This meter</h2>
 
-                        <table class="kv">
-                            <tr><td>Manufacturer</td><td>${meter.manufacturer}</td></tr>
-                            <tr><td>Model</td><td>${meter.model} (SunSpec ${meter.sunSpecModel})</td></tr>
-                            <tr><td>Serial number</td><td>${meter.serialNumber}</td></tr>
-                            <tr><td>Unit address</td><td>${meter.unitAddress}</td></tr>
-                            ${status ? html`
-                                <tr><td>Modbus/TLS</td><td>${status.modbus.address}:${status.modbus.port}</td></tr>
-                                <tr><td>Registers</td><td>${status.modbus.baseAddress} - ${status.modbus.baseAddress + status.modbus.registerCount - 1}</td></tr>
-                                <tr><td>Running since</td><td>${new Date(status.startedAt).toLocaleString()}</td></tr>
-                            ` : ''}
-                        </table>
+                        <div class="table-scroll">
+                            <table class="kv">
+                                <tr><td>Manufacturer</td><td>${meter.manufacturer}</td></tr>
+                                <tr><td>Model</td><td>${meter.model} (SunSpec ${meter.sunSpecModel})</td></tr>
+                                <tr><td>Serial number</td><td>${meter.serialNumber}</td></tr>
+                                <tr><td>Unit address</td><td>${meter.unitAddress}</td></tr>
+                                ${status ? html`
+                                    <tr><td>Modbus/TLS</td><td>${status.modbus.address}:${status.modbus.port}</td></tr>
+                                    <tr><td>Registers</td><td>${status.modbus.baseAddress} - ${status.modbus.baseAddress + status.modbus.registerCount - 1}</td></tr>
+                                    <tr><td>Running since</td><td>${new Date(status.startedAt).toLocaleString()}</td></tr>
+                                ` : ''}
+                            </table>
+                        </div>
 
                     </section>
 

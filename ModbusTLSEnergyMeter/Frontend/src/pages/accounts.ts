@@ -90,10 +90,12 @@ export const accountsPage: Page = {
 
                     <h2><i class="fa-solid fa-user"></i> Your account</h2>
 
-                    <table class="kv">
-                        <tr><td>Signed in as</td><td><code>${me?.username ?? '-'}</code></td></tr>
-                        <tr><td>Role</td><td>${me?.roleTitle ?? 'none'}</td></tr>
-                    </table>
+                    <div class="table-scroll">
+                        <table class="kv">
+                            <tr><td>Signed in as</td><td><code>${me?.username ?? '-'}</code></td></tr>
+                            <tr><td>Role</td><td>${me?.roleTitle ?? 'none'}</td></tr>
+                        </table>
+                    </div>
 
                     ${me?.roleDescription === null || me?.roleDescription === undefined ? '' : html`
                         <p class="hint">${me.roleDescription}</p>
@@ -202,23 +204,25 @@ export const accountsPage: Page = {
                         ${account.isYou ? html`<span class="chip ok">you</span>` : ''}
                     </h2>
 
-                    <table class="kv">
-                        <tr><td>Name</td><td>${account.name ?? account.userId}</td></tr>
-                        <tr><td>E-mail</td><td class="wrap">${account.email}</td></tr>
-                        <tr><td>Role</td>
-                            <td>
-                                ${mayManage ? html`<select data-role-for="${account.userId}">
-                                    ${roles.map(role => html`
-                                        <option value="${role.role}" ${role.role === account.role ? html`selected` : ''}>
-                                            ${role.title}
-                                        </option>
-                                    `)}
-                                    ${account.role === null
-                                          ? html`<option value="" selected>No role in this meter</option>`
-                                          : ''}
-                                </select>` : account.roleTitle}
-                            </td></tr>
-                    </table>
+                    <div class="table-scroll">
+                        <table class="kv">
+                            <tr><td>Name</td><td>${account.name ?? account.userId}</td></tr>
+                            <tr><td>E-mail</td><td class="wrap">${account.email}</td></tr>
+                            <tr><td>Role</td>
+                                <td>
+                                    ${mayManage ? html`<select data-role-for="${account.userId}">
+                                        ${roles.map(role => html`
+                                            <option value="${role.role}" ${role.role === account.role ? html`selected` : ''}>
+                                                ${role.title}
+                                            </option>
+                                        `)}
+                                        ${account.role === null
+                                              ? html`<option value="" selected>No role in this meter</option>`
+                                              : ''}
+                                    </select>` : account.roleTitle}
+                                </td></tr>
+                        </table>
+                    </div>
 
                     ${description ? html`
                         <p class="hint">${description}</p>

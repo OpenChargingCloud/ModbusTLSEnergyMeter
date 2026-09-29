@@ -80,15 +80,17 @@ export const sessionsPage: Page = {
 
                     ${session ? html`
 
-                        <table class="kv">
-                            <tr><td>Started</td><td>${new Date(session.startedAt).toLocaleString()} (${formatSince(session.startedAt)})</td></tr>
-                            <tr><td>At</td><td>${session.startValue} ${session.unit}</td></tr>
-                            <tr><td>Session</td><td><code>${session.sessionId}</code></td></tr>
-                            <tr><td>Signed with</td><td><code>${session.keyId}</code></td></tr>
-                            ${session.identification === null ? '' : html`
-                                <tr><td>Started by</td><td><code>${session.identification}</code></td></tr>
-                            `}
-                        </table>
+                        <div class="table-scroll">
+                            <table class="kv">
+                                <tr><td>Started</td><td>${new Date(session.startedAt).toLocaleString()} (${formatSince(session.startedAt)})</td></tr>
+                                <tr><td>At</td><td>${session.startValue} ${session.unit}</td></tr>
+                                <tr><td>Session</td><td><code>${session.sessionId}</code></td></tr>
+                                <tr><td>Signed with</td><td><code>${session.keyId}</code></td></tr>
+                                ${session.identification === null ? '' : html`
+                                    <tr><td>Started by</td><td><code>${session.identification}</code></td></tr>
+                                `}
+                            </table>
+                        </div>
 
                         <p class="hint">
                             The reading it started at stays here until it stops. A start reading handed out on
@@ -195,13 +197,15 @@ export const sessionsPage: Page = {
                         <textarea class="mono" rows="3" id="document-key" readonly>${shown.key.publicKey}</textarea>
                     </label>
 
-                    <table class="kv">
-                        <tr><td>Key</td><td><code>${shown.key.keyId}</code> (${shown.key.algorithm})</td></tr>
-                        <tr><td>Fingerprint</td><td><code>${shown.key.fingerprint}</code></td></tr>
-                        ${shown.key.ocmfAlgorithm === null ? '' : html`
-                            <tr><td>Named in OCMF as</td><td><code>${shown.key.ocmfAlgorithm}</code></td></tr>
-                        `}
-                    </table>
+                    <div class="table-scroll">
+                        <table class="kv">
+                            <tr><td>Key</td><td><code>${shown.key.keyId}</code> (${shown.key.algorithm})</td></tr>
+                            <tr><td>Fingerprint</td><td><code>${shown.key.fingerprint}</code></td></tr>
+                            ${shown.key.ocmfAlgorithm === null ? '' : html`
+                                <tr><td>Named in OCMF as</td><td><code>${shown.key.ocmfAlgorithm}</code></td></tr>
+                            `}
+                        </table>
+                    </div>
 
                     <div class="form-actions">
                         ${shown.text === undefined ? '' : html`

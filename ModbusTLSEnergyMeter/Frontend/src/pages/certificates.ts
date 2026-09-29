@@ -558,9 +558,11 @@ export const certificatesPage: Page = {
                         inside that certificate, and not by anything on this page.
                     </p>
 
-                    <table class="kv">
-                        ${roles.map(role => html`<tr><td colspan="2"><code>${role}</code></td></tr>`)}
-                    </table>
+                    <div class="table-scroll">
+                        <table class="kv">
+                            ${roles.map(role => html`<tr><td colspan="2"><code>${role}</code></td></tr>`)}
+                        </table>
+                    </div>
 
                 </section>
             `;
@@ -588,15 +590,17 @@ export const certificatesPage: Page = {
                         <span class="chip ${answered ? 'ok' : 'warn'}">${request.state}</span>
                     </h2>
 
-                    <table class="kv">
-                        <tr><td>For</td><td>${onListener(request.listener)}</td></tr>
-                        ${request.dnsNames.length    > 0 ? html`<tr><td>DNS names</td><td>${request.dnsNames.join(', ')}</td></tr>` : ''}
-                        ${request.ipAddresses.length > 0 ? html`<tr><td>IP addresses</td><td>${request.ipAddresses.join(', ')}</td></tr>` : ''}
-                        <tr><td>Key</td><td>${nameOf(request.keyType)}</td></tr>
-                        <tr><td>Asked on</td><td>${new Date(request.createdAt).toLocaleString()}</td></tr>
-                        ${request.note ? html`<tr><td>Note</td><td>${request.note}</td></tr>` : ''}
-                        ${answered ? html`<tr><td>Put in as</td><td>${request.answeredBy.map(labelOf).join(', ')}</td></tr>` : ''}
-                    </table>
+                    <div class="table-scroll">
+                        <table class="kv">
+                            <tr><td>For</td><td>${onListener(request.listener)}</td></tr>
+                            ${request.dnsNames.length    > 0 ? html`<tr><td>DNS names</td><td>${request.dnsNames.join(', ')}</td></tr>` : ''}
+                            ${request.ipAddresses.length > 0 ? html`<tr><td>IP addresses</td><td>${request.ipAddresses.join(', ')}</td></tr>` : ''}
+                            <tr><td>Key</td><td>${nameOf(request.keyType)}</td></tr>
+                            <tr><td>Asked on</td><td>${new Date(request.createdAt).toLocaleString()}</td></tr>
+                            ${request.note ? html`<tr><td>Note</td><td>${request.note}</td></tr>` : ''}
+                            ${answered ? html`<tr><td>Put in as</td><td>${request.answeredBy.map(labelOf).join(', ')}</td></tr>` : ''}
+                        </table>
+                    </div>
 
                     <div class="form-actions">
                         <a class="btn small" href="${api.certificates.requestURL(request.id)}" download>Download the request</a>

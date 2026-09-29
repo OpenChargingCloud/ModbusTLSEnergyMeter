@@ -165,13 +165,15 @@ export const signingKeysPage: Page = {
                         ${key.isDefault ? html`<span class="chip ok">the identity</span>` : ''}
                     </h2>
 
-                    <table class="kv">
-                        <tr><td>Id</td><td><code>${key.id}</code></td></tr>
-                        <tr><td>Fingerprint</td><td><code>${key.fingerprint}</code></td></tr>
-                        <tr><td>Made</td><td>${new Date(key.createdAt).toLocaleString()}</td></tr>
-                        <tr><td>Good for</td><td>${purposeOf(key.algorithm)}</td></tr>
-                        ${key.note === null ? '' : html`<tr><td>Note</td><td>${key.note}</td></tr>`}
-                    </table>
+                    <div class="table-scroll">
+                        <table class="kv">
+                            <tr><td>Id</td><td><code>${key.id}</code></td></tr>
+                            <tr><td>Fingerprint</td><td><code>${key.fingerprint}</code></td></tr>
+                            <tr><td>Made</td><td>${new Date(key.createdAt).toLocaleString()}</td></tr>
+                            <tr><td>Good for</td><td>${purposeOf(key.algorithm)}</td></tr>
+                            ${key.note === null ? '' : html`<tr><td>Note</td><td>${key.note}</td></tr>`}
+                        </table>
+                    </div>
 
                     <label class="stacked">The public key
                         <textarea class="mono" rows="3" readonly data-key="${key.id}">${key.publicKey}</textarea>
