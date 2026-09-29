@@ -319,14 +319,31 @@ export interface MeterReadings {
 
 // Name resolution and time
 
-/** One name server this meter asks. */
-export interface DNSServer {
+/**
+ * One name server this meter asks - and what it is held to, in the keys the
+ * meter writes that under, which the DNS page does not show and sends back as
+ * they came.
+ */
+export interface DNSServer extends PinKeys {
     /** An IP address or a host name. */
     address:              string;
     port:                 number;
     transport:            string;
     /** Its own query timeout, or null for the one in the settings. */
     queryTimeoutSeconds:  number | null;
+    /**
+     * What it is held to, as the meter says it: null for nothing beyond the
+     * usual checks - and not there at all on a server added on the page,
+     * which the meter has nothing of.
+     */
+    heldTo?:              ServerPins | null;
+    /**
+     * What the page had it held to, in the keys above: the meter changes
+     * only what was changed on the page, and keeps what the server learned
+     * while the page was open. Only on a server the page loaded, and never
+     * read back.
+     */
+    pinsAsShown?:         PinKeys;
 }
 
 /** What may be changed about the name resolution while the meter runs. */
@@ -389,16 +406,49 @@ export interface NTSServerEntry {
     rootFingerprint?:         string;
     /** What a fingerprint that does not match does: refuse the server - what a pin means anyway - or only write it down. */
     onMismatch?:              PinMismatch;
+    /**
+     * What the page showed the server held to, in the keys above: the meter
+     * changes only what was changed on the page, and keeps what the server
+     * learned while the page was open. Only on a server the page loaded.
+     */
+    pinsAsShown?:             PinKeys;
 }
 
-/** What a time server's fingerprint that does not match does. */
-export type PinMismatch = 'refuse' | 'record';
+/**
+ * What a fingerprint that does not match does: refuse the server, use it and
+ * write the mismatch down, or use it and only say so in the log. The NTS
+ * dialog offers the first two; the third is only ever read here.
+ */
+export type PinMismatch = 'refuse' | 'record' | 'accept';
 
-/** What a time server is held to, where it is held to anything. */
-export interface NTSPins {
-    certificate:  string | null;
-    root:         string | null;
-    onMismatch:   PinMismatch;
+/** What a server is held to from the first time it is believed. */
+export type TrustOnFirstUse = 'root' | 'certificate';
+
+/** What a time server or a name server is held to, where it is held to anything. */
+export interface ServerPins {
+    /** The first certificate and the first root - what the NTS page shows and edits. */
+    certificate:       string | null;
+    root:              string | null;
+    /** All of them, where the configuration file holds it to more than one. */
+    certificates?:     string[];
+    roots?:            string[];
+    onMismatch:        PinMismatch;
+    /** What it learns the first time it is believed, where it is to learn anything. */
+    trustOnFirstUse?:  TrustOnFirstUse | null;
+}
+
+/**
+ * What a server is held to, in the keys its entry is written with: one of a
+ * kind under the singular key, several under the plural - the way the
+ * configuration file says it, and the way the meter takes it back.
+ */
+export interface PinKeys {
+    certificateFingerprint?:   string;
+    certificateFingerprints?:  string[];
+    rootFingerprint?:          string;
+    rootFingerprints?:         string[];
+    onMismatch?:               PinMismatch;
+    trustOnFirstUse?:          TrustOnFirstUse;
 }
 
 /** What the meter made of the certificate a time server showed at its last key exchange. */
@@ -505,7 +555,7 @@ export interface NTSTimeSource {
     /** The SHA-256 fingerprint of the certificate the last key exchange showed. */
     certificate?:   string | null;
     /** What this server is held to, or null when it is held to nothing but the usual checks. */
-    heldTo?:        NTSPins | null;
+    heldTo?:        ServerPins | null;
     /** What the meter made of the certificate at the last key exchange. */
     judgement?:     TimeServerJudgement | null;
 }

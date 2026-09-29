@@ -4,6 +4,7 @@ import { html, must, render } from '../html';
 import type { Page } from '../router';
 import { shell } from '../shell';
 import { checked, errorMessage, numberField } from '../ui';
+import { sentOf } from './dnsServers';
 
 /**
  * How this meter resolves names.
@@ -273,7 +274,9 @@ export const dnsPage: Page = {
                             queryTimeoutSeconds:  numberField(form, 'queryTimeoutSeconds'),
                             maxCNAMEFollows:      numberField(form, 'maxCNAMEFollows'),
                             maxRetries:           numberField(form, 'maxRetries'),
-                            servers:              servers.filter(server => server.address.trim().length > 0)
+                            // Each with what it was held to when the page
+                            // loaded it - see sentOf.
+                            servers:              servers.filter(server => server.address.trim().length > 0).map(sentOf)
                         });
 
                         servers = current.servers.map(server => ({ ...server }));

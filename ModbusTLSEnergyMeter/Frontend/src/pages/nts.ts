@@ -4,7 +4,7 @@ import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
 import { shell } from '../shell';
 import { errorMessage, formatTimestamp, whileSaving } from '../ui';
-import { entryOf, nameTaken, readable, withServer, withoutServer, type UsualPorts } from './ntsServers';
+import { nameTaken, pinsShown, readable, sentOf, withServer, withoutServer, type UsualPorts } from './ntsServers';
 
 /**
  * Where this meter reads the time: its time servers, the rules for believing
@@ -68,10 +68,13 @@ export const ntsPage: Page = {
             };
         }
 
-        /** The list as the meter has it, as entries it can be told again. */
+        /**
+         * The list as the meter has it, as entries it can be told again -
+         * each with what the page showed it held to.
+         */
         function entries(): NTSServerEntry[] {
             const usual = usualPorts();
-            return (current?.timeSources ?? []).map(source => entryOf(source, usual));
+            return (current?.timeSources ?? []).map(source => sentOf(source, usual));
         }
 
 
@@ -723,6 +726,11 @@ export const ntsPage: Page = {
                 if (rootedIn.length > 0)                                 entry.rootFingerprint         = rootedIn;
                 if ((heldTo.length > 0 || rootedIn.length > 0) &&
                     mismatch === 'record')                               entry.onMismatch              = 'record';
+
+                // And what the dialog showed it held to, so that the meter
+                // changes only what was changed here - see pinsShown.
+                if (shown !== null)
+                    entry.pinsAsShown = pinsShown(shown.heldTo);
 
                 void tell(withServer(list, index, entry));
 

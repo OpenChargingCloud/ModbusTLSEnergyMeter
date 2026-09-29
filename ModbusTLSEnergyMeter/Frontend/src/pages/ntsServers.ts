@@ -1,4 +1,4 @@
-import type { NTSServerEntry, NTSTimeSource } from '../api/client';
+import type { NTSServerEntry, NTSTimeSource, PinKeys, ServerPins } from '../api/client';
 
 /**
  * The list of time servers as the NTS page edits it.
@@ -48,15 +48,52 @@ export function entryOf(source: NTSTimeSource, usual: UsualPorts): NTSServerEntr
     // What it is held to, which the page shows and does not always edit - and
     // the list goes back whole, so a pin left out here is a pin deleted by
     // the next save of anything else.
-    const pins = source.heldTo ?? null;
+    return { ...entry, ...pinsShown(source.heldTo) };
 
-    if (pins?.certificate)                 entry.certificateFingerprint  = pins.certificate;
-    if (pins?.root)                        entry.rootFingerprint         = pins.root;
-    if (pins && pins.onMismatch !== 'refuse')
-                                           entry.onMismatch              = pins.onMismatch;
+}
 
-    return entry;
 
+/**
+ * What the page shows a server held to - its first certificate, its first
+ * root, and whether a mismatch is only written down - in the keys its entry
+ * says it with.
+ *
+ * What the page does not show, it cannot have changed: a second certificate
+ * or root from the configuration file, a root still to be learned on first
+ * use, a mismatch that is let through. Sent beside the entry as what the page
+ * showed, it is what the meter keeps.
+ *
+ * A mismatch only beside a pin: the meter refuses one on a server held to
+ * none, and would refuse the whole list with it.
+ */
+export function pinsShown(heldTo: ServerPins | null | undefined): PinKeys {
+
+    const keys: PinKeys = {};
+
+    if (heldTo?.certificate)  keys.certificateFingerprint  = heldTo.certificate;
+    if (heldTo?.root)         keys.rootFingerprint         = heldTo.root;
+
+    if ((keys.certificateFingerprint || keys.rootFingerprint) && heldTo?.onMismatch === 'record')
+        keys.onMismatch = 'record';
+
+    return keys;
+
+}
+
+
+/**
+ * A time server as the page sends it back: its entry, and what the page
+ * showed it held to under "pinsAsShown".
+ *
+ * The page sends the whole list, from what it loaded, and a server that
+ * learned its root on first use while the page was open is held to it by
+ * then, without the page having shown it. Sent without what the page showed,
+ * the list is what every server is held to from then on, and the save of
+ * another server's priority takes that root away again. Told what the page
+ * showed, the meter changes only what was changed on the page.
+ */
+export function sentOf(source: NTSTimeSource, usual: UsualPorts): NTSServerEntry {
+    return { ...entryOf(source, usual), pinsAsShown: pinsShown(source.heldTo) };
 }
 
 
