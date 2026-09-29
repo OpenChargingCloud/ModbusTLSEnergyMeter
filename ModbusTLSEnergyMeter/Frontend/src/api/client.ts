@@ -1,8 +1,5 @@
-import { config } from '@node/config';
-import { actWithin,
-         ApiError,
-         apiURL,
-         NoAnswer,
+import { apiURL,
+         extRequest,
          nodeAPI,
          request,
          type Certificate        as NodeCertificate,
@@ -456,89 +453,6 @@ export interface LogVerification {
 
 
 // Asking
-
-/**
- * One request to the HTTPExt API, where Hermod keeps the accounts - with the
- * deadline, and the words for silence, that every request to the node's own
- * API has.
- *
- * Signing in and out are every node's and go through @node/api/client. What
- * is asked here is what only a meter's pages ask: a change of one's own
- * password, which Hermod checks against the current one and answers with 204,
- * or with a "description" of why not.
- */
-async function extRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
-
-    const giveUp = new AbortController();
-    const timer  = setTimeout(() => giveUp.abort(), actWithin);
-
-    let response:  Response;
-    let text:      string;
-
-    try
-    {
-
-        // Same origin, so the session cookie travels with it.
-        response = await fetch(config.extBase + path, {
-                             method,
-                             headers:      { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                             credentials:  'same-origin',
-                             signal:       giveUp.signal,
-                             body:         body !== undefined ? JSON.stringify(body) : undefined
-                         });
-
-        text = response.status === 204 ? '' : await response.text();
-
-    }
-    catch (problem)
-    {
-
-        const meter = `The ${config.nodeName}`;
-
-        if (giveUp.signal.aborted)
-            throw new NoAnswer('ran out of time',
-                               `${meter} did not answer within ${Math.round(actWithin / 1000)} seconds, so this page ` +
-                               'stopped waiting. It may still have carried this out - reload to see what it now says.');
-
-        // The browser's own word for this is "Failed to fetch".
-        if (problem instanceof TypeError)
-            throw new NoAnswer('could not be reached',
-                               `${meter} could not be reached. It may be switched off, restarting, ` +
-                               'or on the other side of a network that is down.');
-
-        throw problem;
-
-    }
-    finally
-    {
-        clearTimeout(timer);
-    }
-
-    let json: unknown = null;
-
-    try {
-        json = text.length > 0 ? JSON.parse(text) : null;
-    }
-    catch {
-        if (response.ok)
-            throw new ApiError(response.status, `Invalid JSON in the response of ${method} ${path}`, text);
-    }
-
-    if (!response.ok) {
-
-        const said = typeof json === 'object' && json !== null
-                         ? [ 'description', 'error', 'message' ].map(key => (json as Record<string, unknown>)[key]).
-                                                                 find(value => typeof value === 'string')
-                         : undefined;
-
-        throw new ApiError(response.status, typeof said === 'string' ? said : `${response.status} ${response.statusText}`, json);
-
-    }
-
-    return (json ?? undefined) as T;
-
-}
-
 
 /** The routes every node has, typed with what a meter says its own of them are. */
 const node = nodeAPI<{ me: Me; status: Status; configuration: NodeConfiguration; kind: CertificateKind; store: CertificateStore }>();
