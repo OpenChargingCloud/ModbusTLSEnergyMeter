@@ -1,5 +1,6 @@
 import { api, type SigningKey, type SigningKeys } from '../api/client';
 import { auth } from '../auth';
+import { keepDrafts } from '@node/drafts';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
 import { mayButNot, shell } from '@node/shell';
@@ -219,13 +220,7 @@ export const signingKeysPage: Page = {
             if (!mayManage)
                 return;
 
-            const select  = content.querySelector<HTMLSelectElement>('#algorithm');
-            const purpose = content.querySelector<HTMLElement>('#algorithm-purpose');
-
-            select?.addEventListener('change', () => {
-                if (purpose)
-                    purpose.textContent = purposeOf(select.value);
-            });
+            content.querySelector<HTMLSelectElement>('#algorithm')?.addEventListener('change', sayWhatTheAlgorithmIsFor);
 
             content.querySelector<HTMLFormElement>('#add-form')?.addEventListener('submit', event => {
 
@@ -241,7 +236,7 @@ export const signingKeysPage: Page = {
                     try
                     {
                         await api.keys.create(field(form, 'algorithm'), note.length > 0 ? note : undefined);
-                        await load();
+                        await load('add-form');
                     }
                     catch (problem)
                     {
@@ -263,7 +258,7 @@ export const signingKeysPage: Page = {
                         return;
 
                     void (async () => {
-                        try   { await api.keys.setDefault(id); await load(); }
+                        try   { await api.keys.setDefault(id); await load(null); }
                         catch (problem) { alert(errorMessage(problem)); }
                     })();
 
@@ -283,7 +278,7 @@ export const signingKeysPage: Page = {
                         return;
 
                     void (async () => {
-                        try   { await api.keys.remove(id); await load(); }
+                        try   { await api.keys.remove(id); await load(null); }
                         catch (problem) { alert(errorMessage(problem)); }
                     })();
 
@@ -294,7 +289,43 @@ export const signingKeysPage: Page = {
         }
 
 
-        async function load(): Promise<void> {
+        /**
+         * What the algorithm chosen for a new key is good for, said where it
+         * is chosen: as it is chosen, and again once the page is drawn anew
+         * with the choice put back, which keepDrafts does without telling the
+         * page.
+         */
+        function sayWhatTheAlgorithmIsFor(): void {
+
+            const select   = content.querySelector<HTMLSelectElement>('#algorithm');
+            const purpose  = content.querySelector<HTMLElement>('#algorithm-purpose');
+
+            if (select !== null && purpose !== null)
+                purpose.textContent = purposeOf(select.value);
+
+        }
+
+        /**
+         * The page drawn anew after something was done on it, over the page as
+         * it is: what is typed into its form is kept, unless the form is the
+         * one whose save this follows - saved, or null where none was.
+         */
+        function drawAgain(saved: string | null): void {
+
+            keepDrafts(content, saved, draw);
+
+            sayWhatTheAlgorithmIsFor();
+
+        }
+
+
+        /**
+         * The keys as the meter has them now: drawn from nothing the first time
+         * and on Reload, and after something was done on the page drawn anew
+         * over it, keeping what is typed - saved is the form whose save it
+         * follows, or null.
+         */
+        async function load(saved?: string | null): Promise<void> {
 
             try
             {
@@ -305,7 +336,11 @@ export const signingKeysPage: Page = {
                     return;
 
                 store = next;
-                draw();
+
+                if (saved === undefined)
+                    draw();
+                else
+                    drawAgain(saved);
 
             }
             catch (problem)

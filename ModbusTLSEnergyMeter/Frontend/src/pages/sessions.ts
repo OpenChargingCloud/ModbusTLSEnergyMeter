@@ -1,5 +1,6 @@
 import { api, type PublicKeyOut, type SessionState, type SignedMeterValue } from '../api/client';
 import { auth } from '../auth';
+import { keepDrafts } from '@node/drafts';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
 import { mayButNot, shell } from '@node/shell';
@@ -258,7 +259,7 @@ export const sessionsPage: Page = {
                                      'the session rather than after it.'
                         };
 
-                        await load();
+                        await load('start-form');
 
                     }
                     catch (problem)
@@ -289,7 +290,7 @@ export const sessionsPage: Page = {
                                      'somebody has to be trusted to have done correctly.'
                         };
 
-                        await load();
+                        await load(null);
 
                     }
                     catch (problem)
@@ -323,7 +324,7 @@ export const sessionsPage: Page = {
                                 ...(signed.note !== undefined ? { note: signed.note } : {})
                             };
 
-                            draw();
+                            keepDrafts(content, null, draw);
 
                         }
                         catch (problem)
@@ -358,13 +359,19 @@ export const sessionsPage: Page = {
 
             must<HTMLButtonElement>(content, '#dismiss-document').addEventListener('click', () => {
                 shown = null;
-                draw();
+                keepDrafts(content, null, draw);
             });
 
         }
 
 
-        async function load(): Promise<void> {
+        /**
+         * The session as the meter has it now: drawn from nothing the first
+         * time and on Reload, and after one was started or stopped drawn anew
+         * over the page, keeping what is typed - saved is the form whose save
+         * it follows, or null.
+         */
+        async function load(saved?: string | null): Promise<void> {
 
             try
             {
@@ -375,7 +382,11 @@ export const sessionsPage: Page = {
                     return;
 
                 state = next;
-                draw();
+
+                if (saved === undefined)
+                    draw();
+                else
+                    keepDrafts(content, saved, draw);
 
             }
             catch (problem)

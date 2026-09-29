@@ -1,5 +1,6 @@
 import { api, type AnsweredRequest, type Certificate, type CertificateKind, type CertificateStore, type NewSigningRequest, type SigningRequest, type SigningRequests, type TLSListener } from '../api/client';
 import { auth } from '../auth';
+import { keepDrafts } from '@node/drafts';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import { hasUsages, usageName, usagesOf } from '@node/pages/certificateUsages';
 import type { Page } from '@node/router';
@@ -188,6 +189,11 @@ export const certificatesPage: Page = {
 
         let busy = false;
 
+        // The kind chosen in the import form, once another than the one it is
+        // drawn with is: the kind whose uses it offers when the page is drawn
+        // anew, what is typed into it kept.
+        let importing: CertificateKind | null = null;
+
 
         function draw(): void {
 
@@ -360,6 +366,14 @@ export const certificatesPage: Page = {
             const first  = kinds[0];
             const off    = busy ? html`disabled` : '';
 
+            // The uses offered are those of the kind chosen - drawn anew, of the
+            // one somebody chose, which keepDrafts puts back. It puts the boxes
+            // ticked back box by box: drawn with the uses of the first kind,
+            // what was ticked for an identity would have gone into the boxes of
+            // a root, and a form for a client root, which has none, would have
+            // been left as drawn, everything typed into it with it.
+            const uses   = importing ?? first;
+
             return html`
                 <section class="card">
 
@@ -386,8 +400,8 @@ export const certificatesPage: Page = {
                             </select>
                         </label>
 
-                        <fieldset class="usages" id="import-usages" ${first !== undefined && hasUsages(store, first) ? '' : html`hidden`}>
-                            ${first === undefined ? '' : usagesFields(first, null)}
+                        <fieldset class="usages" id="import-usages" ${uses !== undefined && hasUsages(store, uses) ? '' : html`hidden`}>
+                            ${uses === undefined ? '' : usagesFields(uses, null)}
                         </fieldset>
 
                         <label>What opens it, if it is a protected PKCS#12
@@ -560,6 +574,11 @@ export const certificatesPage: Page = {
             const answered  = request.state === 'answered';
             const off       = busy ? html`disabled` : '';
 
+            // The certificate pasted for a request is a form of its own, known
+            // by the request it answers - a draft like the others, which Reload
+            // and the menu ask about before they throw it away, and which the
+            // page keeps when it is drawn anew for something done elsewhere on
+            // it. In a box that was no form, both threw it away without a word.
             return html`
                 <section class="card signing-request">
 
@@ -587,9 +606,9 @@ export const certificatesPage: Page = {
                     </div>
 
                     ${mayChange ? html`
-                        <div class="upload">
+                        <form class="upload" data-id="${request.id}">
                             <label>The signed certificate, PEM encoded, with the intermediates above it
-                                <textarea class="mono" rows="6" data-pem="${request.id}" ${off}
+                                <textarea class="mono" rows="6" name="pem" data-pem="${request.id}" ${off}
                                           placeholder="-----BEGIN CERTIFICATE-----"></textarea>
                             </label>
                             <div class="form-actions">
@@ -599,7 +618,7 @@ export const certificatesPage: Page = {
                                 <span class="form-notice" data-answer-note="${request.id}"  role="status"></span>
                                 <span class="form-error"  data-answer-error="${request.id}" role="alert"></span>
                             </div>
-                        </div>
+                        </form>
                     ` : ''}
 
                 </section>
@@ -729,6 +748,8 @@ export const certificatesPage: Page = {
                 const kind    = (event.target as HTMLSelectElement).value as CertificateKind;
                 const usages  = must<HTMLElement>(content, '#import-usages');
 
+                importing = kind;
+
                 usages.hidden = !hasUsages(current!, kind);
                 render(usages, usagesFields(kind, null));
 
@@ -753,20 +774,8 @@ export const certificatesPage: Page = {
                 void ask(requestForm);
             });
 
-            // What the chosen listener and the chosen key mean, said as they
-            // are chosen rather than discovered after a trip to the CA.
-            const listener      = must<HTMLSelectElement>(content, '#request-listener');
-            const listenerNote  = must<HTMLElement>      (content, '#request-listener-note');
-            const keyType       = must<HTMLSelectElement>(content, '#request-key-type');
-            const keyTypeNote   = must<HTMLElement>      (content, '#request-key-type-note');
-
-            const sayWhatTheyMean = (): void => {
-                listenerNote.textContent  = aboutListener[listener.value]?.checkedBy ?? '';
-                keyTypeNote.textContent   = remarkOf(keyType.value);
-            };
-
-            listener.addEventListener('change', sayWhatTheyMean);
-            keyType. addEventListener('change', sayWhatTheyMean);
+            must<HTMLSelectElement>(content, '#request-listener').addEventListener('change', sayWhatTheyMean);
+            must<HTMLSelectElement>(content, '#request-key-type').addEventListener('change', sayWhatTheyMean);
 
             sayWhatTheyMean();
 
@@ -775,6 +784,28 @@ export const certificatesPage: Page = {
 
             for (const button of content.querySelectorAll<HTMLElement>('[data-remove-request]'))
                 button.addEventListener('click', () => void throwAway(button.dataset['removeRequest'] ?? ''));
+
+        }
+
+
+        /**
+         * What the chosen listener and the chosen key of a request mean, said
+         * as they are chosen rather than discovered after a trip to the CA -
+         * and again once the page is drawn anew with the choices put back,
+         * which keepDrafts does without telling the page.
+         */
+        function sayWhatTheyMean(): void {
+
+            const listener      = content.querySelector<HTMLSelectElement>('#request-listener');
+            const listenerNote  = content.querySelector<HTMLElement>      ('#request-listener-note');
+            const keyType       = content.querySelector<HTMLSelectElement>('#request-key-type');
+            const keyTypeNote   = content.querySelector<HTMLElement>      ('#request-key-type-note');
+
+            if (listener !== null && listenerNote !== null)
+                listenerNote.textContent  = aboutListener[listener.value]?.checkedBy ?? '';
+
+            if (keyType !== null && keyTypeNote !== null)
+                keyTypeNote.textContent   = remarkOf(keyType.value);
 
         }
 
@@ -831,7 +862,7 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load();
+            await load('import-form');
 
             sayAfterwards('#import-note', `Imported ${imported.label}, and switched on.`);
 
@@ -948,7 +979,7 @@ export const certificatesPage: Page = {
 
                     // The store again rather than the one certificate the
                     // answer carries, as after every other change on this page.
-                    await load();
+                    await load(null);
 
                 })();
 
@@ -1023,7 +1054,7 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load();
+            await load('request-form');
 
             sayAfterwards('#request-note', 'Made. The request is on its way to your downloads.');
 
@@ -1068,7 +1099,7 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load();
+            await load(id);
 
             sayAfterwards(`[data-answer-note="${id}"]`, `Put in as ${answered.certificate.label}.`);
 
@@ -1096,7 +1127,8 @@ export const certificatesPage: Page = {
          * One change, with the page held still while the meter is told, and
          * everything read again once it took it: a change to one certificate
          * can change what a listener shows, and what a request was answered
-         * with.
+         * with. Drawn anew over the page, what is typed into its forms is
+         * kept: none of them is what was changed.
          *
          * What the meter refuses - taking away the last certificate a listener
          * could show, or the last CA clients may be issued by - is said where
@@ -1119,7 +1151,7 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load();
+            await load(null);
 
         }
 
@@ -1147,7 +1179,7 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load();
+            await load(null);
 
             sayAfterwards('#store-note', `The directory was read again: ${everything().length} certificate(s).`);
 
@@ -1169,7 +1201,28 @@ export const certificatesPage: Page = {
         }
 
 
-        async function load(): Promise<void> {
+        /**
+         * The page drawn anew after something was done on it, over the page as
+         * it is: what is typed into its forms is kept, but for the form whose
+         * save this follows - saved, or null where none was - which is drawn
+         * as the meter has it now.
+         */
+        function drawAgain(saved: string | null): void {
+
+            keepDrafts(content, saved, draw);
+
+            sayWhatTheyMean();
+
+        }
+
+
+        /**
+         * The store, the requests and the roles as the meter has them now:
+         * drawn from nothing the first time and on Reload, and after something
+         * was done on the page drawn anew over it, keeping what is typed -
+         * saved is the form whose save it follows, or null.
+         */
+        async function load(saved?: string | null): Promise<void> {
 
             try
             {
@@ -1190,7 +1243,15 @@ export const certificatesPage: Page = {
                 requests  = asked;
                 roles     = configuration.sunSpecRoles;
 
-                draw();
+                // Drawn from nothing, or with the import form saved, the
+                // import form offers the uses of the kind it is drawn with.
+                if (saved === undefined || saved === 'import-form')
+                    importing = null;
+
+                if (saved === undefined)
+                    draw();
+                else
+                    drawAgain(saved);
 
             }
             catch (problem)
@@ -1203,11 +1264,11 @@ export const certificatesPage: Page = {
 
         }
 
-        // A file chosen to import and a request filled in are in their forms
-        // alone until they are sent. What a certificate is for is chosen in
-        // a modal dialog, which is not under content: while it is open,
-        // neither Reload nor the menu can be reached, and it is closed only
-        // by saving or by cancelling it.
+        // A file chosen to import, a request filled in and a certificate
+        // pasted for one are in their forms alone until they are sent. What a
+        // certificate is for is chosen in a modal dialog, which is not under
+        // content: while it is open, neither Reload nor the menu can be
+        // reached, and it is closed only by saving or by cancelling it.
         const release = unsaved.heldBy(() => anyFormTypedSinceDrawn(content));
 
         void load();

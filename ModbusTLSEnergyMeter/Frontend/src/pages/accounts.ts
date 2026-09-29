@@ -1,5 +1,6 @@
 import { api, type Account, type RoleInfo } from '../api/client';
 import { auth } from '../auth';
+import { keepDrafts } from '@node/drafts';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
 import { mayButNot, shell } from '@node/shell';
@@ -289,7 +290,7 @@ export const accountsPage: Page = {
 
             must<HTMLButtonElement>(content, '#dismiss-password').addEventListener('click', () => {
                 issued = null;
-                draw();
+                drawAgain(null);
             });
 
         }
@@ -337,16 +338,10 @@ export const accountsPage: Page = {
 
         function wireAddForm(): void {
 
-            const note        = must<HTMLElement>(content, '#add-note');
-            const error       = must<HTMLElement>(content, '#add-error');
-            const choice      = must<HTMLSelectElement>(content, '#role-choice');
-            const description = must<HTMLElement>(content, '#role-description');
+            const note   = must<HTMLElement>(content, '#add-note');
+            const error  = must<HTMLElement>(content, '#add-error');
 
-            // What a role grants, said where it is chosen rather than on a page
-            // somebody would have to go and look for.
-            choice.addEventListener('change', () => {
-                description.textContent = roleOf(choice.value)?.description ?? '';
-            });
+            must<HTMLSelectElement>(content, '#role-choice').addEventListener('change', sayWhatTheRoleGrants);
 
             must<HTMLFormElement>(content, '#add-form').addEventListener('submit', event => {
 
@@ -377,7 +372,7 @@ export const accountsPage: Page = {
                                            `${created.account.roleTitle.toLowerCase()}, with this password.`
                             };
 
-                        await load();
+                        await load('add-form');
 
                     }
                     catch (problem)
@@ -422,7 +417,7 @@ export const accountsPage: Page = {
                                 return;
                             }
 
-                            await load();
+                            await load(null);
 
                         }
                         catch (problem)
@@ -464,7 +459,7 @@ export const accountsPage: Page = {
                                                 'account has ended.'
                                 };
 
-                            await load();
+                            await load(null);
 
                         }
                         catch (problem)
@@ -506,7 +501,7 @@ export const accountsPage: Page = {
                                 return;
                             }
 
-                            await load();
+                            await load(null);
 
                         }
                         catch (problem)
@@ -522,7 +517,44 @@ export const accountsPage: Page = {
         }
 
 
-        async function load(): Promise<void> {
+        /**
+         * What the role chosen for a new account grants, said where it is
+         * chosen rather than on a page somebody would have to go and look for:
+         * as it is chosen, and again once the page is drawn anew with the
+         * choice put back, which keepDrafts does without telling the page.
+         */
+        function sayWhatTheRoleGrants(): void {
+
+            const choice       = content.querySelector<HTMLSelectElement>('#role-choice');
+            const description  = content.querySelector<HTMLElement>('#role-description');
+
+            if (choice !== null && description !== null)
+                description.textContent = roleOf(choice.value)?.description ?? '';
+
+        }
+
+        /**
+         * The page drawn anew after something was done on it, over the page as
+         * it is: what is typed into its forms is kept, but for the form whose
+         * save this follows - saved, or null where none was - which is drawn
+         * as the meter has it now.
+         */
+        function drawAgain(saved: string | null): void {
+
+            keepDrafts(content, saved, draw);
+
+            sayWhatTheRoleGrants();
+
+        }
+
+
+        /**
+         * The accounts as the meter has them now: drawn from nothing the first
+         * time and on Reload, and after something was done on the page drawn
+         * anew over it, keeping what is typed - saved is the form whose save
+         * it follows, or null.
+         */
+        async function load(saved?: string | null): Promise<void> {
 
             try
             {
@@ -552,7 +584,10 @@ export const accountsPage: Page = {
                     roles    = answer.roles;
                 }
 
-                draw();
+                if (saved === undefined)
+                    draw();
+                else
+                    drawAgain(saved);
 
             }
             catch (problem)
