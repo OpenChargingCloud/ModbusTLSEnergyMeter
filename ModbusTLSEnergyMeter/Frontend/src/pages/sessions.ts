@@ -2,7 +2,7 @@ import { api, type PublicKeyOut, type SessionState, type SignedMeterValue } from
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '@node/shell';
+import { mayButNot, shell } from '@node/shell';
 import { copyText, errorMessage, field, formatSince } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 
@@ -66,8 +66,7 @@ export const sessionsPage: Page = {
 
                 ${mayDrive ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may watch a charging session
-                        but not start or stop one, and may not ask for a signed reading.
+                        ${mayButNot('watch a charging session', 'start or stop one, or ask for a signed reading')}
                     </div>
                 `}
 

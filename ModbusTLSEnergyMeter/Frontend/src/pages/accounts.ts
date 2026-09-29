@@ -2,7 +2,7 @@ import { api, type Account, type RoleInfo } from '../api/client';
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '@node/shell';
+import { mayButNot, shell } from '@node/shell';
 import { errorMessage, field } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 
@@ -179,9 +179,7 @@ export const accountsPage: Page = {
 
                 ` : html`
                     <div class="notice">
-                        Signed in as ${me?.roleTitle ?? 'somebody'}, which may
-                        change its own password but not see or hand out accounts. Ask an administrator of
-                        this meter for that.
+                        ${mayButNot('change its own password', 'see or hand out accounts')}
                     </div>
                 `}
             `);

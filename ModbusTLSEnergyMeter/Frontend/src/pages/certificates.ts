@@ -3,7 +3,7 @@ import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import { hasUsages, usageName, usagesOf } from '@node/pages/certificateUsages';
 import type { Page } from '@node/router';
-import { shell } from '@node/shell';
+import { mayButNot, shell } from '@node/shell';
 import { errorMessage, field, whileSaving } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 import { toURL } from '@node/basePath';
@@ -206,8 +206,7 @@ export const certificatesPage: Page = {
 
                 ${mayChange ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may look at the certificates but
-                        not put one in, change one or ask for one.
+                        ${mayButNot('look at the certificates', 'put one in, change one or ask for one')}
                     </div>
                 `}
 

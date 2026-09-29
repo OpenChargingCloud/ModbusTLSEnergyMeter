@@ -2,7 +2,7 @@ import { api, type SigningKey, type SigningKeys } from '../api/client';
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '@node/shell';
+import { mayButNot, shell } from '@node/shell';
 import { copyText, errorMessage, field } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 
@@ -75,8 +75,7 @@ export const signingKeysPage: Page = {
 
                 ${mayManage ? '' : html`
                     <div class="notice">
-                        Signed in as ${auth.user?.roleTitle ?? 'somebody'}, which may look at the signing keys
-                        but not make or remove one.
+                        ${mayButNot('look at the signing keys', 'make or remove one')}
                     </div>
                 `}
 
