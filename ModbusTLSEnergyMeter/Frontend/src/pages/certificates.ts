@@ -1,6 +1,7 @@
 import { api, type AnsweredRequest, type Certificate, type CertificateKind, type CertificateStore, type NewSigningRequest, type SigningRequest, type SigningRequests, type TLSListener } from '../api/client';
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
+import { hasUsages, usageName, usagesOf } from '@node/pages/certificateUsages';
 import type { Page } from '@node/router';
 import { shell } from '@node/shell';
 import { errorMessage, field, whileSaving } from '@node/ui';
@@ -24,24 +25,18 @@ const expiringSoon = 21;
 
 
 /**
- * What a use is called on this page: the servers a root or a server
- * certificate is kept for, in the words of the pages they are set on, and the
- * listeners an identity may be shown on.
+ * What the listeners an identity may be shown on are called on this page. The
+ * servers a root or a server certificate is kept for are called what every
+ * node calls them - see usageName.
  */
-const usageNames: Record<string, string> = {
-    dns:     'name servers',
-    nts:     'time servers',
+const listenerNames: Record<string, string> = {
     modbus:  'Modbus/TLS',
     web:     'web interface'
 };
 
-function usageName(usage: string): string {
-    return usageNames[usage] ?? usage;
-}
-
 /** A listener after "shown on": the web interface with its article, Modbus/TLS without one. */
 function onListener(listener: string): string {
-    return listener === 'web' ? `the ${usageName(listener)}` : usageName(listener);
+    return listener === 'web' ? `the ${usageName(listener, listenerNames)}` : usageName(listener, listenerNames);
 }
 
 /** What a certificate told nothing about what it is for is for: every use - for an identity, every listener. */
@@ -321,34 +316,22 @@ export const certificatesPage: Page = {
         }
 
         /**
-         * What a certificate of this kind may be told it is for - its kind's
-         * own list, because a root is told servers and an identity listeners.
-         */
-        function usagesOf(kind: CertificateKind): string[] {
-            return current?.kinds[kind]?.usages ?? [];
-        }
-
-        /** Whether a certificate of this kind is told what it is for. */
-        function hasUsages(kind: CertificateKind): boolean {
-            return usagesOf(kind).length > 0;
-        }
-
-        /**
          * The boxes that say what a certificate of a kind is for, one per use
-         * its kind may be told - none ticked for every use, which is what a
-         * certificate kept before there were uses is as well, and what the
-         * meter would refuse to be told as an empty list.
+         * its kind may be told - its kind's own list, because a root is told
+         * servers and an identity listeners. None ticked for every use, which
+         * is what a certificate kept before there were uses is as well, and
+         * what the meter would refuse to be told as an empty list.
          */
         function usagesFields(kind:    CertificateKind,
                               ticked:  readonly string[] | null | undefined): HTMLFragment {
 
             return html`
                 <legend>${kind === 'tlsIdentity' ? 'Which listener may show it' : 'What it is kept for'}</legend>
-                ${usagesOf(kind).map(usage => html`
+                ${usagesOf(current!, kind).map(usage => html`
                     <label class="checkbox">
                         <input type="checkbox" name="usage" value="${usage}"
                                ${ticked?.includes(usage) ? html`checked` : ''} ${busy ? html`disabled` : ''} />
-                        ${usageName(usage)}
+                        ${usageName(usage, listenerNames)}
                     </label>
                 `)}
                 <span class="hint">None ticked: ${everyUse(kind)}.</span>
@@ -398,7 +381,7 @@ export const certificatesPage: Page = {
                             </select>
                         </label>
 
-                        <fieldset class="usages" id="import-usages" ${first !== undefined && hasUsages(first) ? '' : html`hidden`}>
+                        <fieldset class="usages" id="import-usages" ${first !== undefined && hasUsages(store, first) ? '' : html`hidden`}>
                             ${first === undefined ? '' : usagesFields(first, null)}
                         </fieldset>
 
@@ -497,11 +480,11 @@ export const certificatesPage: Page = {
             const chips  = [
                 ...(entry.shownOn ?? []).map(listener => html`<span class="chip ok">shown on ${onListener(listener)}</span>`),
                 ...next.map(listener => html`<span class="chip">next on ${onListener(listener)}${from(store.shown[listener]?.nextAt)}</span>`),
-                ...(!hasUsages(entry.kind)
+                ...(!hasUsages(store, entry.kind)
                         ? []
                         : entry.usages === null || entry.usages === undefined
                               ? [ html`<span class="chip">${everyUse(entry.kind)}</span>` ]
-                              : entry.usages.map(usage => html`<span class="chip">${usageName(usage)}</span>`))
+                              : entry.usages.map(usage => html`<span class="chip">${usageName(usage, listenerNames)}</span>`))
             ];
 
             return html`
@@ -527,7 +510,7 @@ export const certificatesPage: Page = {
                                 ${entry.active ? 'Switch off' : 'Switch on'}
                             </button>
                             <button type="button" class="btn small" data-rename="${entry.id}" ${off}>Rename</button>
-                            ${hasUsages(entry.kind)
+                            ${hasUsages(store, entry.kind)
                                   ? html`<button type="button" class="btn small" data-usages="${entry.id}" ${off}>Uses</button>`
                                   : ''}
                             <button type="button" class="btn small danger" data-remove="${entry.id}" ${off}>Delete</button>
@@ -640,7 +623,7 @@ export const certificatesPage: Page = {
                         <label>Which listener it is for
                             <select name="listener" id="request-listener" ${off}>
                                 ${asked.listeners.map(listener => html`
-                                    <option value="${listener}" ${listener === first ? html`selected` : ''}>${usageName(listener)}</option>
+                                    <option value="${listener}" ${listener === first ? html`selected` : ''}>${usageName(listener, listenerNames)}</option>
                                 `)}
                             </select>
                         </label>
@@ -741,7 +724,7 @@ export const certificatesPage: Page = {
                 const kind    = (event.target as HTMLSelectElement).value as CertificateKind;
                 const usages  = must<HTMLElement>(content, '#import-usages');
 
-                usages.hidden = !hasUsages(kind);
+                usages.hidden = !hasUsages(current!, kind);
                 render(usages, usagesFields(kind, null));
 
             });
@@ -816,7 +799,7 @@ export const certificatesPage: Page = {
             const kind      = data.get('kind') as CertificateKind;
             const password  = String(data.get('password') ?? '');
             const label     = String(data.get('label')    ?? '').trim();
-            const usages    = hasUsages(kind) ? data.getAll('usage').map(String) : [];
+            const usages    = hasUsages(current!, kind) ? data.getAll('usage').map(String) : [];
 
             busy = true;
 
