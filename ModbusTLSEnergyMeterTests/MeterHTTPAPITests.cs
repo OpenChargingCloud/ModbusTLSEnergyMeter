@@ -18,7 +18,6 @@
 #region Usings
 
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -34,6 +33,7 @@ using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.TestKit;
 using cloud.charging.open.protocols.WWCP.Node.Web;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI;
@@ -81,7 +81,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await new ModbusPKI().BuildPKI(Path.Combine(workingDirectory, "pki"));
 
-            httpPort = FreeTCPPort();
+            httpPort = TestPorts.Free();
             meter    = NewMeter();
 
             await meter.Start();
@@ -900,7 +900,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             File.Move(Path.Combine(accounts, ModbusTLSEnergyMeter.DefaultAccountsDatabaseFile),
                       Path.Combine(accounts, HTTPExtAPI.DefaultHTTPExtAPI_DatabaseFileName));
 
-            httpPort = FreeTCPPort();
+            httpPort = TestPorts.Free();
             meter    = NewMeter();
 
             await meter.Start();
@@ -1486,7 +1486,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    ServerPfxPassword:  "demo",
                    ClientCACertPath:   Path.Combine(workingDirectory!, "pki", "issuing-clients-ca.crt"),
                    ListenAddress:      NetIPAddress.Loopback,
-                   ListenPort:         FreeTCPPort(),
+                   ListenPort:         TestPorts.Free(),
                    HTTPHostname:       IPv4Address.Localhost,
                    HTTPPort:           IPPort.Parse(httpPort),
                    DataPath:           Path.Combine(workingDirectory!, "data"),
@@ -1508,7 +1508,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await meter!.DisposeAsync();
 
-            httpPort = FreeTCPPort();
+            httpPort = TestPorts.Free();
             meter    = NewMeter();
 
             await meter.Start();
@@ -1526,7 +1526,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             WriteRolesIntoTheConfiguration(Roles);
 
-            httpPort = FreeTCPPort();
+            httpPort = TestPorts.Free();
             meter    = NewMeter();
 
             await meter.Start();
@@ -1639,19 +1639,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.That(status, Is.EqualTo(HttpStatusCode.OK), $"'{UserId}' could not sign in: {json}");
 
             return browser;
-
-        }
-
-        private static Int32 FreeTCPPort()
-        {
-
-            var listener = new TcpListener(NetIPAddress.Loopback, 0);
-
-            listener.Start();
-            var port = ((System.Net.IPEndPoint) listener.LocalEndpoint).Port;
-            listener.Stop();
-
-            return port;
 
         }
 

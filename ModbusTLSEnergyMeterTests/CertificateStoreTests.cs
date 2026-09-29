@@ -17,7 +17,6 @@
 
 #region Usings
 
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -30,6 +29,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
 using cloud.charging.open.protocols.WWCP.Node.Certificates;
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.TestKit;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 
@@ -276,7 +276,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #endregion
 
 
-        #region (private) NewMeter() / Meta(...) / FreeTCPPort()
+        #region (private) NewMeter() / Meta(...)
 
         /// <summary>
         /// A meter on the data directory of this test, started with the demo
@@ -291,9 +291,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    ServerPfxPassword:  "demo",
                    ClientCACertPath:   Path.Combine(directory!, "pki", "issuing-clients-ca.crt"),
                    ListenAddress:      NetIPAddress.Loopback,
-                   ListenPort:         FreeTCPPort(),
+                   ListenPort:         TestPorts.Free(),
                    HTTPHostname:       IPv4Address.Localhost,
-                   HTTPPort:           IPPort.Parse(FreeTCPPort()),
+                   HTTPPort:           IPPort.Parse(TestPorts.Free()),
                    DataPath:           Path.Combine(directory!, "data"),
                    ConfigFile:         new WWCPConfigFile(Path.Combine(directory!, "configuration.json")),
                    LogToConsole:       false
@@ -316,24 +316,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    new JProperty("keyType",      KeyType),
                    new JProperty("note",         Note)
                );
-
-        private static Int32 FreeTCPPort()
-        {
-
-            var listener = new TcpListener(NetIPAddress.Loopback, 0);
-
-            listener.Start();
-
-            try
-            {
-                return ((System.Net.IPEndPoint) listener.LocalEndpoint).Port;
-            }
-            finally
-            {
-                listener.Stop();
-            }
-
-        }
 
         #endregion
 

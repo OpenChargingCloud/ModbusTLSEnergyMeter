@@ -17,8 +17,6 @@
 
 #region Usings
 
-using System.Net.Sockets;
-
 using Newtonsoft.Json.Linq;
 
 using NUnit.Framework;
@@ -27,6 +25,7 @@ using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.TestKit;
 
 using NetIPAddress = System.Net.IPAddress;
 
@@ -120,9 +119,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                     ServerPfxPassword:  "demo",
                     ClientCACertPath:   Path.Combine(pkiDirectory!, "issuing-clients-ca.crt"),
                     ListenAddress:      NetIPAddress.Loopback,
-                    ListenPort:         FreeTCPPort(),
+                    ListenPort:         TestPorts.Free(),
                     HTTPHostname:       IPv4Address.Localhost,
-                    HTTPPort:           IPPort.Parse(FreeTCPPort()),
+                    HTTPPort:           IPPort.Parse(TestPorts.Free()),
                     DataPath:           DataPath,
                     ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                     LogToConsole:       false);
@@ -299,7 +298,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #endregion
 
 
-        #region (private) Said(Meter, Tag), WriteState(...), FreeTCPPort()
+        #region (private) Said(Meter, Tag), WriteState(...)
 
         /// <summary>
         /// Everything the meter said under this tag, as one string to look in.
@@ -327,19 +326,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                     new JProperty("savedAt",      DateTime.UtcNow.ToString("o"))
                 ).ToString()
             );
-
-        }
-
-        private static Int32 FreeTCPPort()
-        {
-
-            var listener = new TcpListener(NetIPAddress.Loopback, 0);
-
-            listener.Start();
-            var port = ((System.Net.IPEndPoint) listener.LocalEndpoint).Port;
-            listener.Stop();
-
-            return port;
 
         }
 

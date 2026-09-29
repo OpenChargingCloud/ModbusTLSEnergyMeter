@@ -17,7 +17,6 @@
 
 #region Usings
 
-using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 
@@ -29,6 +28,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
 using cloud.charging.open.protocols.WWCP.Node.Logging;
+using cloud.charging.open.protocols.WWCP.Node.TestKit;
 
 using HermodModbusTCPClient = org.GraphDefined.Vanaheimr.Hermod.Modbus.ModbusTCPClient;
 using NetIPAddress          = System.Net.IPAddress;
@@ -77,7 +77,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await new ModbusPKI().BuildPKI(pkiDirectory);
 
-            modbusPort = FreeTCPPort();
+            modbusPort = TestPorts.Free();
 
             meter = new ModbusTLSEnergyMeter(
                         SerialNumber:       "meter-log-001",
@@ -87,7 +87,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                         ListenAddress:      NetIPAddress.Loopback,
                         ListenPort:         modbusPort,
                         HTTPHostname:       IPv4Address.Localhost,
-                        HTTPPort:           IPPort.Parse(FreeTCPPort()),
+                        HTTPPort:           IPPort.Parse(TestPorts.Free()),
                         DataPath:           Path.Combine(workingDirectory, "data"),
                         ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory, "configuration.json")),
                         LogToConsole:       false
@@ -319,9 +319,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                 ServerPfxPassword:  "demo",
                                 ClientCACertPath:   Path.Combine(pkiDirectory!, "issuing-clients-ca.crt"),
                                 ListenAddress:      NetIPAddress.Loopback,
-                                ListenPort:         FreeTCPPort(),
+                                ListenPort:         TestPorts.Free(),
                                 HTTPHostname:       IPv4Address.Localhost,
-                                HTTPPort:           IPPort.Parse(FreeTCPPort()),
+                                HTTPPort:           IPPort.Parse(TestPorts.Free()),
                                 DataPath:           Path.Combine(workingDirectory!, "data"),
                                 ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                                 LogToConsole:       false
@@ -373,9 +373,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                   ServerPfxPassword:  "demo",
                                   ClientCACertPath:   Path.Combine(pkiDirectory!, "issuing-clients-ca.crt"),
                                   ListenAddress:      NetIPAddress.Loopback,
-                                  ListenPort:         FreeTCPPort(),
+                                  ListenPort:         TestPorts.Free(),
                                   HTTPHostname:       IPv4Address.Localhost,
-                                  HTTPPort:           IPPort.Parse(FreeTCPPort()),
+                                  HTTPPort:           IPPort.Parse(TestPorts.Free()),
                                   DataPath:           Path.Combine(workingDirectory!, "quiet"),
                                   ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "quiet.json")),
                                   LogKeepDays:        0,
@@ -507,19 +507,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             => Certificate.Extensions.
                    OfType<X509BasicConstraintsExtension>().
                    Any(extension => extension.CertificateAuthority);
-
-        private static Int32 FreeTCPPort()
-        {
-
-            var listener = new TcpListener(NetIPAddress.Loopback, 0);
-
-            listener.Start();
-            var port = ((System.Net.IPEndPoint) listener.LocalEndpoint).Port;
-            listener.Stop();
-
-            return port;
-
-        }
 
         #endregion
 
