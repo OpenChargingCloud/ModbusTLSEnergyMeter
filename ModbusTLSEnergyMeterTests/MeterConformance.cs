@@ -17,8 +17,6 @@
 
 #region Usings
 
-using System.Text;
-
 using Newtonsoft.Json.Linq;
 
 using NUnit.Framework;
@@ -52,11 +50,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
     /// certificates they show, its log book and its counters.
     /// </para>
     /// <para>
-    /// A meter signs in where its pages do, at ext/auth/login with JSON, and
-    /// is not made without a key infrastructure: the certificate its
-    /// Modbus/TLS listener shows and the CA its clients are issued by. That
-    /// is made once for the fixture, because a meter only reads it into a
-    /// store of its own, in the directory of its test.
+    /// A meter signs in where every node's pages do, and so where the suite
+    /// signs in by itself. It is not made without a key infrastructure: the
+    /// certificate its Modbus/TLS listener shows and the CA its clients are
+    /// issued by. That is made once for the fixture, because a meter only
+    /// reads it into a store of its own, in the directory of its test.
     /// </para>
     /// </remarks>
     public class MeterConformance : NodeConformanceTests
@@ -130,33 +128,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    );
 
         }
-
-        #endregion
-
-        #region (protected override) SignInPath / SignInBody(Login, Password)
-
-        /// <summary>
-        /// Where the meter's pages sign in: the HTTPExt API's JSON sign-in,
-        /// not its form.
-        /// </summary>
-        protected override String SignInPath
-
-            => $"{WWCPNode.ExtAPIPath.ToString().Trim('/')}/auth/login";
-
-        /// <summary>
-        /// What the meter's pages send there.
-        /// </summary>
-        protected override HttpContent SignInBody(String  Login,
-                                                  String  Password)
-
-            => new StringContent(
-                   new JObject(
-                       new JProperty("login",     Login),
-                       new JProperty("password",  Password)
-                   ).ToString(),
-                   Encoding.UTF8,
-                   "application/json"
-               );
 
         #endregion
 

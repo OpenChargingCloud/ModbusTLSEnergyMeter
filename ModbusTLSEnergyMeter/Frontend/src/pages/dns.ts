@@ -1,9 +1,9 @@
 import { api, type DNSConfiguration, type DNSServer } from '../api/client';
 import { auth } from '../auth';
-import { html, must, render } from '../html';
-import type { Page } from '../router';
+import { html, must, render } from '@node/html';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { checked, errorMessage, numberField } from '../ui';
+import { errorMessage, isChecked, numberField } from '@node/ui';
 import { sentOf } from './dnsServers';
 
 /**
@@ -266,11 +266,11 @@ export const dnsPage: Page = {
                         const recursion = String(new FormData(form).get('recursionDesired') ?? '');
 
                         current = await api.dns.save({
-                            enabled:              checked(form, 'enabled'),
+                            enabled:              isChecked(form, 'enabled'),
                             recursionDesired:     recursion === '' ? null : recursion === 'true',
-                            useCache:             checked(form, 'useCache'),
-                            dnssecOK:             checked(form, 'dnssecOK'),
-                            followCNAMEs:         checked(form, 'followCNAMEs'),
+                            useCache:             isChecked(form, 'useCache'),
+                            dnssecOK:             isChecked(form, 'dnssecOK'),
+                            followCNAMEs:         isChecked(form, 'followCNAMEs'),
                             queryTimeoutSeconds:  numberField(form, 'queryTimeoutSeconds'),
                             maxCNAMEFollows:      numberField(form, 'maxCNAMEFollows'),
                             maxRetries:           numberField(form, 'maxRetries'),

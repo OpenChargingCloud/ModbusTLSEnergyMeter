@@ -1,10 +1,10 @@
 import { api, logLevels, type LogEntry, type LogLevel } from '../api/client';
-import { html, must, render, type HTMLFragment } from '../html';
-import { drawOrder } from '../logs/order';
-import { logs } from '../logs/store';
-import type { Page } from '../router';
+import { html, must, render, type HTMLFragment } from '@node/html';
+import { drawOrder } from '@node/logs/order';
+import { logs } from '@node/logs/store';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { errorMessage, formatTime, formatTimestamp, isAtLeast } from '../ui';
+import { errorMessage, formatTime, formatTimestamp, isAtLeast } from '@node/ui';
 
 /**
  * The log book: the entries that are evidence, what they say, and whether they

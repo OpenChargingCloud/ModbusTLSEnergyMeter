@@ -1,9 +1,9 @@
 import { api, type SigningKey, type SigningKeys } from '../api/client';
 import { auth } from '../auth';
-import { html, must, render, type HTMLFragment } from '../html';
-import type { Page } from '../router';
+import { html, must, render, type HTMLFragment } from '@node/html';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { copyText, errorMessage, field } from '../ui';
+import { copyText, errorMessage, field } from '@node/ui';
 
 /**
  * The keys this meter puts its name to a reading with.

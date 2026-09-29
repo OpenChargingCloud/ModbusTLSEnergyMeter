@@ -1,9 +1,9 @@
 import { api, type Account, type RoleInfo } from '../api/client';
 import { auth } from '../auth';
-import { html, must, render, type HTMLFragment } from '../html';
-import type { Page } from '../router';
+import { html, must, render, type HTMLFragment } from '@node/html';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { errorMessage, field } from '../ui';
+import { errorMessage, field } from '@node/ui';
 
 /**
  * Who may sign in to this meter, and as what.

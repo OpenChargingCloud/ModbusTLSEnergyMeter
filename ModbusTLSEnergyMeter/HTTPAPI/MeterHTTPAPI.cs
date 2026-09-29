@@ -50,9 +50,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
     /// MeterHTTPAPI.Accounts.cs, MeterHTTPAPI.Certificates.cs and
     /// MeterHTTPAPI.SignedValues.cs.
     ///
-    /// Signing in is not here: that is the node's <see cref="HTTPExtAPI"/>'s
-    /// "/ext/auth/login", and the session cookie it sets is what every resource
-    /// below is read with.
+    /// Signing in is not here: that is the node's <see cref="HTTPExtAPI"/> -
+    /// "/ext/login", where the web interface signs in as every node's does, or
+    /// "/ext/auth/login" with JSON - and the session cookie it sets is what
+    /// every resource below is read with.
     /// </remarks>
     public partial class MeterHTTPAPI : NodeHTTPAPI
     {

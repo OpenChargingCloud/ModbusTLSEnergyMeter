@@ -1,10 +1,10 @@
 import { api, type AnsweredRequest, type Certificate, type CertificateKind, type CertificateStore, type NewSigningRequest, type SigningRequest, type SigningRequests, type TLSListener } from '../api/client';
 import { auth } from '../auth';
-import { html, must, render, type HTMLFragment } from '../html';
-import type { Page } from '../router';
+import { html, must, render, type HTMLFragment } from '@node/html';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { errorMessage, field, whileSaving } from '../ui';
-import { toURL } from '../basePath';
+import { errorMessage, field, whileSaving } from '@node/ui';
+import { toURL } from '@node/basePath';
 
 /**
  * The largest file this page will offer to import.

@@ -1,53 +1,38 @@
 /**
- * Where the client asks the node's JSON API what every node answers.
+ * What the meter's client adds to every node's, asked directly.
  *
  * Run with `npm test`, which is Node's own runner reading the TypeScript as it
- * stands - no bundler, no browser, no dependency that is not already here.
- *
- * What is pinned is what moved when the meter's API became the node's with
- * the meter's own routes on top: who is signed in is asked at auth/me, the
- * clock at /v1/clock, and "Sync now" is answered with the whole NTS
- * configuration, the result inside it. At their old places the node answers
- * with its JSON 404, which a page would show as a clock nobody can read.
+ * stands, with WWCP_Node's resolve hook for "@node/...". Every node's routes
+ * are WWCP_Node's to test; what is pinned here is what a meter puts beside
+ * them - its own routes, merged into the same objects without taking any of
+ * every node's away - and the one request it makes to the HTTPExt API, a
+ * change of one's own password, with the words Hermod says no in.
  */
 
 import { strict as assert }  from 'node:assert';
-import { registerHooks }     from 'node:module';
 import { describe, it }      from 'node:test';
 
-// The pages are written for webpack, which does not want the extension in a
-// relative import; Node does.
-registerHooks({
-    resolve(specifier, context, next) {
-        return specifier.startsWith('.') && !specifier.endsWith('.ts')
-                   ? next(`${specifier}.ts`, context)
-                   : next(specifier, context);
-    }
-});
-
-// The client reads config.ts, which reads <meta> tags when it is loaded.
-(globalThis as unknown as { document: unknown }).document = { querySelector: () => null };
-
-const { api } = await import('./client.ts');
+import { api, ApiError, NoAnswer } from './client.ts';
 
 
 /** What the meter was asked. */
-let asked: { url: string, method: string }[] = [];
+let asked: { url: string; method: string; body?: string }[] = [];
 
-/** Make the meter answer every request with the given JSON. */
-const meterAnswers = (JSON_: unknown) => {
+/** Make the meter answer every request with this status and JSON - none for 204. */
+const meterAnswers = (Status: number, JSON_?: unknown) => {
 
     asked = [];
 
-    (globalThis as unknown as { fetch: unknown }).fetch = (url: string, init: { method: string }) => {
+    (globalThis as unknown as { fetch: unknown }).fetch = (url: string, init: { method: string; body?: string }) => {
 
-        asked.push({ url, method: init.method });
+        asked.push({ url, method: init.method, body: init.body });
 
         return Promise.resolve({
-            ok:          true,
-            status:      200,
-            statusText:  '',
-            text:        () => Promise.resolve(JSON.stringify(JSON_))
+            ok:           Status >= 200 && Status < 300,
+            status:       Status,
+            statusText:   '',
+            text:         () => Promise.resolve(JSON_ === undefined ? '' : JSON.stringify(JSON_)),
+            arrayBuffer:  () => Promise.resolve(new ArrayBuffer(0))
         } as unknown as Response);
 
     };
@@ -55,44 +40,87 @@ const meterAnswers = (JSON_: unknown) => {
 };
 
 
-describe('the routes every node has', () => {
+describe('the meter\'s client', () => {
 
-    it('asks who is signed in at auth/me', async () => {
+    it('is every node\'s routes, with the meter\'s own beside them in the same objects', () => {
 
-        meterAnswers({ username: 'root', roles: [ 'systemadmin' ], permissions: [ 'meter:read' ], role: 'systemadmin' });
+        const everyNodes  = [ api.auth.me, api.auth.login, api.auth.logout, api.status, api.clock, api.logs,
+                              api.dns.get, api.dns.save, api.nts.get, api.nts.save, api.nts.test, api.nts.sync,
+                              api.certificates.get, api.certificates.import, api.certificates.update,
+                              api.certificates.remove, api.certificates.reload ];
 
-        const me = await api.auth.me();
+        const theMeters   = [ api.auth.changePassword, api.meter.get, api.meter.setMode, api.meter.resetEnergy,
+                              api.certificates.requests, api.certificates.createRequest, api.certificates.requestURL,
+                              api.certificates.answerRequest, api.certificates.removeRequest, api.certificates.configuration,
+                              api.accounts.list, api.keys.list, api.signing.session, api.verifyLog ];
 
-        assert.equal(asked[0]!.url,     '/api/v1/auth/me');
-        assert.equal(asked[0]!.method,  'GET');
-        assert.equal(me.username,       'root');
+        for (const route of [ ...everyNodes, ...theMeters ])
+            assert.equal(typeof route, 'function');
 
-    });
-
-    it('asks the clock at /v1/clock, where every node has it', async () => {
-
-        meterAnswers({ now: '2026-09-28T00:00:00Z', source: 'system' });
-
-        await api.clock();
-
-        assert.equal(asked[0]!.url, '/api/v1/clock');
+        assert.equal(api.eventsURL, '/api/v1/events');
 
     });
 
-    it('takes the result of "Sync now" out of the NTS configuration it comes in', async () => {
+    it('asks the meter\'s own routes below /api/v1, as every node\'s', async () => {
 
-        // The node answers a synchronisation with the whole NTS configuration,
-        // because the exchange moves the cookies and the key material the page
-        // is showing - and the result of it inside, which is what the page
-        // reads.
-        meterAnswers({ enabled: true, servers: [], result: { ok: true, at: '2026-09-28T00:00:00Z', server: 'ptbtime1.ptb.de' } });
+        meterAnswers(200, {});
 
-        const result = await api.nts.sync();
+        await api.meter.get();
+        await api.certificates.requests();
+        await api.status();
 
-        assert.equal(asked[0]!.url,     '/api/v1/configuration/nts/sync');
-        assert.equal(asked[0]!.method,  'POST');
-        assert.equal(result.ok,         true);
-        assert.equal(result.server,     'ptbtime1.ptb.de');
+        assert.deepEqual(asked.map(request => `${request.method} ${request.url}`),
+                         [ 'GET /api/v1/meter', 'GET /api/v1/certificates/requests', 'GET /api/v1/status' ]);
+
+        assert.equal(api.certificates.requestURL('ab cd'), '/api/v1/certificates/requests/ab%20cd');
+
+    });
+
+    it('signs out at every node\'s door rather than at the accounts', async () => {
+
+        meterAnswers(204);
+
+        await api.auth.logout();
+
+        assert.equal(`${asked[0]!.method} ${asked[0]!.url}`, 'POST /api/v1/auth/logout');
+
+    });
+
+});
+
+
+describe('a change of one\'s own password', () => {
+
+    it('goes to the HTTPExt API, where Hermod checks the current one', async () => {
+
+        meterAnswers(204);
+
+        assert.equal(await api.auth.changePassword('the old one', 'the new one'), undefined);
+
+        assert.equal(`${asked[0]!.method} ${asked[0]!.url}`, 'POST /ext/auth/password');
+        assert.deepEqual(JSON.parse(asked[0]!.body!), { currentPassword: 'the old one', newPassword: 'the new one' });
+
+    });
+
+    it('is refused in Hermod\'s own words', async () => {
+
+        meterAnswers(403, { description: 'The current password is wrong.' });
+
+        await assert.rejects(api.auth.changePassword('not it', 'the new one'),
+                             (problem: unknown) => problem instanceof ApiError &&
+                                                   problem.isForbidden &&
+                                                   problem.message === 'The current password is wrong.');
+
+    });
+
+    it('says the meter could not be reached, rather than that a fetch failed', async () => {
+
+        (globalThis as unknown as { fetch: unknown }).fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+
+        await assert.rejects(api.auth.changePassword('the old one', 'the new one'),
+                             (problem: unknown) => problem instanceof NoAnswer &&
+                                                   problem.reason === 'could not be reached' &&
+                                                   !problem.message.includes('Failed to fetch'));
 
     });
 

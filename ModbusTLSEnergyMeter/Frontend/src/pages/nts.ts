@@ -1,10 +1,22 @@
 import { api, type Clock, type NTSConfiguration, type NTSServerEntry, type NTSServerResult, type NTSSyncResult, type NTSTimeSource, type NTSUpdate, type TimeServerTest } from '../api/client';
 import { auth } from '../auth';
-import { html, must, render, type HTMLFragment } from '../html';
-import type { Page } from '../router';
+import { html, must, render, type HTMLFragment } from '@node/html';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { errorMessage, formatTimestamp, whileSaving } from '../ui';
+import { errorMessage, formatTimestamp, whileSaving } from '@node/ui';
 import { nameTaken, pinsShown, readable, sentOf, withServer, withoutServer, type UsualPorts } from './ntsServers';
+
+/**
+ * What the NTS client allows itself when the meter has not been told.
+ *
+ * The meter's answer carries the timeout it was configured with, and null
+ * where it was configured with none - and it does not repeat what the client
+ * then falls back to, which is three seconds. This is only used to work out
+ * how long this page waits for a test or a synchronisation, and the page
+ * allows the meter fifteen seconds on top of it, so being wrong here by a few
+ * seconds costs nothing at all.
+ */
+const theClientsOwnTimeout = 3;
 
 /**
  * Where this meter reads the time: its time servers, the rules for believing
@@ -808,7 +820,7 @@ export const ntsPage: Page = {
 
             try
             {
-                result = await api.nts.test(host);
+                result = await api.nts.test(current?.settings.timeoutSeconds ?? theClientsOwnTimeout, host);
             }
             catch (problem)
             {
@@ -1001,12 +1013,14 @@ export const ntsPage: Page = {
 
             try
             {
-                result = await api.nts.sync();
+                // The answer carries the whole configuration as well as the
+                // result, because an exchange moves the cookies and the record
+                // of the last key exchange that each row is showing.
+                current = await api.nts.sync(current?.settings.timeoutSeconds ?? theClientsOwnTimeout);
+                result  = current.result ?? null;
 
-                // Again, because an exchange moves the cookies and the record of
-                // the last key exchange that each row is showing, and the clock
-                // card has a new last check.
-                [current, clock] = await Promise.all([api.nts.get(), api.clock()]);
+                // And the clock card has a new last check.
+                clock   = await api.clock();
             }
             catch (problem)
             {

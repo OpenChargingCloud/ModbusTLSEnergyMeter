@@ -1,9 +1,9 @@
 import { api, type PublicKeyOut, type SessionState, type SignedMeterValue } from '../api/client';
 import { auth } from '../auth';
-import { html, must, render, type HTMLFragment } from '../html';
-import type { Page } from '../router';
+import { html, must, render, type HTMLFragment } from '@node/html';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { copyText, errorMessage, field, formatSince } from '../ui';
+import { copyText, errorMessage, field, formatSince } from '@node/ui';
 
 /**
  * Charging sessions, and readings this meter has put its name to.

@@ -47,10 +47,10 @@ describe('a time server turned back into its entry', () => {
         const certificate = 'A'.repeat(64);
         const root        = 'B'.repeat(64);
 
-        assert.deepEqual(entryOf(shown('ptbtime1.ptb.de.', { heldTo: { certificate, root: null, onMismatch: 'refuse' } }), usual),
+        assert.deepEqual(entryOf(shown('ptbtime1.ptb.de.', { heldTo: heldTo({ certificate, certificates: [ certificate ] }) }), usual),
                          { hostname: 'ptbtime1.ptb.de', certificateFingerprint: certificate });
 
-        assert.deepEqual(entryOf(shown('ptbtime2.ptb.de.', { heldTo: { certificate: null, root, onMismatch: 'record' } }), usual),
+        assert.deepEqual(entryOf(shown('ptbtime2.ptb.de.', { heldTo: heldTo({ root, roots: [ root ], onMismatch: 'record' }) }), usual),
                          { hostname: 'ptbtime2.ptb.de', rootFingerprint: root, onMismatch: 'record' });
 
     });

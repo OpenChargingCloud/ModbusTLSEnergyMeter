@@ -1,9 +1,9 @@
 import { api, type MeterModeName, type MeterReadings, type Status } from '../api/client';
 import { auth } from '../auth';
-import { html, must, render } from '../html';
-import type { Page } from '../router';
+import { html, must, render } from '@node/html';
+import type { Page } from '@node/router';
 import { shell } from '../shell';
-import { errorMessage, formatNumber } from '../ui';
+import { errorMessage, formatNumber } from '@node/ui';
 
 /** How often the readings are fetched again. */
 const POLL_INTERVAL = 2000;

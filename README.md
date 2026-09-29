@@ -165,9 +165,10 @@ to the most specific of them first:
 | `/ext` | signing in, users, groups - the node's `HTTPExtAPI` |
 | `/api/v1` | this meter's own JSON API |
 
-Signing in is a `POST` to `/ext/auth/login` with
-`{"login": ..., "password": ...}`, which answers with the session cookie that
-every resource below is read with.
+Signing in is a `POST` to `/ext/login`, form-urlencoded with `login` and
+`password` - where the web interface signs in, as every node's does - or to
+`/ext/auth/login` with `{"login": ..., "password": ...}`. Either answers with
+the session cookie that every resource below is read with.
 
 
 ### From before the groups
@@ -393,8 +394,10 @@ npm run build # or: npm run watch
 npm run typecheck
 ```
 
-`dotnet build` does this by itself when anything below `Frontend/src` changed,
-and `-p:SkipFrontendBuild=true` leaves it alone.
+`dotnet build` does this by itself when anything changed below `Frontend/src`,
+or below `WWCP_Node/Frontend/src` - the WWCP_Node beside this repository in
+`libs/`, which holds what the web interface of every kind of node shares and
+is bundled in as `@node/...` - and `-p:SkipFrontendBuild=true` leaves it alone.
 
 Pages: the meter and what it is measuring, the DNS client, the NTS client with
 the state of the clock, the certificate store with the signing requests, the
