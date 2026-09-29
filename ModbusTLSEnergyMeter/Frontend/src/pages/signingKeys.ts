@@ -2,7 +2,7 @@ import { api, type SigningKey, type SigningKeys } from '../api/client';
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '../shell';
+import { shell } from '@node/shell';
 import { copyText, errorMessage, field } from '@node/ui';
 
 /**
@@ -156,7 +156,7 @@ export const signingKeysPage: Page = {
 
                     <h2>
                         <i class="fa-solid fa-key"></i> ${key.algorithm}
-                        ${key.isDefault ? html`<span class="chip on">the identity</span>` : ''}
+                        ${key.isDefault ? html`<span class="chip ok">the identity</span>` : ''}
                     </h2>
 
                     <table class="kv">

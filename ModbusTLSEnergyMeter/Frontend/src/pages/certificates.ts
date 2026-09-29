@@ -2,7 +2,7 @@ import { api, type AnsweredRequest, type Certificate, type CertificateKind, type
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '../shell';
+import { shell } from '@node/shell';
 import { errorMessage, field, whileSaving } from '@node/ui';
 import { toURL } from '@node/basePath';
 
@@ -495,7 +495,7 @@ export const certificatesPage: Page = {
             // a line of their own that wraps: beside the name, a takeover
             // date ran the table out of its card.
             const chips  = [
-                ...(entry.shownOn ?? []).map(listener => html`<span class="chip on">shown on ${onListener(listener)}</span>`),
+                ...(entry.shownOn ?? []).map(listener => html`<span class="chip ok">shown on ${onListener(listener)}</span>`),
                 ...next.map(listener => html`<span class="chip">next on ${onListener(listener)}${from(store.shown[listener]?.nextAt)}</span>`),
                 ...(!hasUsages(entry.kind)
                         ? []
@@ -578,7 +578,7 @@ export const certificatesPage: Page = {
                     <h2>
                         <i class="fa-solid ${aboutListener[request.listener]?.icon ?? 'fa-file-signature'}"></i>
                         ${request.subject}
-                        <span class="chip ${answered ? 'on' : 'warn'}">${request.state}</span>
+                        <span class="chip ${answered ? 'ok' : 'warn'}">${request.state}</span>
                     </h2>
 
                     <table class="kv">

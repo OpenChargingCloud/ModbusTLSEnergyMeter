@@ -2,7 +2,7 @@ import { api, type MeterModeName, type MeterReadings, type Status } from '../api
 import { auth } from '../auth';
 import { html, must, render } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '../shell';
+import { shell } from '@node/shell';
 import { errorMessage, formatNumber } from '@node/ui';
 
 /** How often the readings are fetched again. */

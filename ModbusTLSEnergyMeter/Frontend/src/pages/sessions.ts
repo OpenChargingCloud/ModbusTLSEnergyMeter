@@ -2,7 +2,7 @@ import { api, type PublicKeyOut, type SessionState, type SignedMeterValue } from
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '../shell';
+import { shell } from '@node/shell';
 import { copyText, errorMessage, field, formatSince } from '@node/ui';
 
 /**
@@ -69,7 +69,7 @@ export const sessionsPage: Page = {
 
                     <h2>
                         <i class="fa-solid fa-plug-circle-bolt"></i> Charging session
-                        <span class="chip ${session ? 'on' : 'off'}">${session ? 'running' : 'none'}</span>
+                        <span class="chip ${session ? 'ok' : 'off'}">${session ? 'running' : 'none'}</span>
                     </h2>
 
                     ${session ? html`

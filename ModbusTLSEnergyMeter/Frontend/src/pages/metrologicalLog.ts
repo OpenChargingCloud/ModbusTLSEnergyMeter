@@ -3,7 +3,7 @@ import { html, must, render, type HTMLFragment } from '@node/html';
 import { drawOrder } from '@node/logs/order';
 import { logs } from '@node/logs/store';
 import type { Page } from '@node/router';
-import { shell } from '../shell';
+import { shell } from '@node/shell';
 import { errorMessage, formatTime, formatTimestamp, isAtLeast } from '@node/ui';
 
 /**
@@ -218,7 +218,7 @@ function verdictOf(result: Awaited<ReturnType<typeof api.verifyLog>>): HTMLFragm
 
             <h2>
                 <i class="fa-solid fa-file-signature"></i> The log book on disk
-                <span class="chip ${result.intact ? 'on' : 'alert'}">${result.intact ? 'intact' : 'broken'}</span>
+                <span class="chip ${result.intact ? 'ok' : 'bad'}">${result.intact ? 'intact' : 'broken'}</span>
             </h2>
 
             ${result.intact

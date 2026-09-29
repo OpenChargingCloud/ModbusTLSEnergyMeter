@@ -5,93 +5,89 @@ import './styles/app.scss';
 import '@fortawesome/fontawesome-free/css/fontawesome.css';
 import '@fortawesome/fontawesome-free/css/solid.css';
 
-import { auth } from './auth';
-import { html, must, render } from '@node/html';
-import { logs } from '@node/logs/store';
-import { Router } from '@node/router';
+import { dnsPage } from '@node/pages/dns';
+import { nodeMenu, startNode } from '@node/start';
+import type { Me } from './api/client';
 
-import { meterPage }         from './pages/meter';
-import { dnsPage }           from './pages/dns';
-import { ntsPage }           from './pages/nts';
-import { certificatesPage }  from './pages/certificates';
-import { signingKeysPage }   from './pages/signingKeys';
-import { sessionsPage }      from './pages/sessions';
-import { accountsPage }      from './pages/accounts';
-import { logsPage }          from './pages/logs';
-import { metrologicalLogPage } from './pages/metrologicalLog';
-import { loginPage }         from './pages/login';
-import { notFoundPage }      from './pages/notFound';
-import { fromURL }           from '@node/basePath';
+import { meterPage }            from './pages/meter';
+import { certificatesPage }     from './pages/certificates';
+import { signingKeysPage }      from './pages/signingKeys';
+import { sessionsPage }         from './pages/sessions';
+import { accountsPage }         from './pages/accounts';
+import { metrologicalLogPage }  from './pages/metrologicalLog';
 
-
-const root = document.getElementById('app');
-
-if (root === null)
-    throw new Error("The '#app' element is missing!");
-
-render(root, html`<div id="page" class="page"></div>`);
 
 // The certificates had three pages while the meter kept three stores of its
 // own. A bookmark to one of them still arrives - at the page that has all of
 // them now, which asks for the sign-in where one is needed.
 const toCertificates = (): string => '/configuration/certificates';
 
-const router = new Router({
-    routes: [
-        // "/" is the meter, and is a route of its own rather than a redirect
-        // to /meter: the sign-in remembers where somebody was going, and for
-        // the first visit that is "/" - which would otherwise be a page that
-        // exists on the way in and not on the way back.
-        { path: '/',                           page: meterPage,         guard: auth.requireSignIn },
-        { path: '/meter',                      page: meterPage,         guard: auth.requireSignIn },
-        { path: '/configuration',              page: dnsPage,           guard: auth.requireSignIn },
-        { path: '/configuration/dns',          page: dnsPage,           guard: auth.requireSignIn },
-        { path: '/configuration/nts',          page: ntsPage,           guard: auth.requireSignIn },
-        { path: '/configuration/certificates',         page: certificatesPage,  guard: auth.requireSignIn },
-        { path: '/configuration/certificates/modbus',  page: certificatesPage,  guard: toCertificates },
-        { path: '/configuration/certificates/web',     page: certificatesPage,  guard: toCertificates },
-        { path: '/configuration/certificates/clients', page: certificatesPage,  guard: toCertificates },
-        { path: '/configuration/accounts',             page: accountsPage,      guard: auth.requireSignIn },
-        { path: '/sessions',                   page: sessionsPage,      guard: auth.requireSignIn },
-        { path: '/configuration/keys',         page: signingKeysPage,   guard: auth.requireSignIn },
-        { path: '/logs',                       page: logsPage,          guard: auth.requireSignIn },
-        { path: '/metrological-log',           page: metrologicalLogPage, guard: auth.requireSignIn },
-        { path: '/login',                      page: loginPage }
+// What a meter has pages for beside what every node has: what it measures and
+// signs, its signing keys and its accounts, and the log book beside the log.
+// The sign-in, the log, the frame and following the log while somebody is
+// signed in are every node's - see WWCP_Node's start.ts.
+startNode({
+
+    name:  'Energy Meter',
+    icon:  'fa-gauge-high',
+
+    menu: [
+        { path: '/meter',                        label: 'Meter',             icon: 'fa-bolt',            permission: [ 'meter:read' ] },
+        nodeMenu.configuration([
+            nodeMenu.dns,
+            nodeMenu.nts,
+            nodeMenu.certificates,
+            { path: '/configuration/keys',       label: 'Signing keys',      icon: 'fa-key',             permission: [ 'keys:read' ] }
+        ]),
+        { path: '/sessions',                     label: 'Sessions',          icon: 'fa-file-signature',  permission: [ 'meter:read' ] },
+        nodeMenu.logs,
+        // The log book is the meter's own, and whoever may read the log may
+        // read what of it is evidence.
+        { path: '/metrological-log',             label: 'Metrological log',  icon: 'fa-file-shield',     permission: [ 'log:read' ] },
+        // Everybody signed in may open it: everybody has a password of their
+        // own to change.
+        { path: '/configuration/accounts',       label: 'Accounts',          icon: 'fa-users' }
     ],
-    outlet:       must<HTMLElement>(root, '#page'),
-    notFound:     notFoundPage,
-    titleSuffix:  ' · Energy Meter'
-});
 
-// Signed in: follow the meter's log from now on, whichever page is open - so
-// that opening the Logs page shows what happened while somebody was reading
-// the configuration, and not an empty list. Every Modbus request is in there,
-// which is the thing most worth not missing.
-// Signed out - by the button, or because the session expired and a request
-// came back with 401: close the stream, forget the log, show the sign-in.
-auth.onChange(user => {
+    routes: [
+        { path: '/configuration/certificates/modbus',   page: certificatesPage,  guard: toCertificates },
+        { path: '/configuration/certificates/web',      page: certificatesPage,  guard: toCertificates },
+        { path: '/configuration/certificates/clients',  page: certificatesPage,  guard: toCertificates }
+    ],
 
-    if (user !== null) {
+    pages: {
 
-        // The stream and the log are the same permission, and somebody who
-        // may only read the meter would get a 401-shaped silence instead.
-        if (auth.can('log', 'read'))
-            logs.start();
+        // "/" is the meter, and is a page of its own rather than a redirect
+        // to /meter: the sign-in remembers where somebody was going, and for
+        // the first visit that is "/".
+        '/':                             meterPage,
+        '/meter':                        meterPage,
+        // The configuration opens on its first page, the name servers - the
+        // node's page, as the one of the time servers is; startNode brings
+        // both under their own paths.
+        '/configuration':                dnsPage,
+        '/configuration/certificates':   certificatesPage,
+        '/configuration/keys':           signingKeysPage,
+        '/configuration/accounts':       accountsPage,
+        '/sessions':                     sessionsPage,
+        '/metrological-log':             metrologicalLogPage
 
-        return;
+    },
 
+    logs: {
+        subtitle:  'Everything this meter does, as it happens - refused Modbus requests included.'
+    },
+
+    // A meter names the role somebody holds the way a person says it, and
+    // what it grants, rather than the names of the groups behind it.
+    who: me => ({
+        line:   (me as Me).roleTitle       ?? 'no role here',
+        title:  (me as Me).roleDescription ?? 'Signed in with no role in this meter.'
+    }),
+
+    signIn: {
+        line:  'Sign in to look after this meter.',
+        hint:  'The first administrator and its password are printed on the console the first time this meter starts.'
     }
 
-    logs.stop();
-
-    if (fromURL(location.pathname) !== '/login')
-        router.navigate(auth.requireSignIn(new URL(location.href)) ?? '/login', true);
-
 });
-
-// Find out who is signed in before the first page renders, so that a reload on
-// a deep URL does not flash the sign-in page on its way back to where it was.
-void (async () => {
-    await auth.refresh();
-    router.start();
-})();

@@ -2,7 +2,7 @@ import { api, type Account, type RoleInfo } from '../api/client';
 import { auth } from '../auth';
 import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '../shell';
+import { shell } from '@node/shell';
 import { errorMessage, field } from '@node/ui';
 
 /**
@@ -194,7 +194,7 @@ export const accountsPage: Page = {
 
                     <h2>
                         <i class="fa-solid fa-user"></i> ${account.userId}
-                        ${account.isYou ? html`<span class="chip on">you</span>` : ''}
+                        ${account.isYou ? html`<span class="chip ok">you</span>` : ''}
                     </h2>
 
                     <table class="kv">
