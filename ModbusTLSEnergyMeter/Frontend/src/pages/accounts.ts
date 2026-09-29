@@ -4,6 +4,7 @@ import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
 import { shell } from '@node/shell';
 import { errorMessage, field } from '@node/ui';
+import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 
 /**
  * Who may sign in to this meter, and as what.
@@ -33,7 +34,12 @@ export const accountsPage: Page = {
 
         render(content, html`<div class="loading">Loading ...</div>`);
 
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
+        // Reload throws a password or an account half typed away as
+        // thoroughly as leaving the page does, so it asks first.
+        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
+            if (unsaved.mayBeLost())
+                void load();
+        });
 
         // Seeing the accounts and changing them are two permissions: a role the
         // configuration file adds may be given the one without the other.
@@ -559,9 +565,14 @@ export const accountsPage: Page = {
 
         }
 
+        // A new password and a new account are in their forms alone until they
+        // are sent. The role beside an account is no draft: it is set the
+        // moment it is chosen, and it is outside every form.
+        const release = unsaved.heldBy(() => anyFormTypedSinceDrawn(content));
+
         void load();
 
-        return () => { cancelled = true; };
+        return () => { cancelled = true; release(); };
 
     }
 

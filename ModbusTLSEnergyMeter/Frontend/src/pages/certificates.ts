@@ -5,6 +5,7 @@ import { hasUsages, usageName, usagesOf } from '@node/pages/certificateUsages';
 import type { Page } from '@node/router';
 import { shell } from '@node/shell';
 import { errorMessage, field, whileSaving } from '@node/ui';
+import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 import { toURL } from '@node/basePath';
 
 /**
@@ -167,7 +168,12 @@ export const certificatesPage: Page = {
 
         render(content, html`<div class="loading">Loading ...</div>`);
 
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
+        // Reload throws an import or a request half filled in away as
+        // thoroughly as leaving the page does, so it asks first.
+        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
+            if (unsaved.mayBeLost())
+                void load();
+        });
 
         const mayChange = auth.can('certificates', 'edit');
 
@@ -1198,9 +1204,16 @@ export const certificatesPage: Page = {
 
         }
 
+        // A file chosen to import and a request filled in are in their forms
+        // alone until they are sent. What a certificate is for is chosen in
+        // a modal dialog, which is not under content: while it is open,
+        // neither Reload nor the menu can be reached, and it is closed only
+        // by saving or by cancelling it.
+        const release = unsaved.heldBy(() => anyFormTypedSinceDrawn(content));
+
         void load();
 
-        return () => { cancelled = true; };
+        return () => { cancelled = true; release(); };
 
     }
 

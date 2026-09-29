@@ -4,6 +4,7 @@ import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
 import { shell } from '@node/shell';
 import { copyText, errorMessage, field } from '@node/ui';
+import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 
 /**
  * The keys this meter puts its name to a reading with.
@@ -33,7 +34,12 @@ export const signingKeysPage: Page = {
 
         render(content, html`<div class="loading">Loading ...</div>`);
 
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
+        // Reload throws a key half asked for away as thoroughly as leaving
+        // the page does, so it asks first.
+        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
+            if (unsaved.mayBeLost())
+                void load();
+        });
 
         const mayManage = auth.can('keys', 'edit');
 
@@ -99,7 +105,7 @@ export const signingKeysPage: Page = {
                             <label>Algorithm
                                 <select name="algorithm" id="algorithm">
                                     ${usable.map(algorithm => html`
-                                        <option value="${algorithm}">${algorithm}</option>
+                                        <option value="${algorithm}" ${algorithm === usable[0] ? html`selected` : ''}>${algorithm}</option>
                                     `)}
                                 </select>
                             </label>
@@ -311,9 +317,14 @@ export const signingKeysPage: Page = {
 
         }
 
+        // A key asked for and not made yet is in the form alone. The first
+        // algorithm is drawn as chosen, as the browser shows it anyway, so
+        // that an untouched form is not taken for one somebody began.
+        const release = unsaved.heldBy(() => anyFormTypedSinceDrawn(content));
+
         void load();
 
-        return () => { cancelled = true; };
+        return () => { cancelled = true; release(); };
 
     }
 

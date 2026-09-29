@@ -4,6 +4,7 @@ import { html, must, render, type HTMLFragment } from '@node/html';
 import type { Page } from '@node/router';
 import { shell } from '@node/shell';
 import { copyText, errorMessage, field, formatSince } from '@node/ui';
+import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 
 /**
  * Charging sessions, and readings this meter has put its name to.
@@ -33,7 +34,12 @@ export const sessionsPage: Page = {
 
         render(content, html`<div class="loading">Loading ...</div>`);
 
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
+        // Reload throws a session half started away as thoroughly as leaving
+        // the page does, so it asks first.
+        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
+            if (unsaved.mayBeLost())
+                void load();
+        });
 
         const mayDrive = auth.can('meter', 'run');
 
@@ -114,7 +120,7 @@ export const sessionsPage: Page = {
 
                                 <label>How they were identified <span class="muted small">(optional)</span>
                                     <select name="identificationType">
-                                        <option value="">not stated</option>
+                                        <option value="" selected>not stated</option>
                                         <option value="ISO14443">ISO14443 - an RFID card</option>
                                         <option value="ISO15693">ISO15693 - an RFID tag</option>
                                         <option value="EVCCID">EVCCID - the vehicle itself</option>
@@ -381,9 +387,14 @@ export const sessionsPage: Page = {
 
         }
 
+        // Who is charging, typed and not started yet, is in the form alone.
+        // "not stated" is drawn as chosen, as the browser shows it anyway, so
+        // that an untouched form is not taken for one somebody began.
+        const release = unsaved.heldBy(() => anyFormTypedSinceDrawn(content));
+
         void load();
 
-        return () => { cancelled = true; };
+        return () => { cancelled = true; release(); };
 
     }
 

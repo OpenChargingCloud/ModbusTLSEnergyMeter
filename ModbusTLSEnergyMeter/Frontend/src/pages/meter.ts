@@ -4,6 +4,7 @@ import { html, must, render } from '@node/html';
 import type { Page } from '@node/router';
 import { shell } from '@node/shell';
 import { errorMessage, formatNumber } from '@node/ui';
+import { anyFormTypedSinceDrawn, typedSinceDrawn, unsaved } from '@node/unsaved';
 
 /** How often the readings are fetched again. */
 const POLL_INTERVAL = 2000;
@@ -37,7 +38,19 @@ export const meterPage: Page = {
 
         render(content, html`<div class="loading">Loading ...</div>`);
 
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => void load());
+        // Reload throws a mode chosen and not set away, so it asks first - and
+        // then puts the selector back as it was drawn, since a poll leaves a
+        // choice somebody has made alone.
+        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
+
+            if (!unsaved.mayBeLost())
+                return;
+
+            content.querySelector<HTMLFormElement>('#mode-form')?.reset();
+
+            void load();
+
+        });
 
         const mayWrite = auth.can('meter', 'edit');
 
@@ -180,10 +193,33 @@ export const meterPage: Page = {
                 </div>
             `);
 
-            if (mayWrite)
+            if (mayWrite) {
+                drawMode(meter.meterMode.name);
                 wireCommands();
+            }
 
             built = true;
+
+        }
+
+        /**
+         * The mode selector drawn as the register says: the register's mode is
+         * its default, so that the form is a draft only once somebody has
+         * chosen another. Drawn without one, the browser shows the first mode
+         * as chosen while no option is the default, and an untouched selector
+         * would count as a choice.
+         */
+        function drawMode(mode: MeterModeName): void {
+
+            const select = content.querySelector<HTMLSelectElement>('#mode');
+
+            if (select === null)
+                return;
+
+            for (const option of select.options)
+                option.defaultSelected = option.value === mode;
+
+            select.value = mode;
 
         }
 
@@ -227,11 +263,12 @@ export const meterPage: Page = {
 
             // The mode can be changed through the other door as well, so the
             // selector follows the register - but not while somebody is using
-            // it, or a poll would take the choice out of their hands.
+            // it, nor once they have chosen a mode they have not set yet, or a
+            // poll would take the choice out of their hands.
             const select = content.querySelector<HTMLSelectElement>('#mode');
 
-            if (select !== null && document.activeElement !== select)
-                select.value = meter.meterMode.name;
+            if (select !== null && document.activeElement !== select && !typedSinceDrawn(content.querySelector('#mode-form')))
+                drawMode(meter.meterMode.name);
 
         }
 
@@ -258,6 +295,8 @@ export const meterPage: Page = {
                     try
                     {
                         const now = await api.meter.setMode(mode);
+                        // Set, it is no draft any more.
+                        drawMode(now.name);
                         say(`This meter is now ${now.description}.`);
                         await load(false);
                     }
@@ -343,9 +382,13 @@ export const meterPage: Page = {
         // changes it, and the log has a stream of its own.
         const timer = window.setInterval(() => void load(false), POLL_INTERVAL);
 
+        // A mode chosen and not set yet is in the form alone.
+        const release = unsaved.heldBy(() => anyFormTypedSinceDrawn(content));
+
         return () => {
             cancelled = true;
             window.clearInterval(timer);
+            release();
         };
 
     }
