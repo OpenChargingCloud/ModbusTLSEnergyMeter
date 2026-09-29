@@ -76,9 +76,17 @@ export function checked(form: HTMLFormElement, name: string): boolean {
     return new FormData(form).get(name) !== null;
 }
 
-/** Read a form field as a number; NaN when it is empty or not one. */
+/**
+ * Read a form field as a number; NaN when it is empty or not one.
+ *
+ * Empty is asked first, because Number('') is 0: a field somebody emptied
+ * went to the meter as 0 - no retries, no CNAME followed, a timeout the meter
+ * refuses the whole save over - where it said nothing. NaN goes as null,
+ * which the meter takes for not given.
+ */
 export function numberField(form: HTMLFormElement, name: string): number {
-    return Number(field(form, name));
+    const text = field(form, name);
+    return text === '' ? NaN : Number(text);
 }
 
 
