@@ -240,6 +240,36 @@ textarea.mono {
     word-break: break-all;
 }
 
+// Names beside their values, as the meter's pages draw them: a table. .kv is
+// the node's grid for the same thing drawn as <div class="kv"> rows, a name
+// and a value each; on a table its one item was the table's body, put into
+// the first of its two columns - 38% of the card - with the second left
+// empty. "DemoMeter-3P (SunSpec 213)" took three lines on a screen 1280
+// pixels wide, and on a phone the head of the metrological log made its card
+// 815 pixels high. A table again, as wide as its card, the names in the 38%
+// the grid gives them.
+table.kv {
+
+    display:  table;
+    width:    100%;
+
+    // A name beside the first line of its value, and a value broken where it
+    // has no place to break, as in the node's grid: in one line, the IPv6
+    // address of a signing request was wider than a phone's card.
+    td {
+        vertical-align:  baseline;
+        overflow-wrap:   anywhere;
+    }
+
+    // The name, where a row has one: the SunSpec roles are a row each, one
+    // cell across both columns.
+    td:first-child:not(:only-child) {
+        width:          38%;
+        padding-right:  0.75rem;
+    }
+
+}
+
 
 // Signing keys and charging sessions.
 
