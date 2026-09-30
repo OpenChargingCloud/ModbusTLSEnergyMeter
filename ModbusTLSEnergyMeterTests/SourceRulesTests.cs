@@ -44,11 +44,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// said with its article, as CertificateKind.WithArticle() says it, or
         /// without one: "this energy meter".
         /// </summary>
+        /// <remarks>
+        /// The repository is found by the files of its two projects, not by
+        /// their directories: built with --artifacts-path, artifacts/bin holds
+        /// a directory named after every project, and was taken for the
+        /// repository, where the rule read nothing - and passed, until the kit
+        /// made a directory without C# an error (found by the charging station).
+        /// </remarks>
         [Test]
         public void NoArticleBeforeAName()
         {
 
-            var repository = SourceRules.RepositoryAbove(AppContext.BaseDirectory, "ModbusTLSEnergyMeter", "ModbusTLSEnergyMeterTests");
+            var repository = SourceRules.RepositoryAbove(AppContext.BaseDirectory, "ModbusTLSEnergyMeter/ModbusTLSEnergyMeter.csproj",
+                                                                                   "ModbusTLSEnergyMeterTests/ModbusTLSEnergyMeterTests.csproj");
 
             Assert.That(SourceRules.ArticlesBeforeANameIn(Path.Combine(repository, "ModbusTLSEnergyMeter"),
                                                           Path.Combine(repository, "ModbusTLSEnergyMeterTests")),
