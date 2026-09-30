@@ -231,8 +231,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (meter.SigningRequests.Get(id) is null)
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound, "There is no signing request with that id."));
 
-            if (!meter.SigningRequests.TryRemove(id, out var error, out var leftBehind))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, error));
+            // 500 where the disk refused a removal that was right in itself,
+            // as every node answers a change its file cannot take - it was
+            // 409, as if something were wrong with asking.
+            if (!meter.SigningRequests.TryRemove(id, out var error, out var notSaved, out var leftBehind))
+                return Task.FromResult(NotChanged(Request, HTTPStatusCode.Conflict, error, notSaved));
 
             meter.Log.Notice($"'{user.Id}' threw the signing request {id} away, and its key with it.", "certificates", "web");
 

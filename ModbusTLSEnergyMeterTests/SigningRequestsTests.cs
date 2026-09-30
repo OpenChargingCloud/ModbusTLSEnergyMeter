@@ -407,7 +407,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.Multiple(() => {
 
-                    Assert.That(requests.TryRemove(request.Id, out var refused),    Is.False, "a request whose files are held open cannot go");
+                    Assert.That(requests.TryRemove(request.Id, out var refused, out var notSaved, out _), Is.False, "a request whose files are held open cannot go");
+                    Assert.That(notSaved,                                           Is.True,  "the disk refused it, not the asking");
                     Assert.That(refused,                                            Does.StartWith("That request could not be removed"));
 
                     Assert.That(requests.Get(request.Id),                           Is.Not.Null, "it is still listed");
@@ -420,7 +421,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             // Let go of, it goes - all of it.
             Assert.Multiple(() => {
-                Assert.That(requests.TryRemove(request.Id, out var failed, out var leftBehind),  Is.True, failed);
+                Assert.That(requests.TryRemove(request.Id, out var failed, out _, out var leftBehind),  Is.True, failed);
                 Assert.That(leftBehind,                                                          Is.Null);
                 Assert.That(Directory.GetDirectories(requests.Path),                             Is.Empty, "nothing of it is left");
                 Assert.That(requests.All,                                                        Is.Empty);
@@ -451,7 +452,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             requests.BeforeDeleting = aside => throw new IOException($"'{aside}' is held by somebody else.");
 
-            Assert.That(requests.TryRemove(request.Id, out var failed, out var leftBehind), Is.True, failed);
+            Assert.That(requests.TryRemove(request.Id, out var failed, out _, out var leftBehind), Is.True, failed);
 
             Assert.Multiple(() => {
 

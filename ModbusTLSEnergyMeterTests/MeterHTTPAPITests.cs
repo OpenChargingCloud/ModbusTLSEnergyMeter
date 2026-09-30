@@ -1433,6 +1433,98 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+        #region AKeyOrARequestTheDiskHoldsOnTo_IsA500()
+
+        /// <summary>
+        /// A signing key or a signing request whose directory the disk will not
+        /// let go of is answered 500 with the reason, as every node answers a
+        /// change its file cannot take - and stays, listed as it was.
+        /// </summary>
+        /// <remarks>
+        /// Both were 409, as if something had been wrong with the asking. The
+        /// disk refuses here through the stores' seam, as a file held open does
+        /// on Windows, so that this is asked on every platform.
+        /// </remarks>
+        [Test]
+        public async Task AKeyOrARequestTheDiskHoldsOnTo_IsA500()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var key = meter!.SigningKeys.Create(Signing.MeterKeyStore.DefaultAlgorithm, "the disk holds on to it");
+
+            Assert.That(meter.SigningRequests.TryCreate(Certificates.ListenerCertificates.Web, "CN=meter7.lan", [ "meter7.lan" ], [], null, "the disk holds on to it",
+                                                        out var request, out var error),
+                        Is.True, error);
+
+            meter.SigningKeys.    BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
+            meter.SigningRequests.BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
+
+            var (keyStatus,      keySaid)      = await administrator.Call(HttpMethod.Delete, $"api/v1/keys/{key.Id}");
+            var (requestStatus,  requestSaid)  = await administrator.Call(HttpMethod.Delete, $"api/v1/certificates/requests/{request!.Id}");
+
+            var keys      = await administrator.GetJSON("api/v1/keys");
+            var requests  = await administrator.GetJSON("api/v1/certificates/requests");
+
+            Assert.Multiple(() => {
+
+                Assert.That(keyStatus,                                                          Is.EqualTo(HttpStatusCode.InternalServerError));
+                Assert.That(keySaid?["error"]?.ToString(),                                      Does.Contain("is held by somebody else"));
+                Assert.That(keys?["keys"]?.Select(entry => entry["id"]?.ToString()),           Does.Contain(key.Id), "the key is still there");
+
+                Assert.That(requestStatus,                                                      Is.EqualTo(HttpStatusCode.InternalServerError));
+                Assert.That(requestSaid?["error"]?.ToString(),                                  Does.Contain("is held by somebody else"));
+                Assert.That(requests?["requests"]?.Select(entry => entry["id"]?.ToString()),   Does.Contain(request.Id), "the request is still there");
+
+            });
+
+        }
+
+        #endregion
+
+        #region ARefusal_StaysWhatItWas_WhileTheDiskHoldsOn()
+
+        /// <summary>
+        /// What is wrong with the asking itself is answered as it was, whatever
+        /// the disk would do: the only signing key of the meter is refused with
+        /// 409, a key that is not there with 409, a request that is not there
+        /// with 404 - not with 500.
+        /// </summary>
+        [Test]
+        public async Task ARefusal_StaysWhatItWas_WhileTheDiskHoldsOn()
+        {
+
+            using var administrator = await SignInAsAdministrator();
+
+            var identity = meter!.SigningKeys.Default!;
+
+            Assert.That(meter.SigningKeys.Keys.Count(), Is.EqualTo(1), "the meter starts with its identity alone");
+
+            meter.SigningKeys.    BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
+            meter.SigningRequests.BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
+
+            var (only,     onlySaid)     = await administrator.Call(HttpMethod.Delete, $"api/v1/keys/{identity.Id}");
+            var (noKey,    noKeySaid)    = await administrator.Call(HttpMethod.Delete, "api/v1/keys/20000101-000000-000000");
+            var (noRequest, _)           = await administrator.Call(HttpMethod.Delete, "api/v1/certificates/requests/20000101-000000-000000");
+
+            Assert.Multiple(() => {
+
+                Assert.That(only,                             Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(onlySaid?["error"]?.ToString(),   Does.Contain("only signing key"));
+
+                Assert.That(noKey,                            Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(noKeySaid?["error"]?.ToString(),  Does.Contain("There is no signing key"));
+
+                Assert.That(noRequest,                        Is.EqualTo(HttpStatusCode.NotFound));
+
+                Assert.That(meter.SigningKeys.Get(identity.Id), Is.Not.Null, "and the identity is where it was");
+
+            });
+
+        }
+
+        #endregion
+
         #region TheLogBook_CanBeCheckedFromTheBrowser()
 
         /// <summary>

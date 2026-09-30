@@ -223,7 +223,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.Multiple(() => {
 
-                    Assert.That(store.TryRemove(second.Id, out var error),             Is.False, "a key whose private half is held open cannot go");
+                    Assert.That(store.TryRemove(second.Id, out var error, out var notSaved, out _), Is.False, "a key whose private half is held open cannot go");
+                    Assert.That(notSaved,                                              Is.True,  "the disk refused it, not the asking");
                     Assert.That(error,                                                 Does.Contain(second.Id));
 
                     Assert.That(store.Get(second.Id),                                  Is.Not.Null, "it is still this store's");
@@ -239,7 +240,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             // Let go of, it goes - all of it.
             Assert.Multiple(() => {
-                Assert.That(store.TryRemove(second.Id, out var error, out var leftBehind),  Is.True, error);
+                Assert.That(store.TryRemove(second.Id, out var error, out _, out var leftBehind),  Is.True, error);
                 Assert.That(leftBehind,                                                     Is.Null);
                 Assert.That(Directory.GetDirectories(path).Select(Path.GetFileName),        Is.EquivalentTo(new[] { first.Id }));
                 Assert.That(new MeterKeyStore(path).Get(second.Id),                         Is.Null);
@@ -267,7 +268,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             store.BeforeDeleting = aside => throw new IOException($"'{aside}' is held by somebody else.");
 
-            Assert.That(store.TryRemove(second.Id, out var error, out var leftBehind), Is.True, error);
+            Assert.That(store.TryRemove(second.Id, out var error, out _, out var leftBehind), Is.True, error);
 
             var again = new MeterKeyStore(path);
 

@@ -66,13 +66,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// it fails afterwards: then it is only said where it was left.
         /// </remarks>
         /// <param name="Directory">The directory to take away.</param>
+        /// <param name="BeforeSettingAside">What happens before it is set aside - for the tests, where throwing is the rename that fails.</param>
         /// <param name="BeforeDeleting">What happens once it is set aside and before it is deleted - for the tests.</param>
         /// <returns>Where what could not be deleted was left, or null when all of it is gone.</returns>
         internal static String? RemoveInOneStep(String           Directory,
-                                                Action<String>?  BeforeDeleting   = null)
+                                                Action<String>?  BeforeSettingAside   = null,
+                                                Action<String>?  BeforeDeleting       = null)
         {
 
             var aside = $"{Directory.TrimEnd('/', '\\')}.{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}{SetAsideSuffix}";
+
+            BeforeSettingAside?.Invoke(Directory);
 
             System.IO.Directory.Move(Directory, aside);
 

@@ -259,6 +259,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         public TimeProvider  TimeProvider  { get; }
 
         /// <summary>
+        /// What happens before a request's directory is set aside - for the
+        /// tests, which make that fail, as a file held open does on Windows.
+        /// </summary>
+        internal Action<String>? BeforeSettingAside { get; set; }
+
+        /// <summary>
         /// What happens once a request's directory is set aside, before it is
         /// deleted - for the tests, which make that fail.
         /// </summary>
@@ -540,11 +546,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         public Boolean TryRemove(String                            Id,
                                  [NotNullWhen(false)] out String?  Error)
 
-            => TryRemove(Id, out Error, out _);
+            => TryRemove(Id, out Error, out _, out _);
 
         #endregion
 
-        #region TryRemove(Id, out Error, out LeftBehind)
+        #region TryRemove(Id, out Error, out NotSaved, out LeftBehind)
 
         /// <summary>
         /// Throw a request away, and its key with it - whole, or not at all.
@@ -559,13 +565,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// </remarks>
         /// <param name="Id">The request.</param>
         /// <param name="Error">Why it was not removed.</param>
+        /// <param name="NotSaved">Whether it was the disk that refused, the removal itself being right - where a request that is not there is refused whatever the disk would do.</param>
         /// <param name="LeftBehind">Where what is left of its directory lies, when deleting it failed once it was set aside - the request is removed all the same.</param>
         public Boolean TryRemove(String                            Id,
                                  [NotNullWhen(false)] out String?  Error,
+                                 out Boolean                       NotSaved,
                                  out String?                       LeftBehind)
         {
 
-            LeftBehind = null;
+            NotSaved    = false;
+            LeftBehind  = null;
 
             if (Get(Id) is null)
             {
@@ -576,11 +585,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             try
             {
                 lock (requestLock)
-                    LeftBehind = DirectoryRemoval.RemoveInOneStep(System.IO.Path.Combine(Path, Id), BeforeDeleting);
+                    LeftBehind = DirectoryRemoval.RemoveInOneStep(System.IO.Path.Combine(Path, Id), BeforeSettingAside, BeforeDeleting);
             }
             catch (Exception e)
             {
-                Error = $"That request could not be removed: {e.Message}";
+                Error     = $"That request could not be removed: {e.Message}";
+                NotSaved  = true;
                 return false;
             }
 
