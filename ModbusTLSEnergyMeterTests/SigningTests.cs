@@ -193,6 +193,101 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+        #region AKeyIsRemovedWhole_OrNotAtAll()
+
+        /// <summary>
+        /// A key whose private half somebody else holds open is not removed,
+        /// and stays whole - in the store, on disk and at the next start; let
+        /// go of, it goes, and nothing of it is left.
+        /// </summary>
+        /// <remarks>
+        /// Deleted file by file, the key's meta.json went and its private.key
+        /// stayed: the removal said it had failed, and the next start knew the
+        /// key no longer, while its private half lay on disk with nothing that
+        /// named it. Windows only: elsewhere an open file keeps nobody from
+        /// renaming or deleting its directory.
+        /// </remarks>
+        [Test]
+        [Platform("Win")]
+        public void AKeyIsRemovedWhole_OrNotAtAll()
+        {
+
+            var path       = Path.Combine(workingDirectory!, "keys");
+            var store      = new MeterKeyStore(path);
+            var first      = store.EnsureIdentity()!;
+            var second     = store.Create(MeterKeyStore.DefaultAlgorithm, "held open");
+            var directory  = Path.Combine(path, second.Id);
+
+            using (File.Open(Path.Combine(directory, "private.key"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+
+                Assert.Multiple(() => {
+
+                    Assert.That(store.TryRemove(second.Id, out var error),             Is.False, "a key whose private half is held open cannot go");
+                    Assert.That(error,                                                 Does.Contain(second.Id));
+
+                    Assert.That(store.Get(second.Id),                                  Is.Not.Null, "it is still this store's");
+                    Assert.That(File.Exists(Path.Combine(directory, "meta.json")),     Is.True, "and whole on disk");
+                    Assert.That(File.Exists(Path.Combine(directory, "private.key")),   Is.True);
+
+                });
+
+            }
+
+            // As the next start sees it: the key is there, and the same.
+            Assert.That(new MeterKeyStore(path).Get(second.Id)?.PublicKeyHEX, Is.EqualTo(second.PublicKeyHEX));
+
+            // Let go of, it goes - all of it.
+            Assert.Multiple(() => {
+                Assert.That(store.TryRemove(second.Id, out var error, out var leftBehind),  Is.True, error);
+                Assert.That(leftBehind,                                                     Is.Null);
+                Assert.That(Directory.GetDirectories(path).Select(Path.GetFileName),        Is.EquivalentTo(new[] { first.Id }));
+                Assert.That(new MeterKeyStore(path).Get(second.Id),                         Is.Null);
+            });
+
+        }
+
+        #endregion
+
+        #region AKeySetAside_IsNotReadAgain()
+
+        /// <summary>
+        /// A key whose directory is set aside and then cannot be deleted is
+        /// removed all the same: neither this store nor the next start knows it
+        /// any more, and the removal says where what is left of it lies.
+        /// </summary>
+        [Test]
+        public void AKeySetAside_IsNotReadAgain()
+        {
+
+            var path    = Path.Combine(workingDirectory!, "keys");
+            var store   = new MeterKeyStore(path);
+            var first   = store.EnsureIdentity()!;
+            var second  = store.Create(MeterKeyStore.DefaultAlgorithm, "cannot be deleted");
+
+            store.BeforeDeleting = aside => throw new IOException($"'{aside}' is held by somebody else.");
+
+            Assert.That(store.TryRemove(second.Id, out var error, out var leftBehind), Is.True, error);
+
+            var again = new MeterKeyStore(path);
+
+            Assert.Multiple(() => {
+
+                Assert.That(leftBehind,                                               Is.Not.Null);
+                Assert.That(Path.GetFileName(leftBehind),                             Does.StartWith(second.Id + ".").And.EndWith(".removed"));
+                Assert.That(File.Exists(Path.Combine(leftBehind!, "private.key")),    Is.True, "left as it was, only renamed");
+
+                Assert.That(store.Get(second.Id),                                     Is.Null, "gone from this store");
+                Assert.That(again.Get(second.Id),                                     Is.Null, "and not read again at the next start");
+                Assert.That(again.Keys.Select(key => key.Id),                         Is.EquivalentTo(new[] { first.Id }));
+                Assert.That(again.LastError,                                          Is.Null);
+
+            });
+
+        }
+
+        #endregion
+
         #region EveryAlgorithm_ProducesAnOCMFDocumentChargyVerifies(Algorithm)
 
         /// <summary>

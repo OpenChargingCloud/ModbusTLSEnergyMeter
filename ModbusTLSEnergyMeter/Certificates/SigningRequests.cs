@@ -259,6 +259,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         public TimeProvider  TimeProvider  { get; }
 
         /// <summary>
+        /// What happens once a request's directory is set aside, before it is
+        /// deleted - for the tests, which make that fail.
+        /// </summary>
+        internal Action<String>? BeforeDeleting { get; set; }
+
+        /// <summary>
         /// Every request, newest first.
         /// </summary>
         public IReadOnlyList<SigningRequest> All
@@ -274,8 +280,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
 
                     var requests = new List<SigningRequest>();
 
+                    // Not what is left of a request thrown away whose directory
+                    // could not be deleted afterwards.
                     foreach (var directory in Directory.EnumerateDirectories(Path))
-                        if (Read(directory) is SigningRequest request)
+                        if (!DirectoryRemoval.IsSetAside(directory) &&
+                            Read(directory) is SigningRequest request)
                             requests.Add(request);
 
                     return [.. requests.OrderByDescending(request => request.CreatedAt).
@@ -530,7 +539,33 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// </remarks>
         public Boolean TryRemove(String                            Id,
                                  [NotNullWhen(false)] out String?  Error)
+
+            => TryRemove(Id, out Error, out _);
+
+        #endregion
+
+        #region TryRemove(Id, out Error, out LeftBehind)
+
+        /// <summary>
+        /// Throw a request away, and its key with it - whole, or not at all.
+        /// </summary>
+        /// <remarks>
+        /// Its directory is set aside in one step before it is deleted
+        /// (<see cref="DirectoryRemoval"/>): a file somebody else holds open
+        /// fails the removal and leaves the request as it was, where deleting
+        /// file by file could leave a request in the list without its key, or
+        /// its key on disk with nothing listing it. What could not be deleted
+        /// once set aside is no longer read, and is said in LeftBehind.
+        /// </remarks>
+        /// <param name="Id">The request.</param>
+        /// <param name="Error">Why it was not removed.</param>
+        /// <param name="LeftBehind">Where what is left of its directory lies, when deleting it failed once it was set aside - the request is removed all the same.</param>
+        public Boolean TryRemove(String                            Id,
+                                 [NotNullWhen(false)] out String?  Error,
+                                 out String?                       LeftBehind)
         {
+
+            LeftBehind = null;
 
             if (Get(Id) is null)
             {
@@ -541,7 +576,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             try
             {
                 lock (requestLock)
-                    Directory.Delete(System.IO.Path.Combine(Path, Id), recursive: true);
+                    LeftBehind = DirectoryRemoval.RemoveInOneStep(System.IO.Path.Combine(Path, Id), BeforeDeleting);
             }
             catch (Exception e)
             {

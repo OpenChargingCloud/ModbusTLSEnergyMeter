@@ -92,6 +92,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
         /// </summary>
         public String?       LastError     { get; private set; }
 
+        /// <summary>
+        /// What happens once a key's directory is set aside, before it is
+        /// deleted - for the tests, which make that fail.
+        /// </summary>
+        internal Action<String>? BeforeDeleting { get; set; }
+
         /// <summary>Every key, newest first.</summary>
         public IEnumerable<MeterKey> Keys
         {
@@ -299,7 +305,33 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
         /// </remarks>
         public Boolean TryRemove(String                            Id,
                                  [NotNullWhen(false)] out String?  Error)
+
+            => TryRemove(Id, out Error, out _);
+
+        #endregion
+
+        #region TryRemove(Id, out Error, out LeftBehind)
+
+        /// <summary>
+        /// Throw a key away, with its private half - whole, or not at all.
+        /// </summary>
+        /// <remarks>
+        /// Its directory is set aside in one step before it is deleted
+        /// (<see cref="DirectoryRemoval"/>): a file somebody else holds open
+        /// fails the removal and leaves the key as it was, where deleting file
+        /// by file left its private half on disk and the key gone at the next
+        /// start. What could not be deleted once set aside is no longer read,
+        /// and is said in LeftBehind.
+        /// </remarks>
+        /// <param name="Id">The key.</param>
+        /// <param name="Error">Why it was not removed.</param>
+        /// <param name="LeftBehind">Where what is left of its directory lies, when deleting it failed once it was set aside - the key is removed all the same.</param>
+        public Boolean TryRemove(String                            Id,
+                                 [NotNullWhen(false)] out String?  Error,
+                                 out String?                       LeftBehind)
         {
+
+            LeftBehind = null;
 
             lock (cacheLock)
             {
@@ -322,7 +354,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                     var directory = System.IO.Path.Combine(Path, Id);
 
                     if (Directory.Exists(directory))
-                        Directory.Delete(directory, recursive: true);
+                        LeftBehind = DirectoryRemoval.RemoveInOneStep(directory, BeforeDeleting);
                 }
                 catch (Exception e)
                 {
@@ -423,6 +455,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
                 foreach (var directory in Directory.GetDirectories(Path))
                 {
+
+                    // A key taken away whose directory could not be deleted
+                    // afterwards: removed, and not to come back at a restart.
+                    if (DirectoryRemoval.IsSetAside(directory))
+                        continue;
 
                     try
                     {

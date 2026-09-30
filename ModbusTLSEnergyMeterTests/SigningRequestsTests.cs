@@ -375,6 +375,100 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #endregion
 
 
+        #region ARequestIsRemovedWhole_OrNotAtAll()
+
+        /// <summary>
+        /// A request whose files somebody else holds open is not thrown away,
+        /// and stays whole - listed, with its key; let go of, it goes, and
+        /// nothing of it is left.
+        /// </summary>
+        /// <remarks>
+        /// Deleted file by file, its key.pem went before its meta.json: the
+        /// removal said it had failed, and the request was listed on with no
+        /// key to take its certificate. Windows only: elsewhere an open file
+        /// keeps nobody from renaming or deleting its directory.
+        /// </remarks>
+        [Test]
+        [Platform("Win")]
+        public void ARequestIsRemovedWhole_OrNotAtAll()
+        {
+
+            var requests = NewRequests();
+
+            Assert.That(requests.TryCreate(ListenerCertificates.Web, "CN=meter7.lan", [ "meter7.lan" ], [], null, "held open",
+                                           out var made, out var error),
+                        Is.True, error);
+
+            var request  = made!;
+            var folder   = Path.Combine(requests.Path, request.Id);
+
+            using (File.Open(Path.Combine(folder, "meta.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+
+                Assert.Multiple(() => {
+
+                    Assert.That(requests.TryRemove(request.Id, out var refused),    Is.False, "a request whose files are held open cannot go");
+                    Assert.That(refused,                                            Does.StartWith("That request could not be removed"));
+
+                    Assert.That(requests.Get(request.Id),                           Is.Not.Null, "it is still listed");
+                    Assert.That(File.Exists(Path.Combine(folder, "key.pem")),       Is.True, "with its key");
+                    Assert.That(File.Exists(Path.Combine(folder, "request.pem")),   Is.True);
+
+                });
+
+            }
+
+            // Let go of, it goes - all of it.
+            Assert.Multiple(() => {
+                Assert.That(requests.TryRemove(request.Id, out var failed, out var leftBehind),  Is.True, failed);
+                Assert.That(leftBehind,                                                          Is.Null);
+                Assert.That(Directory.GetDirectories(requests.Path),                             Is.Empty, "nothing of it is left");
+                Assert.That(requests.All,                                                        Is.Empty);
+            });
+
+        }
+
+        #endregion
+
+        #region ARequestSetAside_IsNotReadAgain()
+
+        /// <summary>
+        /// A request whose directory is set aside and then cannot be deleted is
+        /// thrown away all the same: neither this list nor the next one reads
+        /// it any more, and the removal says where what is left of it lies.
+        /// </summary>
+        [Test]
+        public void ARequestSetAside_IsNotReadAgain()
+        {
+
+            var requests = NewRequests();
+
+            Assert.That(requests.TryCreate(ListenerCertificates.Web, "CN=meter7.lan", [ "meter7.lan" ], [], null, "cannot be deleted",
+                                           out var made, out var error),
+                        Is.True, error);
+
+            var request = made!;
+
+            requests.BeforeDeleting = aside => throw new IOException($"'{aside}' is held by somebody else.");
+
+            Assert.That(requests.TryRemove(request.Id, out var failed, out var leftBehind), Is.True, failed);
+
+            Assert.Multiple(() => {
+
+                Assert.That(leftBehind,                                             Is.Not.Null);
+                Assert.That(Path.GetFileName(leftBehind),                           Does.StartWith(request.Id + ".").And.EndWith(".removed"));
+                Assert.That(File.Exists(Path.Combine(leftBehind!, "key.pem")),      Is.True, "left as it was, only renamed");
+
+                Assert.That(requests.Get(request.Id),                               Is.Null, "no longer this list's");
+                Assert.That(requests.All,                                           Is.Empty);
+                Assert.That(NewRequests().All,                                      Is.Empty, "nor the next one's");
+
+            });
+
+        }
+
+        #endregion
+
         #region (private) NewRequests() / NewStore() / NewCA(...) / Sign(...) / DEROf(PEM)
 
         private SigningRequests NewRequests()

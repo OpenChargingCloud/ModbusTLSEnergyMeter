@@ -231,10 +231,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             if (meter.SigningRequests.Get(id) is null)
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound, "There is no signing request with that id."));
 
-            if (!meter.SigningRequests.TryRemove(id, out var error))
+            if (!meter.SigningRequests.TryRemove(id, out var error, out var leftBehind))
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, error));
 
             meter.Log.Notice($"'{user.Id}' threw the signing request {id} away, and its key with it.", "certificates", "web");
+
+            if (leftBehind is not null)
+                meter.Log.Warning($"The signing request {id} is gone, but its directory could not be deleted: what is left of it, " +
+                                  $"its private key among it, is in '{leftBehind}', which this meter does not read again. Delete it by hand.",
+                                  "certificates");
 
             return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, SigningRequestsJSON()));
 

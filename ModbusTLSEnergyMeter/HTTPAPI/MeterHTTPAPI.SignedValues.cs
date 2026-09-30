@@ -451,13 +451,18 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                                  $"The running charging session was started with '{id}' and has to be signed with it. " +
                                                   "Stop the session first."));
 
-            if (!meter.SigningKeys.TryRemove(id, out var problem))
+            if (!meter.SigningKeys.TryRemove(id, out var problem, out var leftBehind))
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, problem));
 
             meter.Log.Warning(
                 $"'{user.Id}' removed the signing key '{id}'. Everything it signed can no longer be checked against this meter.",
                 "signing", "web"
             );
+
+            if (leftBehind is not null)
+                meter.Log.Warning($"The signing key '{id}' is gone, but its directory could not be deleted: what is left of it, " +
+                                  $"its private key among it, is in '{leftBehind}', which this meter does not read again. Delete it by hand.",
+                                  "signing");
 
             return Task.FromResult(JSONResponse(Request, HTTPStatusCode.OK, meter.SigningKeys.ToJSON()));
 
