@@ -85,13 +85,17 @@ module.exports = (env, argv) => {
             new MiniCssExtractPlugin({
                 filename: 'assets/[name].[contenthash].css'
             }),
+            // The page is every node's, from the WWCP_Node found beside this
+            // repository as '@node' is: the meter names itself into it, and the
+            // node fills in its {{...}} as it serves it.
             new HtmlWebpackPlugin({
-                template:  './src/index.html',
-                filename:  'index.html',
-                chunks:    ['main'],
-                favicon:   './src/favicon.svg',
-                title:     'Energy Meter',
-                version:   appVersion
+                template:     path.resolve(__dirname, '../../../WWCP_Node/Frontend/src/index.html'),
+                filename:     'index.html',
+                chunks:       ['main'],
+                favicon:      './src/favicon.svg',
+                title:        'Energy Meter',
+                description:  'The web interface of an OpenChargingCloud Modbus/TLS energy meter, served by the Hermod HTTP/1.1 server',
+                version:      appVersion
             })
         ],
 
