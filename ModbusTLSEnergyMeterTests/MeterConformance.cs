@@ -86,6 +86,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         public void RemoveTheKeyInfrastructure()
         {
 
+            TestAuthorities.RemoveInstalled(pki);
+
             try
             {
                 if (pki is not null && System.IO.Directory.Exists(pki))

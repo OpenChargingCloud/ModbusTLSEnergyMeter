@@ -102,6 +102,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         public void OneTimeTearDown()
         {
 
+            TestAuthorities.RemoveInstalled(pkiDirectory);
+
             try
             {
                 if (Directory.Exists(fixtureDirectory))

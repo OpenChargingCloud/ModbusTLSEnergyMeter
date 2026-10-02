@@ -71,6 +71,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TearDown]
         public void TearDown()
         {
+
+            if (directory is not null)
+                TestAuthorities.RemoveInstalled(Path.Combine(directory, "pki"));
+
             try
             {
                 if (directory is not null && Directory.Exists(directory))
