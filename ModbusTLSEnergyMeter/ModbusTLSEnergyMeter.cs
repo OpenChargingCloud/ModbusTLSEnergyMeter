@@ -818,14 +818,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         protected override async Task OnStopping()
         {
 
-            certificateTimer?.Dispose();
-            certificateTimer = null;
-
-            stateTimer?.Dispose();
-            stateTimer = null;
-
-            logFileTimer?.Dispose();
-            logFileTimer = null;
+            StopTheTimers();
 
             // Once more on the way out, so an orderly stop loses nothing at all.
             SaveTheEnergyCounters();
@@ -849,17 +842,46 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         #endregion
 
+        #region (private) StopTheTimers()
+
+        /// <summary>
+        /// Stop the meter's own timers: the certificates' check, the counters'
+        /// saving and the log files' thinning out.
+        /// </summary>
+        private void StopTheTimers()
+        {
+
+            certificateTimer?.Dispose();
+            certificateTimer = null;
+
+            stateTimer?.Dispose();
+            stateTimer = null;
+
+            logFileTimer?.Dispose();
+            logFileTimer = null;
+
+        }
+
+        #endregion
+
         #region (override) DisposeAsync()
 
         /// <summary>
         /// Stop, and let go of the Modbus/TLS side before the node lets go of the
-        /// log - once.
+        /// log - once, and even where stopping fails.
         /// </summary>
         /// <remarks>
         /// A meter in a using block that was also disposed by hand is asked
         /// twice, and what was let go of the first time cannot be let go of
         /// again: the Modbus/TLS frontend cancels a token source it has already
         /// disposed, and throws.
+        ///
+        /// What failed while stopping is thrown on afterwards, as the node does
+        /// it. A meter whose stop threw used to keep its Modbus/TLS frontend
+        /// listening, its timers running and the node's log file open - and as
+        /// it counted as let go of, asking again changed nothing. The timers are
+        /// stopped here as well, because a stop that failed may have failed
+        /// before it got to them.
         /// </remarks>
         public override async ValueTask DisposeAsync()
         {
@@ -867,17 +889,33 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             if (Interlocked.Exchange(ref disposed, 1) == 1)
                 return;
 
-            await Stop();
+            try
+            {
 
-            frontend.OnModbusRequest -= RecordModbusRequest;
+                try
+                {
+                    await Stop();
+                }
+                finally
+                {
 
-            frontend.          Dispose();
-            device.            Dispose();
-            startupCertificate.Dispose();
-            ClientCA.          Dispose();
-            cts.               Dispose();
+                    StopTheTimers();
 
-            await base.DisposeAsync();
+                    frontend.OnModbusRequest -= RecordModbusRequest;
+
+                    frontend.          Dispose();
+                    device.            Dispose();
+                    startupCertificate.Dispose();
+                    ClientCA.          Dispose();
+                    cts.               Dispose();
+
+                }
+
+            }
+            finally
+            {
+                await base.DisposeAsync();
+            }
 
         }
 
