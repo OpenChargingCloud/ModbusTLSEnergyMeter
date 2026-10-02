@@ -38,6 +38,7 @@ using cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Logging;
 
 using LogLevel             = cloud.charging.open.protocols.WWCP.Node.Logging.LogLevel;
+using cloud.charging.open.protocols.WWCP.Node.SecureShell;
 using NetIPAddress         = System.Net.IPAddress;
 
 #endregion
@@ -450,6 +451,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <param name="ConsoleLogLevel">How much of it reaches the console.</param>
         /// <param name="BridgeDebugLog">Whether what the libraries below write with DebugX ends up in the log.</param>
         /// <param name="TimeProvider">Where this meter reads the time; the system clock by default.</param>
+        /// <param name="SSH">What the program says about serving the command line over SSH; nothing by default - see SSHSettings.</param>
         public ModbusTLSEnergyMeter(String                 SerialNumber,
                                     String                 ServerPfxPath,
                                     String?                ServerPfxPassword,
@@ -477,13 +479,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                     Boolean                LogToConsole         = true,
                                     LogLevel               ConsoleLogLevel      = LogLevel.Info,
                                     Boolean                BridgeDebugLog       = true,
-                                    TimeProvider?          TimeProvider         = null)
+                                    TimeProvider?          TimeProvider         = null,
+                                    SSHSettings?           SSH                  = null)
 
             : this(new Setup(SerialNumber, DataPath, CertificatesPath, LogKeepDays, HTTPS, TimeProvider),
                    SerialNumber, ServerPfxPath, ServerPfxPassword, ClientCACertPath,
                    ListenAddress, ListenPort, HandshakeTimeout, IdleTimeout, WriteTimeout, MeterMode, SimulatedDayLength,
                    HTTPHostname, HTTPPort, MeterAPIPath, Frontend, HTTPS,
-                   ConfigFile, DNSClient, NTSClient, LogToConsole, ConsoleLogLevel, BridgeDebugLog, TimeProvider)
+                   ConfigFile, DNSClient, NTSClient, LogToConsole, ConsoleLogLevel, BridgeDebugLog, TimeProvider, SSH)
 
         { }
 
@@ -512,7 +515,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                      Boolean                LogToConsole,
                                      LogLevel               ConsoleLogLevel,
                                      Boolean                BridgeDebugLog,
-                                     TimeProvider?          TimeProvider)
+                                     TimeProvider?          TimeProvider,
+                                     SSHSettings?           SSH)
 
             : base(Kind:                            MeterKind,
                    Version:                         typeof(ModbusTLSEnergyMeter).Assembly.GetName().Version?.ToString(3) ?? "0.0.0",
@@ -560,7 +564,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    MetrologicalLogPath:             Setup.LogPath,
                    BridgeDebugLog:                  BridgeDebugLog,
                    TraceTags:                       TraceTags,
-                   TimeProvider:                    TimeProvider)
+                   TimeProvider:                    TimeProvider,
+                   SSH:                             SSH)
 
         {
 
