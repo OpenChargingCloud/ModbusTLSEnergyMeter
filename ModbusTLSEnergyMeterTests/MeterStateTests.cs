@@ -260,8 +260,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var starting = TestPorts.StartedOnFreshPorts(NewMeter);
 
-            Assert.DoesNotThrowAsync(async () => await starting,
-                                     "an unreadable file stopped the meter from starting");
+            await Assert.DoesNotThrowAsync(async () => await starting,
+                                           "an unreadable file stopped the meter from starting");
 
             await using var meter = await starting;
 
