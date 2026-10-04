@@ -1,10 +1,11 @@
 import { api, logLevels, type LogEntry, type LogLevel } from '../api/client';
-import { html, must, render, type HTMLFragment } from '@node/html';
+import { html as stringHTML, must } from '@node/html';
 import { drawOrder } from '@node/logs/order';
 import { logs } from '@node/logs/store';
 import type { Page } from '@node/router';
 import { shell } from '@node/shell';
 import { errorMessage, formatTime, formatTimestamp, isAtLeast } from '@node/ui';
+import { html, nothing, render, repeat, type TemplateResult } from '@node/view';
 
 /**
  * The log book: the entries that are evidence, what they say, and whether they
@@ -26,6 +27,10 @@ import { errorMessage, formatTime, formatTimestamp, isAtLeast } from '@node/ui';
  * the moment somebody signs in - so this page opens on what happened while
  * they were elsewhere rather than on an empty list. Filtering happens here,
  * over what is already in the browser, which is why it is instant.
+ *
+ * Drawn by view.ts: a draw changes only what differs, so that the lines that
+ * were there stay the elements they were - and what is selected in them stays
+ * selected - while newer ones arrive above them.
  */
 export const metrologicalLogPage: Page = {
 
@@ -37,54 +42,14 @@ export const metrologicalLogPage: Page = {
             active:    '/metrological-log',
             title:     'Metrological log',
             subtitle:  'What this meter recorded, and whether the record on disk is still intact.',
-            actions:   html`<button type="button" id="verify" class="btn small">Check the log</button>`
+            actions:   stringHTML`<button type="button" id="verify" class="btn small">Check the log</button>`
         });
 
         let tag:      string   = '';
         let minimum:  LogLevel = 'debug';
 
-        render(content, html`
-            <div class="log-filters">
-
-                <label>Tag
-                    <select id="tag">
-                        <option value="">everything</option>
-                    </select>
-                </label>
-
-                <label>From level
-                    <select id="level">
-                        ${logLevels.map(level => html`<option value="${level}">${level}</option>`)}
-                    </select>
-                </label>
-
-                <span class="chip" id="count"></span>
-                <span class="stream-state" id="stream"></span>
-
-            </div>
-
-            <div id="verdict"></div>
-            <div class="log" id="log"></div>
-            <p class="log-foot muted small" id="foot"></p>
-        `);
-
-        const tagSelect    = must<HTMLSelectElement>(content, '#tag');
-        const levelSelect  = must<HTMLSelectElement>(content, '#level');
-        const list         = must<HTMLElement>(content, '#log');
-        const count        = must<HTMLElement>(content, '#count');
-        const stream       = must<HTMLElement>(content, '#stream');
-        const foot         = must<HTMLElement>(content, '#foot');
-        const verdict      = must<HTMLElement>(content, '#verdict');
-
-        tagSelect.addEventListener('change', () => {
-            tag = tagSelect.value;
-            drawList();
-        });
-
-        levelSelect.addEventListener('change', () => {
-            minimum = levelSelect.value as LogLevel;
-            drawList();
-        });
+        /** What checking the log on disk found, or why it could not: nothing until it is asked. */
+        let verdict: TemplateResult | typeof nothing = nothing;
 
 
         function matches(entry: LogEntry): boolean {
@@ -97,61 +62,54 @@ export const metrologicalLogPage: Page = {
             return logs.entries.filter(entry => entry.metrological === true);
         }
 
-        function drawTags(): void {
-
-            const known = new Set(Array.from(tagSelect.options).map(option => option.value));
-
-            for (const name of [...logs.tags].sort())
-                if (!known.has(name))
-                    tagSelect.add(new Option(name, name));
-
-            tagSelect.value = tag;
-
-        }
-
         /** Newest first: what just happened is what somebody came here for. */
-        function drawList(): void {
+        function draw(): void {
 
             const all    = book();
             const shown  = drawOrder(all.filter(matches));
 
-            render(list, html`${shown.map(line)}`);
+            render(content, html`
+                <div class="log-filters">
 
-            count.textContent = shown.length === all.length
-                                    ? `${shown.length} entries`
-                                    : `${shown.length} of ${all.length} entries`;
+                    <label>Tag
+                        <select id="tag" @change=${(event: Event) => { tag = (event.target as HTMLSelectElement).value; draw(); }}>
+                            <option value="" ?selected=${tag === ''}>everything</option>
+                            ${[...logs.tags].sort().map(name => html`<option value="${name}" ?selected=${name === tag}>${name}</option>`)}
+                        </select>
+                    </label>
 
-            foot.textContent = logs.capacity > 0
-                                   ? `This meter keeps the newest ${logs.capacity} entries of its log in memory, these among them; the log book on disk goes back further.`
-                                   : '';
+                    <label>From level
+                        <select id="level" @change=${(event: Event) => { minimum = (event.target as HTMLSelectElement).value as LogLevel; draw(); }}>
+                            ${logLevels.map(level => html`<option value="${level}" ?selected=${level === minimum}>${level}</option>`)}
+                        </select>
+                    </label>
 
-        }
+                    <span class="chip" id="count">${shown.length === all.length
+                                                         ? `${shown.length} entries`
+                                                         : `${shown.length} of ${all.length} entries`}</span>
+                    <span class="stream-state ${logs.streamConnected ? 'on' : 'off'}" id="stream">${logs.streamConnected ? 'live' : 'reconnecting'}</span>
 
-        function drawStream(): void {
-            stream.className   = `stream-state ${logs.streamConnected ? 'on' : 'off'}`;
-            stream.textContent = logs.streamConnected ? 'live' : 'reconnecting';
+                </div>
+
+                <div id="verdict">${verdict}</div>
+                <div class="log" id="log">${repeat(shown, entry => entry.id, line)}</div>
+                <p class="log-foot muted small" id="foot">${logs.capacity > 0
+                    ? `This meter keeps the newest ${logs.capacity} entries of its log in memory, these among them; the log book on disk goes back further.`
+                    : ''}</p>
+            `);
+
         }
 
         const unsubscribe = logs.onChange(event => {
 
-            if (event.type === 'error') {
-                render(verdict, html`<div class="error-box">${event.text}</div>`);
-                return;
-            }
+            if (event.type === 'error')
+                verdict = html`<div class="error-box">${event.text}</div>`;
 
-            if (event.type === 'stream') {
-                drawStream();
-                return;
-            }
-
-            drawTags();
-            drawList();
+            draw();
 
         });
 
-        drawTags();
-        drawList();
-        drawStream();
+        draw();
 
         // Somebody who opens this page wants what is there now, not what was
         // there when they signed in.
@@ -168,17 +126,18 @@ export const metrologicalLogPage: Page = {
             void (async () => {
                 try
                 {
-                    render(verdict, verdictOf(await api.verifyLog()));
+                    verdict = verdictOf(await api.verifyLog());
                 }
                 catch (problem)
                 {
-                    render(verdict, html`<div class="error-box">${errorMessage(problem)}</div>`);
+                    verdict = html`<div class="error-box">${errorMessage(problem)}</div>`;
                 }
                 finally
                 {
                     button.disabled    = false;
                     button.textContent = 'Check the log';
                 }
+                draw();
             })();
 
         });
@@ -191,7 +150,7 @@ export const metrologicalLogPage: Page = {
 
 
 /** One line of the log. */
-function line(entry: LogEntry): HTMLFragment {
+function line(entry: LogEntry): TemplateResult {
 
     const denied = entry.tags.includes('denied');
 
@@ -208,7 +167,7 @@ function line(entry: LogEntry): HTMLFragment {
 
 
 /** What walking the log on disk found, and what that is worth. */
-function verdictOf(result: Awaited<ReturnType<typeof api.verifyLog>>): HTMLFragment {
+function verdictOf(result: Awaited<ReturnType<typeof api.verifyLog>>): TemplateResult {
 
     if (!result.persisted)
         return html`<div class="notice">${result.why ?? 'This meter keeps its log in memory only.'}</div>`;

@@ -1,13 +1,13 @@
 import { api, type AnsweredRequest, type Certificate, type CertificateKind, type CertificateStore, type NewSigningRequest, type SigningRequest, type SigningRequests, type TLSListener } from '../api/client';
 import { auth } from '../auth';
-import { keepDrafts } from '@node/drafts';
-import { html, must, render, type HTMLFragment } from '@node/html';
+import { html as stringHTML, must, type HTMLFragment } from '@node/html';
 import { hasUsages, usageName, usagesOf } from '@node/pages/certificateUsages';
 import type { Page } from '@node/router';
 import { mayButNot, shell } from '@node/shell';
 import { errorMessage, field, whileSaving } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 import { toURL } from '@node/basePath';
+import { html, keyed, nothing, render, repeat, type TemplateResult } from '@node/view';
 
 /**
  * The largest file this page will offer to import.
@@ -60,36 +60,36 @@ const aboutKind: Record<string, { title: string; icon: string; hint?: HTMLFragme
     tlsRoot: {
         title:  'TLS roots',
         icon:   'fa-shield-halved',
-        hint:   html`What the chain of a time server or a name server this meter asks over TLS may end at, beside
-                     the roots the machine itself knows - each told which of them it vouches for.`,
-        uses:   html`A root kept for the time servers alone vouches for no name server, and the other way round -
-                     except for a time server whose own entry on the NTS page names it by its fingerprint: naming
-                     it there says the same, and more narrowly.`
+        hint:   stringHTML`What the chain of a time server or a name server this meter asks over TLS may end at, beside
+                           the roots the machine itself knows - each told which of them it vouches for.`,
+        uses:   stringHTML`A root kept for the time servers alone vouches for no name server, and the other way round -
+                           except for a time server whose own entry on the NTS page names it by its fingerprint: naming
+                           it there says the same, and more narrowly.`
     },
 
     clientRoot: {
         title:  'Client roots',
         icon:   'fa-certificate',
-        hint:   html`What the certificate of a Modbus/TLS client has to be issued by: usually not a root at all but
-                     the issuing CA below one, which signs the clients and nothing else - the root above it signs
-                     the devices as well, and would let any of them in. More than one may be on, so that a new
-                     issuer can be added while the old one still has to work; the last one cannot be switched off
-                     or taken out, because a meter that accepts none turns every client away. The web interface is
-                     not affected: there a person signs in with an account.`
+        hint:   stringHTML`What the certificate of a Modbus/TLS client has to be issued by: usually not a root at all but
+                           the issuing CA below one, which signs the clients and nothing else - the root above it signs
+                           the devices as well, and would let any of them in. More than one may be on, so that a new
+                           issuer can be added while the old one still has to work; the last one cannot be switched off
+                           or taken out, because a meter that accepts none turns every client away. The web interface is
+                           not affected: there a person signs in with an account.`
     },
 
     tlsIdentity: {
         title:  'TLS identities',
         icon:   'fa-id-card',
-        uses:   html`A listener only ever shows an identity that is for it. Taking the last one a listener could
-                     show away from it is refused - put another one in first.`
+        uses:   stringHTML`A listener only ever shows an identity that is for it. Taking the last one a listener could
+                           show away from it is refused - put another one in first.`
     },
 
     tlsServer: {
         title:  'Server certificates',
         icon:   'fa-server',
-        uses:   html`Which servers it belongs to. A time server is held to one by its fingerprint, in its own entry
-                     on the NTS page.`
+        uses:   stringHTML`Which servers it belongs to. A time server is held to one by its fingerprint, in its own entry
+                           on the NTS page.`
     }
 
 };
@@ -153,6 +153,10 @@ const aboutListener: Record<string, { icon: string; checkedBy: string; nothing: 
  * This was three pages while the meter kept three stores of its own: one for
  * the certificates of each listener, and one for the CAs clients were let in
  * by.
+ *
+ * Drawn by view.ts: a draw changes only what differs, so that a request half
+ * filled in or a certificate pasted for one - and its focus - outlives a
+ * certificate being switched off, renamed or deleted beside it.
  */
 export const certificatesPage: Page = {
 
@@ -164,7 +168,7 @@ export const certificatesPage: Page = {
             active:    '/configuration/certificates',
             title:     'Certificates',
             subtitle:  'The roots this meter believes, the certificates it presents, and the servers it recognises.',
-            actions:   html`<button type="button" id="reload" class="btn small">Reload</button>`
+            actions:   stringHTML`<button type="button" id="reload" class="btn small">Reload</button>`
         });
 
         render(content, html`<div class="loading">Loading ...</div>`);
@@ -173,7 +177,7 @@ export const certificatesPage: Page = {
         // thoroughly as leaving the page does, so it asks first.
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
             if (unsaved.mayBeLost())
-                void load();
+                void reload();
         });
 
         const mayChange = auth.can('certificates', 'edit');
@@ -190,9 +194,13 @@ export const certificatesPage: Page = {
         let busy = false;
 
         // The kind chosen in the import form, once another than the one it is
-        // drawn with is: the kind whose uses it offers when the page is drawn
-        // anew, what is typed into it kept.
+        // drawn with is: the kind whose uses it offers.
         let importing: CertificateKind | null = null;
+
+        // The listener and the key chosen for a request, once others than the
+        // ones it is drawn with are: what the notes under them say.
+        let listenerChosen: string | undefined;
+        let keyTypeChosen:  string | undefined;
 
 
         function draw(): void {
@@ -210,7 +218,7 @@ export const certificatesPage: Page = {
 
             render(content, html`
 
-                ${mayChange ? '' : html`
+                ${mayChange ? nothing : html`
                     <div class="notice">
                         ${mayButNot('look at the certificates', 'put one in, change one or ask for one')}
                     </div>
@@ -219,7 +227,7 @@ export const certificatesPage: Page = {
                 ${unshown.map(listener => html`
                     <div class="notice">
                         ${aboutListener[listener]?.nothing ?? `The ${listener} listener has no certificate it could show.`}
-                        ${mayChange ? 'Put in a TLS identity for it, or ask for one below.' : ''}
+                        ${mayChange ? 'Put in a TLS identity for it, or ask for one below.' : nothing}
                     </div>
                 `)}
 
@@ -229,7 +237,7 @@ export const certificatesPage: Page = {
                         <code class="path">${store.directory}</code> can pose as this meter - to a charging station
                         as much as to a browser.
                     </div>
-                ` : ''}
+                ` : nothing}
 
                 <div class="cards stacked">
 
@@ -243,16 +251,16 @@ export const certificatesPage: Page = {
                         </p>
                         ${mayChange ? html`
                             <div class="form-actions">
-                                <button type="button" id="rescan" class="btn" ${busy ? html`disabled` : ''}>
+                                <button type="button" id="rescan" class="btn" ?disabled=${busy} @click=${() => void rescan()}>
                                     Re-read the directory
                                 </button>
                                 <span id="store-note"  class="form-notice" role="status"></span>
                                 <span id="store-error" class="form-error"  role="alert"></span>
                             </div>
-                        ` : ''}
+                        ` : nothing}
                     </section>
 
-                    ${mayChange ? importCard() : ''}
+                    ${mayChange ? importCard() : nothing}
 
                 </div>
 
@@ -265,7 +273,7 @@ export const certificatesPage: Page = {
                 <div class="cards stacked">
                     ${store.trustAnchors.map(kind => html`
                         ${kindCard(kind)}
-                        ${kind === 'clientRoot' ? rolesCard() : ''}
+                        ${kind === 'clientRoot' ? rolesCard() : nothing}
                     `)}
                 </div>
 
@@ -280,7 +288,7 @@ export const certificatesPage: Page = {
                     ${store.shown.web?.used === false ? html`
                         The web interface is served over plain HTTP at the moment, so it shows none of them, and what
                         is kept for it is kept for when it is served over HTTPS.
-                    ` : ''}
+                    ` : nothing}
                 </p>
                 <div class="cards stacked">
                     ${store.credentials.map(kind => kindCard(kind))}
@@ -297,11 +305,11 @@ export const certificatesPage: Page = {
                 <div class="cards stacked">
                     ${asked.requests.length === 0
                           ? html`<p class="muted small">None.</p>`
-                          : asked.requests.map(requestView)}
-                    ${mayChange ? requestCard() : ''}
+                          : repeat(asked.requests, request => request.id, requestView)}
+                    ${mayChange ? requestCard() : nothing}
                 </div>
 
-                ${store.recognised.length === 0 ? '' : html`
+                ${store.recognised.length === 0 ? nothing : html`
                     <h2 class="section-heading">What this meter recognises</h2>
                     <p class="hint">
                         Neither believed nor presented: the certificates of servers this meter connects to, kept so
@@ -314,8 +322,6 @@ export const certificatesPage: Page = {
                 `}
 
             `);
-
-            wire();
 
         }
 
@@ -334,14 +340,14 @@ export const certificatesPage: Page = {
          * what the meter would refuse to be told as an empty list.
          */
         function usagesFields(kind:    CertificateKind,
-                              ticked:  readonly string[] | null | undefined): HTMLFragment {
+                              ticked:  readonly string[] | null | undefined): TemplateResult {
 
             return html`
                 <legend>${kind === 'tlsIdentity' ? 'Which listener may show it' : 'What it is kept for'}</legend>
                 ${usagesOf(current!, kind).map(usage => html`
                     <label class="checkbox">
                         <input type="checkbox" name="usage" value="${usage}"
-                               ${ticked?.includes(usage) ? html`checked` : ''} ${busy ? html`disabled` : ''} />
+                               ?checked=${ticked?.includes(usage) === true} ?disabled=${busy} />
                         ${usageName(usage, listenerNames)}
                     </label>
                 `)}
@@ -352,7 +358,7 @@ export const certificatesPage: Page = {
 
 
         /** The card that puts a new certificate on this meter. */
-        function importCard(): HTMLFragment {
+        function importCard(): TemplateResult {
 
             const store  = current!;
             const kinds  = kindsShown();
@@ -364,14 +370,10 @@ export const certificatesPage: Page = {
             // away, holding each control against how it was drawn, would ask
             // about one nobody had begun.
             const first  = kinds[0];
-            const off    = busy ? html`disabled` : '';
 
-            // The uses offered are those of the kind chosen - drawn anew, of the
-            // one somebody chose, which keepDrafts puts back. It puts the boxes
-            // ticked back box by box: drawn with the uses of the first kind,
-            // what was ticked for an identity would have gone into the boxes of
-            // a root, and a form for a client root, which has none, would have
-            // been left as drawn, everything typed into it with it.
+            // The uses offered are those of the kind chosen, and drawn anew for
+            // another kind (keyed): drawn into the same boxes, what was ticked
+            // for an identity would have stayed ticked in the boxes of a root.
             const uses   = importing ?? first;
 
             return html`
@@ -379,11 +381,11 @@ export const certificatesPage: Page = {
 
                     <h2><i class="fa-solid fa-file-import"></i> Import a certificate</h2>
 
-                    <form id="import-form" class="form-stack">
+                    <form id="import-form" class="form-stack" @submit=${(event: SubmitEvent) => { event.preventDefault(); void doImport(event.currentTarget as HTMLFormElement); }}>
 
                         <label>The file
                             <input type="file" name="file" id="import-file"
-                                   accept=".pem,.crt,.cer,.der,.p12,.pfx" ${off} />
+                                   accept=".pem,.crt,.cer,.der,.p12,.pfx" ?disabled=${busy} />
                         </label>
                         <p class="hint">
                             PEM, DER or PKCS#12, copied into the store rather than referenced where it is. An
@@ -393,19 +395,20 @@ export const certificatesPage: Page = {
                         </p>
 
                         <label>What it is for
-                            <select name="kind" id="import-kind" ${off}>
+                            <select name="kind" id="import-kind" ?disabled=${busy}
+                                    @change=${(event: Event) => { importing = (event.target as HTMLSelectElement).value as CertificateKind; draw(); }}>
                                 ${kinds.map(kind => html`
-                                    <option value="${kind}" ${kind === first ? html`selected` : ''}>${store.kinds[kind].description}</option>
+                                    <option value="${kind}" ?selected=${kind === first}>${store.kinds[kind].description}</option>
                                 `)}
                             </select>
                         </label>
 
-                        <fieldset class="usages" id="import-usages" ${uses !== undefined && hasUsages(store, uses) ? '' : html`hidden`}>
-                            ${uses === undefined ? '' : usagesFields(uses, null)}
+                        <fieldset class="usages" id="import-usages" ?hidden=${!(uses !== undefined && hasUsages(store, uses))}>
+                            ${uses === undefined ? nothing : keyed(uses, usagesFields(uses, null))}
                         </fieldset>
 
                         <label>What opens it, if it is a protected PKCS#12
-                            <input type="password" name="password" autocomplete="off" ${off} />
+                            <input type="password" name="password" autocomplete="off" ?disabled=${busy} />
                         </label>
                         <p class="hint">
                             Used once, to read the file. The store keeps what it holds without a password, so this
@@ -413,11 +416,11 @@ export const certificatesPage: Page = {
                         </p>
 
                         <label>What to call it
-                            <input type="text" name="label" maxlength="120" placeholder="its common name" ${off} />
+                            <input type="text" name="label" maxlength="120" placeholder="its common name" ?disabled=${busy} />
                         </label>
 
                         <div class="form-actions">
-                            <button type="submit" class="btn primary" ${off}>Import</button>
+                            <button type="submit" class="btn primary" ?disabled=${busy}>Import</button>
                             <span id="import-note"  class="form-notice" role="status"></span>
                             <span id="import-error" class="form-error"  role="alert"></span>
                         </div>
@@ -431,7 +434,7 @@ export const certificatesPage: Page = {
 
 
         /** One kind, and everything in the store of that kind. */
-        function kindCard(kind: CertificateKind): HTMLFragment {
+        function kindCard(kind: CertificateKind): TemplateResult {
 
             const store    = current!;
             const entries  = store.certificates[kind] ?? [];
@@ -445,7 +448,7 @@ export const certificatesPage: Page = {
                         ${about?.title ?? store.kinds[kind]?.description ?? kind}
                     </h2>
 
-                    ${about?.hint ? html`<p class="hint">${about.hint}</p>` : ''}
+                    ${about?.hint ? html`<p class="hint">${about.hint}</p>` : nothing}
 
                     ${entries.length === 0
                           ? html`<p class="muted small">None.</p>`
@@ -459,11 +462,11 @@ export const certificatesPage: Page = {
                                                 <th>Key</th>
                                                 <th>Valid until</th>
                                                 <th>State</th>
-                                                ${mayChange ? html`<th></th>` : ''}
+                                                ${mayChange ? html`<th></th>` : nothing}
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            ${entries.map(row)}
+                                            ${repeat(entries, entry => entry.id, row)}
                                         </tbody>
                                     </table>
                                 </div>
@@ -476,11 +479,10 @@ export const certificatesPage: Page = {
 
 
         /** One certificate: what it is, what it is for, and - an identity - where it is shown. */
-        function row(entry: Certificate): HTMLFragment {
+        function row(entry: Certificate): TemplateResult {
 
             const store  = current!;
             const days   = Math.floor((new Date(entry.notAfter).getTime() - Date.now()) / 86400000);
-            const off    = busy ? html`disabled` : '';
 
             const state  = entry.expired        ? html`<span class="chip bad">expired</span>`
                          : entry.notYetValid    ? html`<span class="chip warn">not yet valid</span>`
@@ -511,30 +513,30 @@ export const certificatesPage: Page = {
                     <td>
                         ${entry.label}
                         <br /><code class="muted" title="SHA-256: ${entry.thumbprint}">${entry.id}</code>
-                        ${chips.length > 0 ? html`<br /><span class="chips">${chips}</span>` : ''}
+                        ${chips.length > 0 ? html`<br /><span class="chips">${chips}</span>` : nothing}
                     </td>
                     <td>
                         ${entry.subject}
-                        ${entry.chainLength > 0 ? html`<br /><span class="muted">+${entry.chainLength} sub-CA(s)</span>` : ''}
+                        ${entry.chainLength > 0 ? html`<br /><span class="muted">+${entry.chainLength} sub-CA(s)</span>` : nothing}
                     </td>
                     <td>
                         ${entry.keyAlgorithm}
-                        ${entry.hasPrivateKey ? html`<br /><span class="muted">with private key</span>` : ''}
+                        ${entry.hasPrivateKey ? html`<br /><span class="muted">with private key</span>` : nothing}
                     </td>
                     <td>${new Date(entry.notAfter).toLocaleDateString()}</td>
                     <td>${state}</td>
                     ${mayChange ? html`
                         <td>
-                            <button type="button" class="btn small" data-toggle="${entry.id}" ${off}>
+                            <button type="button" class="btn small" data-toggle="${entry.id}" ?disabled=${busy} @click=${() => void toggle(entry.id)}>
                                 ${entry.active ? 'Switch off' : 'Switch on'}
                             </button>
-                            <button type="button" class="btn small" data-rename="${entry.id}" ${off}>Rename</button>
+                            <button type="button" class="btn small" data-rename="${entry.id}" ?disabled=${busy} @click=${() => void rename(entry.id)}>Rename</button>
                             ${hasUsages(store, entry.kind)
-                                  ? html`<button type="button" class="btn small" data-usages="${entry.id}" ${off}>Uses</button>`
-                                  : ''}
-                            <button type="button" class="btn small danger" data-remove="${entry.id}" ${off}>Delete</button>
+                                  ? html`<button type="button" class="btn small" data-usages="${entry.id}" ?disabled=${busy} @click=${() => editUsages(entry.id)}>Uses</button>`
+                                  : nothing}
+                            <button type="button" class="btn small danger" data-remove="${entry.id}" ?disabled=${busy} @click=${() => void remove(entry.id)}>Delete</button>
                         </td>
-                    ` : ''}
+                    ` : nothing}
                 </tr>
             `;
 
@@ -545,7 +547,7 @@ export const certificatesPage: Page = {
          * What a client may do once it is let in - which is not decided on this
          * page at all.
          */
-        function rolesCard(): HTMLFragment {
+        function rolesCard(): TemplateResult {
 
             return html`
                 <section class="card">
@@ -571,10 +573,9 @@ export const certificatesPage: Page = {
 
 
         /** One signing request: what it asks for, whether it was answered, and what can be done with it. */
-        function requestView(request: SigningRequest): HTMLFragment {
+        function requestView(request: SigningRequest): TemplateResult {
 
             const answered  = request.state === 'answered';
-            const off       = busy ? html`disabled` : '';
 
             // The certificate pasted for a request is a form of its own, known
             // by the request it answers - a draft like the others, which Reload
@@ -593,37 +594,39 @@ export const certificatesPage: Page = {
                     <div class="table-scroll">
                         <table class="kv">
                             <tr><td>For</td><td>${onListener(request.listener)}</td></tr>
-                            ${request.dnsNames.length    > 0 ? html`<tr><td>DNS names</td><td>${request.dnsNames.join(', ')}</td></tr>` : ''}
-                            ${request.ipAddresses.length > 0 ? html`<tr><td>IP addresses</td><td>${request.ipAddresses.join(', ')}</td></tr>` : ''}
+                            ${request.dnsNames.length    > 0 ? html`<tr><td>DNS names</td><td>${request.dnsNames.join(', ')}</td></tr>` : nothing}
+                            ${request.ipAddresses.length > 0 ? html`<tr><td>IP addresses</td><td>${request.ipAddresses.join(', ')}</td></tr>` : nothing}
                             <tr><td>Key</td><td>${nameOf(request.keyType)}</td></tr>
                             <tr><td>Asked on</td><td>${new Date(request.createdAt).toLocaleString()}</td></tr>
-                            ${request.note ? html`<tr><td>Note</td><td>${request.note}</td></tr>` : ''}
-                            ${answered ? html`<tr><td>Put in as</td><td>${request.answeredBy.map(labelOf).join(', ')}</td></tr>` : ''}
+                            ${request.note ? html`<tr><td>Note</td><td>${request.note}</td></tr>` : nothing}
+                            ${answered ? html`<tr><td>Put in as</td><td>${request.answeredBy.map(labelOf).join(', ')}</td></tr>` : nothing}
                         </table>
                     </div>
 
                     <div class="form-actions">
                         <a class="btn small" href="${api.certificates.requestURL(request.id)}" download>Download the request</a>
                         ${mayChange
-                              ? html`<button type="button" class="btn small danger" data-remove-request="${request.id}" ${off}>Throw away</button>`
-                              : ''}
+                              ? html`<button type="button" class="btn small danger" data-remove-request="${request.id}" ?disabled=${busy}
+                                             @click=${() => void throwAway(request.id)}>Throw away</button>`
+                              : nothing}
                     </div>
 
                     ${mayChange ? html`
-                        <form class="upload" data-id="${request.id}">
+                        <form class="upload" data-id="${request.id}" @submit=${(event: SubmitEvent) => { event.preventDefault(); void answer(request.id); }}>
                             <label>The signed certificate, PEM encoded, with the intermediates above it
-                                <textarea class="mono" rows="6" name="pem" data-pem="${request.id}" ${off}
+                                <textarea class="mono" rows="6" name="pem" data-pem="${request.id}" ?disabled=${busy}
                                           placeholder="-----BEGIN CERTIFICATE-----"></textarea>
                             </label>
                             <div class="form-actions">
-                                <button type="button" class="btn primary" data-answer="${request.id}" ${off}>
+                                <button type="button" class="btn primary" data-answer="${request.id}" ?disabled=${busy}
+                                        @click=${() => void answer(request.id)}>
                                     ${answered ? 'Renew with the same key' : 'Put the certificate in'}
                                 </button>
                                 <span class="form-notice" data-answer-note="${request.id}"  role="status"></span>
                                 <span class="form-error"  data-answer-error="${request.id}" role="alert"></span>
                             </div>
                         </form>
-                    ` : ''}
+                    ` : nothing}
 
                 </section>
             `;
@@ -632,10 +635,9 @@ export const certificatesPage: Page = {
 
 
         /** The card that makes a key here, and the request a CA is sent for it. */
-        function requestCard(): HTMLFragment {
+        function requestCard(): TemplateResult {
 
             const asked  = requests!;
-            const off    = busy ? html`disabled` : '';
 
             // Drawn as the listener chosen, as importCard draws its kind, and
             // for the same reason.
@@ -646,48 +648,50 @@ export const certificatesPage: Page = {
 
                     <h2><i class="fa-solid fa-file-signature"></i> Ask for a new certificate</h2>
 
-                    <form id="request-form" class="form-stack">
+                    <form id="request-form" class="form-stack" @submit=${(event: SubmitEvent) => { event.preventDefault(); void ask(event.currentTarget as HTMLFormElement); }}>
 
                         <label>Which listener it is for
-                            <select name="listener" id="request-listener" ${off}>
+                            <select name="listener" id="request-listener" ?disabled=${busy}
+                                    @change=${(event: Event) => { listenerChosen = (event.target as HTMLSelectElement).value; draw(); }}>
                                 ${asked.listeners.map(listener => html`
-                                    <option value="${listener}" ${listener === first ? html`selected` : ''}>${usageName(listener, listenerNames)}</option>
+                                    <option value="${listener}" ?selected=${listener === first}>${usageName(listener, listenerNames)}</option>
                                 `)}
                             </select>
                         </label>
 
-                        <p class="hint" id="request-listener-note"></p>
+                        <p class="hint" id="request-listener-note">${aboutListener[listenerChosen ?? first ?? '']?.checkedBy ?? ''}</p>
 
                         <label>Subject
-                            <input type="text" name="subject" required placeholder="CN=meter7.lan, O=Acme" ${off} />
+                            <input type="text" name="subject" required placeholder="CN=meter7.lan, O=Acme" ?disabled=${busy} />
                         </label>
 
                         <label>DNS names, separated by commas
-                            <input type="text" name="dnsNames" placeholder="meter7.lan, meter7" ${off} />
+                            <input type="text" name="dnsNames" placeholder="meter7.lan, meter7" ?disabled=${busy} />
                         </label>
 
                         <label>IP addresses, separated by commas
-                            <input type="text" name="ipAddresses" placeholder="192.168.7.20" ${off} />
+                            <input type="text" name="ipAddresses" placeholder="192.168.7.20" ?disabled=${busy} />
                         </label>
 
                         <label>Key
-                            <select name="keyType" id="request-key-type" ${off}>
+                            <select name="keyType" id="request-key-type" ?disabled=${busy}
+                                    @change=${(event: Event) => { keyTypeChosen = (event.target as HTMLSelectElement).value; draw(); }}>
                                 ${asked.keyTypes.map(keyType => html`
-                                    <option value="${keyType.id}" ${keyType.id === asked.defaultKeyType ? html`selected` : ''}>
+                                    <option value="${keyType.id}" ?selected=${keyType.id === asked.defaultKeyType}>
                                         ${keyType.name}
                                     </option>
                                 `)}
                             </select>
                         </label>
 
-                        <p class="hint" id="request-key-type-note"></p>
+                        <p class="hint" id="request-key-type-note">${remarkOf(keyTypeChosen ?? asked.defaultKeyType)}</p>
 
                         <label>Note
-                            <input type="text" name="note" placeholder="what this is for" ${off} />
+                            <input type="text" name="note" placeholder="what this is for" ?disabled=${busy} />
                         </label>
 
                         <div class="form-actions">
-                            <button type="submit" class="btn primary" ${off}>Make a key and a request</button>
+                            <button type="submit" class="btn primary" ?disabled=${busy}>Make a key and a request</button>
                             <span id="request-note"  class="form-notice" role="status"></span>
                             <span id="request-error" class="form-error"  role="alert"></span>
                         </div>
@@ -727,90 +731,6 @@ export const certificatesPage: Page = {
         /** What a certificate of the store is called, or its handle where the store no longer has it. */
         function labelOf(id: string): string {
             return everything().find(one => one.id === id)?.label ?? id;
-        }
-
-
-        function wire(): void {
-
-            if (!mayChange)
-                return;
-
-            must<HTMLButtonElement>(content, '#rescan').addEventListener('click', () => void rescan());
-
-            const importForm = must<HTMLFormElement>(content, '#import-form');
-
-            importForm.addEventListener('submit', event => {
-                event.preventDefault();
-                void doImport(importForm);
-            });
-
-            // What it is kept for is asked only of the kinds that are told it,
-            // and each kind is told its own: a root the servers it vouches
-            // for, an identity the listeners that may show it.
-            must<HTMLSelectElement>(content, '#import-kind').addEventListener('change', event => {
-
-                const kind    = (event.target as HTMLSelectElement).value as CertificateKind;
-                const usages  = must<HTMLElement>(content, '#import-usages');
-
-                importing = kind;
-
-                usages.hidden = !hasUsages(current!, kind);
-                render(usages, usagesFields(kind, null));
-
-            });
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-usages]'))
-                button.addEventListener('click', () => editUsages(button.dataset['usages'] ?? ''));
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-toggle]'))
-                button.addEventListener('click', () => void toggle(button.dataset['toggle'] ?? ''));
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-rename]'))
-                button.addEventListener('click', () => void rename(button.dataset['rename'] ?? ''));
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-remove]'))
-                button.addEventListener('click', () => void remove(button.dataset['remove'] ?? ''));
-
-            const requestForm = must<HTMLFormElement>(content, '#request-form');
-
-            requestForm.addEventListener('submit', event => {
-                event.preventDefault();
-                void ask(requestForm);
-            });
-
-            must<HTMLSelectElement>(content, '#request-listener').addEventListener('change', sayWhatTheyMean);
-            must<HTMLSelectElement>(content, '#request-key-type').addEventListener('change', sayWhatTheyMean);
-
-            sayWhatTheyMean();
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-answer]'))
-                button.addEventListener('click', () => void answer(button.dataset['answer'] ?? ''));
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-remove-request]'))
-                button.addEventListener('click', () => void throwAway(button.dataset['removeRequest'] ?? ''));
-
-        }
-
-
-        /**
-         * What the chosen listener and the chosen key of a request mean, said
-         * as they are chosen rather than discovered after a trip to the CA -
-         * and again once the page is drawn anew with the choices put back,
-         * which keepDrafts does without telling the page.
-         */
-        function sayWhatTheyMean(): void {
-
-            const listener      = content.querySelector<HTMLSelectElement>('#request-listener');
-            const listenerNote  = content.querySelector<HTMLElement>      ('#request-listener-note');
-            const keyType       = content.querySelector<HTMLSelectElement>('#request-key-type');
-            const keyTypeNote   = content.querySelector<HTMLElement>      ('#request-key-type-note');
-
-            if (listener !== null && listenerNote !== null)
-                listenerNote.textContent  = aboutListener[listener.value]?.checkedBy ?? '';
-
-            if (keyType !== null && keyTypeNote !== null)
-                keyTypeNote.textContent   = remarkOf(keyType.value);
-
         }
 
 
@@ -866,7 +786,13 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load('import-form');
+            // Imported: the form goes back to what it starts with, the kind
+            // drawn as chosen and its uses with it.
+            importing = null;
+
+            await load();
+
+            form.reset();
 
             sayAfterwards('#import-note', `Imported ${imported.label}, and switched on.`);
 
@@ -944,7 +870,7 @@ export const certificatesPage: Page = {
                         ${usagesFields(entry.kind, entry.usages)}
                     </fieldset>
 
-                    ${about?.uses ? html`<p class="hint">${about.uses}</p>` : ''}
+                    ${about?.uses ? html`<p class="hint">${about.uses}</p>` : nothing}
 
                     <div class="form-actions">
                         <button type="submit" class="btn primary">Save</button>
@@ -983,7 +909,7 @@ export const certificatesPage: Page = {
 
                     // The store again rather than the one certificate the
                     // answer carries, as after every other change on this page.
-                    await load(null);
+                    await load();
 
                 })();
 
@@ -1058,7 +984,13 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load('request-form');
+            // Asked: the form goes back to what it starts with.
+            listenerChosen = undefined;
+            keyTypeChosen  = undefined;
+
+            await load();
+
+            form.reset();
 
             sayAfterwards('#request-note', 'Made. The request is on its way to your downloads.');
 
@@ -1077,7 +1009,8 @@ export const certificatesPage: Page = {
         async function answer(id: string): Promise<void> {
 
             const error  = must<HTMLElement>(content, `[data-answer-error="${id}"]`);
-            const pem    = must<HTMLTextAreaElement>(content, `[data-pem="${id}"]`).value;
+            const area   = must<HTMLTextAreaElement>(content, `[data-pem="${id}"]`);
+            const pem    = area.value;
 
             error.textContent = '';
 
@@ -1103,7 +1036,11 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load(id);
+            await load();
+
+            // Put in: this request's form is emptied, and every other one
+            // keeps what is pasted into it.
+            area.closest('form')?.reset();
 
             sayAfterwards(`[data-answer-note="${id}"]`, `Put in as ${answered.certificate.label}.`);
 
@@ -1131,7 +1068,7 @@ export const certificatesPage: Page = {
          * One change, with the page held still while the meter is told, and
          * everything read again once it took it: a change to one certificate
          * can change what a listener shows, and what a request was answered
-         * with. Drawn anew over the page, what is typed into its forms is
+         * with. Drawn over the page as it is, what is typed into its forms is
          * kept: none of them is what was changed.
          *
          * What the meter refuses - taking away the last certificate a listener
@@ -1155,7 +1092,7 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load(null);
+            await load();
 
         }
 
@@ -1183,7 +1120,7 @@ export const certificatesPage: Page = {
 
             busy = false;
 
-            await load(null);
+            await load();
 
             sayAfterwards('#store-note', `The directory was read again: ${everything().length} certificate(s).`);
 
@@ -1206,27 +1143,11 @@ export const certificatesPage: Page = {
 
 
         /**
-         * The page drawn anew after something was done on it, over the page as
-         * it is: what is typed into its forms is kept, but for the form whose
-         * save this follows - saved, or null where none was - which is drawn
-         * as the meter has it now.
+         * The store, the requests and the roles as the meter has them now,
+         * drawn over the page as it is: what is typed into its forms stays,
+         * with its focus.
          */
-        function drawAgain(saved: string | null): void {
-
-            keepDrafts(content, saved, draw);
-
-            sayWhatTheyMean();
-
-        }
-
-
-        /**
-         * The store, the requests and the roles as the meter has them now:
-         * drawn from nothing the first time and on Reload, and after something
-         * was done on the page drawn anew over it, keeping what is typed -
-         * saved is the form whose save it follows, or null.
-         */
-        async function load(saved?: string | null): Promise<void> {
+        async function load(): Promise<void> {
 
             try
             {
@@ -1247,15 +1168,7 @@ export const certificatesPage: Page = {
                 requests  = asked;
                 roles     = configuration.sunSpecRoles;
 
-                // Drawn from nothing, or with the import form saved, the
-                // import form offers the uses of the kind it is drawn with.
-                if (saved === undefined || saved === 'import-form')
-                    importing = null;
-
-                if (saved === undefined)
-                    draw();
-                else
-                    drawAgain(saved);
+                draw();
 
             }
             catch (problem)
@@ -1265,6 +1178,19 @@ export const certificatesPage: Page = {
                         <div class="error-box">The certificate store could not be loaded: ${errorMessage(problem)}</div>
                     `);
             }
+
+        }
+
+        /** Reload: the store as the meter has it, and every form as it starts. */
+        async function reload(): Promise<void> {
+
+            importing       = null;
+            listenerChosen  = undefined;
+            keyTypeChosen   = undefined;
+
+            await load();
+
+            content.querySelectorAll('form').forEach(form => form.reset());
 
         }
 

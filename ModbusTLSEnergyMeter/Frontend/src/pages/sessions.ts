@@ -1,11 +1,11 @@
 import { api, type PublicKeyOut, type SessionState, type SignedMeterValue } from '../api/client';
 import { auth } from '../auth';
-import { keepDrafts } from '@node/drafts';
-import { html, must, render, type HTMLFragment } from '@node/html';
+import { html as stringHTML, must } from '@node/html';
 import type { Page } from '@node/router';
 import { mayButNot, shell } from '@node/shell';
 import { copyText, errorMessage, field, formatSince } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
+import { html, nothing, render, type TemplateResult } from '@node/view';
 
 /**
  * Charging sessions, and readings this meter has put its name to.
@@ -19,6 +19,10 @@ import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
  * Nothing here is stored for later. A document that is not written down when it
  * is shown is gone, which is the same rule the meter itself works by and the
  * reason the copy button is next to every one of them.
+ *
+ * Drawn by view.ts: a draw changes only what differs, so that who is charging,
+ * typed and not started yet, outlives a reading being signed or put away
+ * beside it - its focus too.
  */
 export const sessionsPage: Page = {
 
@@ -30,7 +34,7 @@ export const sessionsPage: Page = {
             active:    '/sessions',
             title:     'Sessions',
             subtitle:  'Charging sessions, and readings this meter has signed.',
-            actions:   html`<button type="button" id="reload" class="btn small">Reload</button>`
+            actions:   stringHTML`<button type="button" id="reload" class="btn small">Reload</button>`
         });
 
         render(content, html`<div class="loading">Loading ...</div>`);
@@ -39,7 +43,7 @@ export const sessionsPage: Page = {
         // the page does, so it asks first.
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
             if (unsaved.mayBeLost())
-                void load();
+                void reload();
         });
 
         const mayDrive = auth.can('meter', 'run');
@@ -65,7 +69,7 @@ export const sessionsPage: Page = {
 
             render(content, html`
 
-                ${mayDrive ? '' : html`
+                ${mayDrive ? nothing : html`
                     <div class="notice">
                         ${mayButNot('watch a charging session', 'start or stop one, or ask for a signed reading')}
                     </div>
@@ -86,7 +90,7 @@ export const sessionsPage: Page = {
                                 <tr><td>At</td><td>${session.startValue} ${session.unit}</td></tr>
                                 <tr><td>Session</td><td><code>${session.sessionId}</code></td></tr>
                                 <tr><td>Signed with</td><td><code>${session.keyId}</code></td></tr>
-                                ${session.identification === null ? '' : html`
+                                ${session.identification === null ? nothing : html`
                                     <tr><td>Started by</td><td><code>${session.identification}</code></td></tr>
                                 `}
                             </table>
@@ -100,10 +104,10 @@ export const sessionsPage: Page = {
 
                         ${mayDrive ? html`
                             <div class="form-actions">
-                                <button type="button" class="btn primary" id="stop">Stop it</button>
+                                <button type="button" class="btn primary" id="stop" @click=${stop}>Stop it</button>
                                 <span id="session-error" class="form-error" role="alert"></span>
                             </div>
-                        ` : ''}
+                        ` : nothing}
 
                     ` : html`
 
@@ -114,7 +118,7 @@ export const sessionsPage: Page = {
                         </p>
 
                         ${mayDrive ? html`
-                            <form id="start-form" class="form-stack">
+                            <form id="start-form" class="form-stack" @submit=${start}>
 
                                 <label>Who is charging <span class="muted small">(optional)</span>
                                     <input type="text" name="identification" placeholder="DEADBEEF01" autocomplete="off" />
@@ -142,13 +146,13 @@ export const sessionsPage: Page = {
                                 </span>
 
                             </form>
-                        ` : ''}
+                        ` : nothing}
 
                     `}
 
                 </section>
 
-                ${shown === null ? '' : documentCard(shown)}
+                ${shown === null ? nothing : documentCard(shown)}
 
                 <section class="card">
 
@@ -161,8 +165,8 @@ export const sessionsPage: Page = {
 
                     ${mayDrive ? html`
                         <div class="form-actions">
-                            <button type="button" class="btn" data-value="ocmf">Sign one as OCMF</button>
-                            <button type="button" class="btn" data-value="alfen">... or as Alfen</button>
+                            <button type="button" class="btn" data-value="ocmf" @click=${() => sign('ocmf')}>Sign one as OCMF</button>
+                            <button type="button" class="btn" data-value="alfen" @click=${() => sign('alfen')}>... or as Alfen</button>
                             <span id="value-error" class="form-error" role="alert"></span>
                         </div>
                     ` : html`
@@ -172,47 +176,45 @@ export const sessionsPage: Page = {
                 </section>
             `);
 
-            wire();
-
         }
 
 
-        function documentCard(shown: { title: string; key: PublicKeyOut; text?: string; note?: string }): HTMLFragment {
+        function documentCard(shown: { title: string; key: PublicKeyOut; text?: string; note?: string }): TemplateResult {
 
             return html`
                 <section class="card signed">
 
                     <h2><i class="fa-solid fa-stamp"></i> ${shown.title}</h2>
 
-                    ${shown.note === undefined ? '' : html`<p class="hint">${shown.note}</p>`}
+                    ${shown.note === undefined ? nothing : html`<p class="hint">${shown.note}</p>`}
 
-                    ${shown.text === undefined ? '' : html`
+                    ${shown.text === undefined ? nothing : html`
                         <label class="stacked">The document
-                            <textarea class="mono" rows="7" id="document" readonly>${shown.text}</textarea>
+                            <textarea class="mono" rows="7" id="document" readonly .defaultValue=${shown.text}></textarea>
                         </label>
                     `}
 
                     <label class="stacked">
                         The public key to check it with - ${shown.key.encoding}, ${shown.key.format}
-                        <textarea class="mono" rows="3" id="document-key" readonly>${shown.key.publicKey}</textarea>
+                        <textarea class="mono" rows="3" id="document-key" readonly .defaultValue=${shown.key.publicKey}></textarea>
                     </label>
 
                     <div class="table-scroll">
                         <table class="kv">
                             <tr><td>Key</td><td><code>${shown.key.keyId}</code> (${shown.key.algorithm})</td></tr>
                             <tr><td>Fingerprint</td><td><code>${shown.key.fingerprint}</code></td></tr>
-                            ${shown.key.ocmfAlgorithm === null ? '' : html`
+                            ${shown.key.ocmfAlgorithm === null ? nothing : html`
                                 <tr><td>Named in OCMF as</td><td><code>${shown.key.ocmfAlgorithm}</code></td></tr>
                             `}
                         </table>
                     </div>
 
                     <div class="form-actions">
-                        ${shown.text === undefined ? '' : html`
-                            <button type="button" class="btn small" id="copy-document">Copy the document</button>
+                        ${shown.text === undefined ? nothing : html`
+                            <button type="button" class="btn small" id="copy-document" @click=${() => copy('#document')}>Copy the document</button>
                         `}
-                        <button type="button" class="btn small" id="copy-key">Copy the key</button>
-                        <button type="button" class="btn small" id="dismiss-document">Done</button>
+                        <button type="button" class="btn small" id="copy-key" @click=${() => copy('#document-key')}>Copy the key</button>
+                        <button type="button" class="btn small" id="dismiss-document" @click=${putAway}>Done</button>
                         <span id="copy-note" class="form-notice" role="status"></span>
                     </div>
 
@@ -230,152 +232,136 @@ export const sessionsPage: Page = {
         }
 
 
-        function wire(): void {
+        /** The document or the key shown put away: written down, or not wanted. */
+        function putAway(): void {
+            shown = null;
+            draw();
+        }
 
-            wireDocument();
 
-            if (!mayDrive)
-                return;
+        /** What a text area holds, copied - and said beside the buttons. */
+        function copy(area: string): void {
 
-            const error = must<HTMLElement>(content, '#session-error');
+            const text = content.querySelector<HTMLTextAreaElement>(area);
+            const note = must<HTMLElement>(content, '#copy-note');
 
-            content.querySelector<HTMLFormElement>('#start-form')?.addEventListener('submit', event => {
-
-                event.preventDefault();
-                error.textContent = '';
-
-                const form = event.target as HTMLFormElement;
-
-                void (async () => {
-                    try
-                    {
-
-                        const started = await api.signing.start(
-                                                  field(form, 'identification')     || undefined,
-                                                  field(form, 'identificationType') || undefined
-                                              );
-
-                        shown = {
-                            title:  `The public key of session ${started.sessionId}`,
-                            key:    started.publicKey,
-                            note:   `Started at ${started.startValue} ${started.unit}. This key is what the ` +
-                                     'document at the end has to be checked against, and you have it before ' +
-                                     'the session rather than after it.'
-                        };
-
-                        await load('start-form');
-
-                    }
-                    catch (problem)
-                    {
-                        error.textContent = errorMessage(problem);
-                    }
-                })();
-
-            });
-
-            content.querySelector<HTMLButtonElement>('#stop')?.addEventListener('click', () => {
-
-                error.textContent = '';
-
-                void (async () => {
-                    try
-                    {
-
-                        const stopped = await api.signing.stop();
-
-                        shown = {
-                            title:  `Session ${stopped.sessionId}, signed`,
-                            text:   stopped.ocmf,
-                            key:    stopped.publicKey,
-                            note:   `${stopped.startValue} to ${stopped.stopValue} ${stopped.unit} - ` +
-                                    `${stopped.energy_kWh} kWh in all. Both readings are inside one document, ` +
-                                     'so the subtraction is part of what was signed rather than something ' +
-                                     'somebody has to be trusted to have done correctly.'
-                        };
-
-                        await load(null);
-
-                    }
-                    catch (problem)
-                    {
-                        error.textContent = errorMessage(problem);
-                    }
-                })();
-
-            });
-
-            const valueError = must<HTMLElement>(content, '#value-error');
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-value]')) {
-
-                const format = (button.dataset['value'] ?? 'ocmf') as 'ocmf' | 'alfen';
-
-                button.addEventListener('click', () => {
-
-                    valueError.textContent = '';
-
-                    void (async () => {
-                        try
-                        {
-
-                            const signed: SignedMeterValue = await api.signing.value(format);
-
-                            shown = {
-                                title:  `A signed reading, ${signed.format}`,
-                                text:   signed.ocmf ?? signed.alfen ?? '',
-                                key:    signed.publicKey,
-                                ...(signed.note !== undefined ? { note: signed.note } : {})
-                            };
-
-                            keepDrafts(content, null, draw);
-
-                        }
-                        catch (problem)
-                        {
-                            valueError.textContent = errorMessage(problem);
-                        }
-                    })();
-
-                });
-
-            }
+            if (text)
+                void copyText(text.value, text).then(said => { note.textContent = said; });
 
         }
 
-        function wireDocument(): void {
 
-            if (shown === null)
-                return;
+        function start(event: SubmitEvent): void {
 
-            const note      = must<HTMLElement>(content, '#copy-note');
-            const keyArea   = must<HTMLTextAreaElement>(content, '#document-key');
-            const documentA = content.querySelector<HTMLTextAreaElement>('#document');
+            event.preventDefault();
 
-            content.querySelector<HTMLButtonElement>('#copy-document')?.addEventListener('click', () => {
-                if (documentA)
-                    void copyText(documentA.value, documentA).then(said => { note.textContent = said; });
-            });
+            const error = must<HTMLElement>(content, '#session-error');
+            const form  = event.currentTarget as HTMLFormElement;
 
-            must<HTMLButtonElement>(content, '#copy-key').addEventListener('click', () => {
-                void copyText(keyArea.value, keyArea).then(said => { note.textContent = said; });
-            });
+            error.textContent = '';
 
-            must<HTMLButtonElement>(content, '#dismiss-document').addEventListener('click', () => {
-                shown = null;
-                keepDrafts(content, null, draw);
-            });
+            void (async () => {
+                try
+                {
+
+                    const started = await api.signing.start(
+                                              field(form, 'identification')     || undefined,
+                                              field(form, 'identificationType') || undefined
+                                          );
+
+                    shown = {
+                        title:  `The public key of session ${started.sessionId}`,
+                        key:    started.publicKey,
+                        note:   `Started at ${started.startValue} ${started.unit}. This key is what the ` +
+                                 'document at the end has to be checked against, and you have it before ' +
+                                 'the session rather than after it.'
+                    };
+
+                    // The session runs: the form it was started with is no
+                    // longer on the page, and the one drawn when it stops is
+                    // a new one, empty.
+                    await load();
+
+                }
+                catch (problem)
+                {
+                    error.textContent = errorMessage(problem);
+                }
+            })();
+
+        }
+
+
+        function stop(): void {
+
+            const error = must<HTMLElement>(content, '#session-error');
+
+            error.textContent = '';
+
+            void (async () => {
+                try
+                {
+
+                    const stopped = await api.signing.stop();
+
+                    shown = {
+                        title:  `Session ${stopped.sessionId}, signed`,
+                        text:   stopped.ocmf,
+                        key:    stopped.publicKey,
+                        note:   `${stopped.startValue} to ${stopped.stopValue} ${stopped.unit} - ` +
+                                `${stopped.energy_kWh} kWh in all. Both readings are inside one document, ` +
+                                 'so the subtraction is part of what was signed rather than something ' +
+                                 'somebody has to be trusted to have done correctly.'
+                    };
+
+                    await load();
+
+                }
+                catch (problem)
+                {
+                    error.textContent = errorMessage(problem);
+                }
+            })();
+
+        }
+
+
+        function sign(format: 'ocmf' | 'alfen'): void {
+
+            const valueError = must<HTMLElement>(content, '#value-error');
+
+            valueError.textContent = '';
+
+            void (async () => {
+                try
+                {
+
+                    const signed: SignedMeterValue = await api.signing.value(format);
+
+                    shown = {
+                        title:  `A signed reading, ${signed.format}`,
+                        text:   signed.ocmf ?? signed.alfen ?? '',
+                        key:    signed.publicKey,
+                        ...(signed.note !== undefined ? { note: signed.note } : {})
+                    };
+
+                    draw();
+
+                }
+                catch (problem)
+                {
+                    valueError.textContent = errorMessage(problem);
+                }
+            })();
 
         }
 
 
         /**
-         * The session as the meter has it now: drawn from nothing the first
-         * time and on Reload, and after one was started or stopped drawn anew
-         * over the page, keeping what is typed - saved is the form whose save
-         * it follows, or null.
+         * The session as the meter has it now, drawn over the page as it is:
+         * what is typed into its form stays, with its focus.
          */
-        async function load(saved?: string | null): Promise<void> {
+        async function load(): Promise<void> {
 
             try
             {
@@ -387,10 +373,7 @@ export const sessionsPage: Page = {
 
                 state = next;
 
-                if (saved === undefined)
-                    draw();
-                else
-                    keepDrafts(content, saved, draw);
+                draw();
 
             }
             catch (problem)
@@ -398,6 +381,15 @@ export const sessionsPage: Page = {
                 if (!cancelled)
                     render(content, html`<div class="error-box">${errorMessage(problem)}</div>`);
             }
+
+        }
+
+        /** Reload: the session as the meter has it, and the form as it starts. */
+        async function reload(): Promise<void> {
+
+            await load();
+
+            content.querySelectorAll('form').forEach(form => form.reset());
 
         }
 

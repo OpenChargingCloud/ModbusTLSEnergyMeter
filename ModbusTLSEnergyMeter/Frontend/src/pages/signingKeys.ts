@@ -1,11 +1,11 @@
 import { api, type SigningKey, type SigningKeys } from '../api/client';
 import { auth } from '../auth';
-import { keepDrafts } from '@node/drafts';
-import { html, must, render, type HTMLFragment } from '@node/html';
+import { html as stringHTML, must } from '@node/html';
 import type { Page } from '@node/router';
 import { mayButNot, shell } from '@node/shell';
 import { copyText, errorMessage, field } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
+import { html, nothing, render, repeat, type TemplateResult } from '@node/view';
 
 /**
  * The keys this meter puts its name to a reading with.
@@ -19,6 +19,10 @@ import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
  *
  * There is more than one because the data formats disagree about cryptography
  * and cannot be talked out of it.
+ *
+ * Drawn by view.ts: a draw changes only what differs, so that a note typed for
+ * a new key - and its focus - outlives another key being made the identity or
+ * removed beside it.
  */
 export const signingKeysPage: Page = {
 
@@ -30,7 +34,7 @@ export const signingKeysPage: Page = {
             active:    '/configuration/keys',
             title:     'Signing keys',
             subtitle:  'What this meter puts its name to a reading with.',
-            actions:   html`<button type="button" id="reload" class="btn small">Reload</button>`
+            actions:   stringHTML`<button type="button" id="reload" class="btn small">Reload</button>`
         });
 
         render(content, html`<div class="loading">Loading ...</div>`);
@@ -39,13 +43,19 @@ export const signingKeysPage: Page = {
         // the page does, so it asks first.
         must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
             if (unsaved.mayBeLost())
-                void load();
+                void reload();
         });
 
         const mayManage = auth.can('keys', 'edit');
 
         let cancelled = false;
         let store: SigningKeys | null = null;
+
+        /**
+         * The algorithm chosen for a new key, whose purpose the form says - or
+         * undefined while it is the one drawn as chosen.
+         */
+        let algorithmChosen: string | undefined;
 
 
         /** What an algorithm is good for here, said where it is chosen. */
@@ -74,13 +84,13 @@ export const signingKeysPage: Page = {
 
             render(content, html`
 
-                ${mayManage ? '' : html`
+                ${mayManage ? nothing : html`
                     <div class="notice">
                         ${mayButNot('look at the signing keys', 'make or remove one')}
                     </div>
                 `}
 
-                ${store.error === null ? '' : html`
+                ${store.error === null ? nothing : html`
                     <div class="error-box">${store.error}</div>
                 `}
 
@@ -89,10 +99,10 @@ export const signingKeysPage: Page = {
                         This meter has no signing key, so nothing it measures can be shown to have come
                         from it.
                     </div>
-                ` : ''}
+                ` : nothing}
 
                 <div class="keys">
-                    ${store.keys.map(card)}
+                    ${repeat(store.keys, key => key.id, card)}
                 </div>
 
                 ${mayManage ? html`
@@ -100,17 +110,18 @@ export const signingKeysPage: Page = {
 
                         <h2><i class="fa-solid fa-plus"></i> Make another key</h2>
 
-                        <form id="add-form" class="form-stack">
+                        <form id="add-form" class="form-stack" @submit=${make}>
 
                             <label>Algorithm
-                                <select name="algorithm" id="algorithm">
+                                <select name="algorithm" id="algorithm"
+                                        @change=${(event: Event) => { algorithmChosen = (event.target as HTMLSelectElement).value; draw(); }}>
                                     ${usable.map(algorithm => html`
-                                        <option value="${algorithm}" ${algorithm === usable[0] ? html`selected` : ''}>${algorithm}</option>
+                                        <option value="${algorithm}" ?selected=${algorithm === usable[0]}>${algorithm}</option>
                                     `)}
                                 </select>
                             </label>
 
-                            <p class="hint" id="algorithm-purpose">${purposeOf(usable[0] ?? '')}</p>
+                            <p class="hint" id="algorithm-purpose">${purposeOf(algorithmChosen ?? usable[0] ?? '')}</p>
 
                             <label>What it is for <span class="muted small">(optional)</span>
                                 <input type="text" name="note" placeholder="for the Alfen receipts" autocomplete="off" />
@@ -129,7 +140,7 @@ export const signingKeysPage: Page = {
                         </form>
 
                     </section>
-                ` : ''}
+                ` : nothing}
 
                 <section class="card">
 
@@ -150,19 +161,17 @@ export const signingKeysPage: Page = {
                 </section>
             `);
 
-            wire();
-
         }
 
 
-        function card(key: SigningKey): HTMLFragment {
+        function card(key: SigningKey): TemplateResult {
 
             return html`
                 <section class="card signing-key ${key.isDefault ? 'in-use' : ''}">
 
                     <h2>
                         <i class="fa-solid fa-key"></i> ${key.algorithm}
-                        ${key.isDefault ? html`<span class="chip ok">the identity</span>` : ''}
+                        ${key.isDefault ? html`<span class="chip ok">the identity</span>` : nothing}
                     </h2>
 
                     <div class="table-scroll">
@@ -171,25 +180,25 @@ export const signingKeysPage: Page = {
                             <tr><td>Fingerprint</td><td><code>${key.fingerprint}</code></td></tr>
                             <tr><td>Made</td><td>${new Date(key.createdAt).toLocaleString()}</td></tr>
                             <tr><td>Good for</td><td>${purposeOf(key.algorithm)}</td></tr>
-                            ${key.note === null ? '' : html`<tr><td>Note</td><td>${key.note}</td></tr>`}
+                            ${key.note === null ? nothing : html`<tr><td>Note</td><td>${key.note}</td></tr>`}
                         </table>
                     </div>
 
                     <label class="stacked">The public key
-                        <textarea class="mono" rows="3" readonly data-key="${key.id}">${key.publicKey}</textarea>
+                        <textarea class="mono" rows="3" readonly data-key="${key.id}" .defaultValue=${key.publicKey}></textarea>
                     </label>
 
                     <div class="form-actions">
 
-                        <button type="button" class="btn small" data-copy="${key.id}">Copy</button>
+                        <button type="button" class="btn small" data-copy="${key.id}" @click=${() => copy(key.id)}>Copy</button>
 
                         ${mayManage && !key.isDefault ? html`
-                            <button type="button" class="btn small" data-default="${key.id}">Sign with this one</button>
-                        ` : ''}
+                            <button type="button" class="btn small" data-default="${key.id}" @click=${() => makeTheIdentity(key.id)}>Sign with this one</button>
+                        ` : nothing}
 
                         ${mayManage ? html`
-                            <button type="button" class="btn small danger" data-remove="${key.id}">Remove</button>
-                        ` : ''}
+                            <button type="button" class="btn small danger" data-remove="${key.id}" @click=${() => remove(key.id)}>Remove</button>
+                        ` : nothing}
 
                         <span class="form-notice" data-note="${key.id}" role="status"></span>
 
@@ -201,133 +210,83 @@ export const signingKeysPage: Page = {
         }
 
 
-        function wire(): void {
+        function copy(id: string): void {
 
-            for (const button of content.querySelectorAll<HTMLElement>('[data-copy]')) {
+            const area = content.querySelector<HTMLTextAreaElement>(`[data-key="${id}"]`);
+            const note = content.querySelector<HTMLElement>(`[data-note="${id}"]`);
 
-                const id = button.dataset['copy'] ?? '';
+            if (area && note)
+                void copyText(area.value, area).then(said => { note.textContent = said; });
 
-                button.addEventListener('click', () => {
+        }
 
-                    const area = content.querySelector<HTMLTextAreaElement>(`[data-key="${id}"]`);
-                    const note = content.querySelector<HTMLElement>(`[data-note="${id}"]`);
 
-                    if (area && note)
-                        void copyText(area.value, area).then(said => { note.textContent = said; });
+        function make(event: SubmitEvent): void {
 
-                });
+            event.preventDefault();
 
-            }
+            const error = must<HTMLElement>(content, '#add-error');
+            const form  = event.currentTarget as HTMLFormElement;
+            const note  = field(form, 'note');
 
-            if (!mayManage)
+            error.textContent = '';
+
+            void (async () => {
+                try
+                {
+                    await api.keys.create(field(form, 'algorithm'), note.length > 0 ? note : undefined);
+
+                    algorithmChosen = undefined;
+                    await load();
+
+                    // A draw leaves a form as it is typed into; this one was
+                    // made into a key, so it goes back to what it starts with.
+                    form.reset();
+                }
+                catch (problem)
+                {
+                    error.textContent = errorMessage(problem);
+                }
+            })();
+
+        }
+
+
+        function makeTheIdentity(id: string): void {
+
+            if (!confirm(`Sign new readings with '${id}' from now on?` +
+                         '\n\nNothing already signed changes: every document says which algorithm it ' +
+                         'was signed with and is checked against the key that signed it.'))
                 return;
 
-            content.querySelector<HTMLSelectElement>('#algorithm')?.addEventListener('change', sayWhatTheAlgorithmIsFor);
+            void (async () => {
+                try   { await api.keys.setDefault(id); await load(); }
+                catch (problem) { alert(errorMessage(problem)); }
+            })();
 
-            content.querySelector<HTMLFormElement>('#add-form')?.addEventListener('submit', event => {
+        }
 
-                event.preventDefault();
 
-                const error = must<HTMLElement>(content, '#add-error');
-                const form  = event.target as HTMLFormElement;
-                const note  = field(form, 'note');
+        function remove(id: string): void {
 
-                error.textContent = '';
+            if (!confirm(`Remove the signing key '${id}'?` +
+                         '\n\nEverything it ever signed stops being checkable against this meter. ' +
+                         'This cannot be undone.'))
+                return;
 
-                void (async () => {
-                    try
-                    {
-                        await api.keys.create(field(form, 'algorithm'), note.length > 0 ? note : undefined);
-                        await load('add-form');
-                    }
-                    catch (problem)
-                    {
-                        error.textContent = errorMessage(problem);
-                    }
-                })();
-
-            });
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-default]')) {
-
-                const id = button.dataset['default'] ?? '';
-
-                button.addEventListener('click', () => {
-
-                    if (!confirm(`Sign new readings with '${id}' from now on?` +
-                                 '\n\nNothing already signed changes: every document says which algorithm it ' +
-                                 'was signed with and is checked against the key that signed it.'))
-                        return;
-
-                    void (async () => {
-                        try   { await api.keys.setDefault(id); await load(null); }
-                        catch (problem) { alert(errorMessage(problem)); }
-                    })();
-
-                });
-
-            }
-
-            for (const button of content.querySelectorAll<HTMLElement>('[data-remove]')) {
-
-                const id = button.dataset['remove'] ?? '';
-
-                button.addEventListener('click', () => {
-
-                    if (!confirm(`Remove the signing key '${id}'?` +
-                                 '\n\nEverything it ever signed stops being checkable against this meter. ' +
-                                 'This cannot be undone.'))
-                        return;
-
-                    void (async () => {
-                        try   { await api.keys.remove(id); await load(null); }
-                        catch (problem) { alert(errorMessage(problem)); }
-                    })();
-
-                });
-
-            }
+            void (async () => {
+                try   { await api.keys.remove(id); await load(); }
+                catch (problem) { alert(errorMessage(problem)); }
+            })();
 
         }
 
 
         /**
-         * What the algorithm chosen for a new key is good for, said where it
-         * is chosen: as it is chosen, and again once the page is drawn anew
-         * with the choice put back, which keepDrafts does without telling the
-         * page.
+         * The keys as the meter has them now, drawn over the page as it is:
+         * what is typed into its form stays, with its focus.
          */
-        function sayWhatTheAlgorithmIsFor(): void {
-
-            const select   = content.querySelector<HTMLSelectElement>('#algorithm');
-            const purpose  = content.querySelector<HTMLElement>('#algorithm-purpose');
-
-            if (select !== null && purpose !== null)
-                purpose.textContent = purposeOf(select.value);
-
-        }
-
-        /**
-         * The page drawn anew after something was done on it, over the page as
-         * it is: what is typed into its form is kept, unless the form is the
-         * one whose save this follows - saved, or null where none was.
-         */
-        function drawAgain(saved: string | null): void {
-
-            keepDrafts(content, saved, draw);
-
-            sayWhatTheAlgorithmIsFor();
-
-        }
-
-
-        /**
-         * The keys as the meter has them now: drawn from nothing the first time
-         * and on Reload, and after something was done on the page drawn anew
-         * over it, keeping what is typed - saved is the form whose save it
-         * follows, or null.
-         */
-        async function load(saved?: string | null): Promise<void> {
+        async function load(): Promise<void> {
 
             try
             {
@@ -339,10 +298,7 @@ export const signingKeysPage: Page = {
 
                 store = next;
 
-                if (saved === undefined)
-                    draw();
-                else
-                    drawAgain(saved);
+                draw();
 
             }
             catch (problem)
@@ -350,6 +306,17 @@ export const signingKeysPage: Page = {
                 if (!cancelled)
                     render(content, html`<div class="error-box">${errorMessage(problem)}</div>`);
             }
+
+        }
+
+        /** Reload: the keys as the meter has them, and the form as it starts. */
+        async function reload(): Promise<void> {
+
+            algorithmChosen = undefined;
+
+            await load();
+
+            content.querySelectorAll('form').forEach(form => form.reset());
 
         }
 
