@@ -1,8 +1,8 @@
 import { api, type Account, type RoleInfo } from '../api/client';
 import { auth } from '../auth';
-import { html as stringHTML, must } from '@node/html';
+import { must } from '@node/html';
 import type { Page } from '@node/router';
-import { mayButNot, shell } from '@node/shell';
+import { mayButNot, reloadButton, shell } from '@node/shell';
 import { errorMessage, field } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 import { html, live, nothing, render, repeat, type TemplateResult } from '@node/view';
@@ -34,17 +34,10 @@ export const accountsPage: Page = {
             active:    '/configuration/accounts',
             title:     'Accounts',
             subtitle:  'Who may sign in to this meter, and as what.',
-            actions:   stringHTML`<button type="button" id="reload" class="btn small">Reload</button>`
+            actions:   reloadButton(() => reload())
         });
 
         render(content, html`<div class="loading">Loading ...</div>`);
-
-        // Reload throws a password or an account half typed away as
-        // thoroughly as leaving the page does, so it asks first.
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
-            if (unsaved.mayBeLost())
-                void reload();
-        });
 
         // Seeing the accounts and changing them are two permissions: a role the
         // configuration file adds may be given the one without the other.

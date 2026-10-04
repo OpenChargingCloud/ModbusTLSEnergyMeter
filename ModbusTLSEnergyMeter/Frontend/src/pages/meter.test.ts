@@ -4,7 +4,7 @@
 // selector along; a mode set empties the draft; a refusal says why and keeps
 // the choice.
 
-import { asked, field, leave, open, refused, submit, until, type Asked } from '../../test/meter.ts';
+import { asked, change, field, leave, open, refused, said, submit, until, type Asked } from '../../test/meter.ts';
 
 import { strict as assert } from 'node:assert';
 import { after, test } from 'node:test';
@@ -161,5 +161,26 @@ test('somebody who may only read gets the numbers and no commands', async () => 
                             root => root.querySelector('#total-power')?.textContent !== '-' && root.querySelector('#total-power') !== null);
 
     assert.ok(root.querySelector('#mode-form') === null, 'there are commands to send');
+
+});
+
+
+test('Reload asks before it throws a mode chosen away, and puts the selector back as the register has it', async () => {
+
+    const now   = { power: 3000, mode: 'net' as MeterModeName };
+    const root  = await open(meterPage, '/meter', [ 'meter:read', 'meter:edit' ], aMeter(now), drawn);
+    const mode  = field<HTMLSelectElement>(root, '#mode-form', 'mode');
+
+    change(mode, 'export');
+
+    const before = asked.length;
+
+    root.querySelector<HTMLButtonElement>('#reload')!.click();
+
+    // The status as well, which the poll every two seconds leaves out.
+    await until(() => asked.slice(before).some(one => one.method === 'GET' && one.path === '/status'), 'Reload did not read the meter again');
+    await until(() => mode.value === 'net', 'Reload left the mode chosen in the selector');
+
+    assert.equal(said.length, 1, `Reload asked ${said.length} time(s) before it threw the mode chosen away`);
 
 });

@@ -4,7 +4,7 @@
 // key and then the document; a start the meter refuses says why and keeps
 // what is typed.
 
-import { asked, field, open, refused, submit, type, until, type Asked } from '../../test/meter.ts';
+import { asked, field, open, refused, said, submit, type, until, type Asked } from '../../test/meter.ts';
 
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
@@ -147,5 +147,23 @@ test('somebody who may only watch can neither start, stop nor sign', async () =>
     assert.ok(root.querySelector('#start-form') === null, 'there is a form to start a session with');
     assert.ok(root.querySelector('[data-value]') === null, 'there is a button to sign a reading with');
     assert.match(root.querySelector('.notice')!.textContent!, /watch a charging session/);
+
+});
+
+
+test('Reload asks before it throws a session half started away, and then reads the page again with the form empty', async () => {
+
+    const root    = await open(sessionsPage, '/sessions', [ 'meter:read', 'meter:run' ], aMeter(), drawn);
+
+    type(field(root, '#start-form', 'identification'), 'DEADBEEF01');
+
+    const before  = asked.length;
+
+    root.querySelector<HTMLButtonElement>('#reload')!.click();
+
+    await until(() => asked.slice(before).some(one => one.method === 'GET' && one.path === '/sessions'), 'Reload did not read the page again');
+    await until(() => field(root, '#start-form', 'identification').value === '', 'Reload kept what was typed');
+
+    assert.equal(said.length, 1, `Reload asked ${said.length} time(s) before it threw what was typed away`);
 
 });

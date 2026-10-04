@@ -145,3 +145,21 @@ test('somebody who may only look gets no form, and is told so', async () => {
     assert.match(root.querySelector('.notice')!.textContent!, /look at the signing keys/);
 
 });
+
+
+test('Reload asks before it throws a key half asked for away, and then reads the page again with the form empty', async () => {
+
+    const root    = await open(signingKeysPage, '/configuration/keys', [ 'keys:read', 'keys:edit' ], aMeter(), drawn);
+
+    type(field(root, '#add-form', 'note'), 'for the receipts');
+
+    const before  = asked.length;
+
+    root.querySelector<HTMLButtonElement>('#reload')!.click();
+
+    await until(() => asked.slice(before).some(one => one.method === 'GET' && one.path === '/keys'), 'Reload did not read the page again');
+    await until(() => field(root, '#add-form', 'note').value === '', 'Reload kept what was typed');
+
+    assert.equal(said.length, 1, `Reload asked ${said.length} time(s) before it threw what was typed away`);
+
+});

@@ -4,7 +4,7 @@
 // has; an account added empties its form and shows its password once; every
 // account keeps its card.
 
-import { asked, change, field, open, refused, submit, type, until, type Asked } from '../../test/meter.ts';
+import { asked, change, field, open, refused, said, submit, type, until, type Asked } from '../../test/meter.ts';
 
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
@@ -155,5 +155,23 @@ test('somebody who may not see the accounts changes their own password only', as
     assert.ok(root.querySelector('#add-form') === null, 'there is a form to add an account with');
     assert.ok(root.querySelector('[data-role-for]') === null, 'the accounts are shown');
     assert.match(root.querySelector('.notice')!.textContent!, /change its own password/);
+
+});
+
+
+test('Reload asks before it throws an account half typed away, and then reads the page again with the form empty', async () => {
+
+    const root    = await open(accountsPage, '/configuration/accounts', [ 'accounts:read', 'accounts:edit' ], aMeter(), drawn);
+
+    type(field(root, '#add-form', 'userId'), 'rory');
+
+    const before  = asked.length;
+
+    root.querySelector<HTMLButtonElement>('#reload')!.click();
+
+    await until(() => asked.slice(before).some(one => one.method === 'GET' && one.path === '/accounts'), 'Reload did not read the page again');
+    await until(() => field(root, '#add-form', 'userId').value === '', 'Reload kept what was typed');
+
+    assert.equal(said.length, 1, `Reload asked ${said.length} time(s) before it threw what was typed away`);
 
 });

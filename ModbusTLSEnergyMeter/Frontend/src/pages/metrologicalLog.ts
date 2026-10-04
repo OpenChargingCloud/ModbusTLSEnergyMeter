@@ -1,5 +1,4 @@
 import { api, logLevels, type LogEntry, type LogLevel } from '../api/client';
-import { html as stringHTML, must } from '@node/html';
 import { drawOrder } from '@node/logs/order';
 import { logs } from '@node/logs/store';
 import type { Page } from '@node/router';
@@ -42,7 +41,8 @@ export const metrologicalLogPage: Page = {
             active:    '/metrological-log',
             title:     'Metrological log',
             subtitle:  'What this meter recorded, and whether the record on disk is still intact.',
-            actions:   stringHTML`<button type="button" id="verify" class="btn small">Check the log</button>`
+            actions:   html`<button type="button" id="verify" class="btn small"
+                                @click=${(event: Event) => verify(event.currentTarget as HTMLButtonElement)}>Check the log</button>`
         });
 
         let tag:      string   = '';
@@ -116,9 +116,8 @@ export const metrologicalLogPage: Page = {
         void logs.reload();
 
 
-        must<HTMLButtonElement>(root, '#verify').addEventListener('click', () => {
-
-            const button = must<HTMLButtonElement>(root, '#verify');
+        /** Check the log on disk, the button held still and saying so meanwhile. */
+        function verify(button: HTMLButtonElement): void {
 
             button.disabled    = true;
             button.textContent = 'Checking ...';
@@ -140,7 +139,7 @@ export const metrologicalLogPage: Page = {
                 draw();
             })();
 
-        });
+        }
 
         return () => unsubscribe();
 

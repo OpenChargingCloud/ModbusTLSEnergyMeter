@@ -1,8 +1,8 @@
 import { api, type PublicKeyOut, type SessionState, type SignedMeterValue } from '../api/client';
 import { auth } from '../auth';
-import { html as stringHTML, must } from '@node/html';
+import { must } from '@node/html';
 import type { Page } from '@node/router';
-import { mayButNot, shell } from '@node/shell';
+import { mayButNot, reloadButton, shell } from '@node/shell';
 import { copyText, errorMessage, field, formatSince } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 import { html, nothing, render, type TemplateResult } from '@node/view';
@@ -34,17 +34,10 @@ export const sessionsPage: Page = {
             active:    '/sessions',
             title:     'Sessions',
             subtitle:  'Charging sessions, and readings this meter has signed.',
-            actions:   stringHTML`<button type="button" id="reload" class="btn small">Reload</button>`
+            actions:   reloadButton(() => reload())
         });
 
         render(content, html`<div class="loading">Loading ...</div>`);
-
-        // Reload throws a session half started away as thoroughly as leaving
-        // the page does, so it asks first.
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
-            if (unsaved.mayBeLost())
-                void reload();
-        });
 
         const mayDrive = auth.can('meter', 'run');
 

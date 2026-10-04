@@ -1,8 +1,8 @@
 import { api, type MeterModeName, type MeterReadings, type Status } from '../api/client';
 import { auth } from '../auth';
-import { html as stringHTML, must } from '@node/html';
+import { must } from '@node/html';
 import type { Page } from '@node/router';
-import { shell } from '@node/shell';
+import { reloadButton, shell } from '@node/shell';
 import { errorMessage, formatNumber } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 import { html, nothing, render } from '@node/view';
@@ -43,24 +43,16 @@ export const meterPage: Page = {
             active:    '/meter',
             title:     'Meter',
             subtitle:  'What this meter is measuring right now.',
-            actions:   stringHTML`<button type="button" id="reload" class="btn small">Reload</button>`
+            // Reload throws a mode chosen and not set away - reloadButton asks
+            // first - and then puts the selector back as the register has it,
+            // since a poll leaves a choice somebody has made alone.
+            actions:   reloadButton(() => {
+                           content.querySelector<HTMLFormElement>('#mode-form')?.reset();
+                           return load();
+                       })
         });
 
         render(content, html`<div class="loading">Loading ...</div>`);
-
-        // Reload throws a mode chosen and not set away, so it asks first - and
-        // then puts the selector back as the register has it, since a poll
-        // leaves a choice somebody has made alone.
-        must<HTMLButtonElement>(root, '#reload').addEventListener('click', () => {
-
-            if (!unsaved.mayBeLost())
-                return;
-
-            content.querySelector<HTMLFormElement>('#mode-form')?.reset();
-
-            void load();
-
-        });
 
         const mayWrite = auth.can('meter', 'edit');
 
