@@ -6,6 +6,7 @@
     $color-accent:       #1b5e8f,
     $color-accent-dark:  #14496d
 );
+@use '@node/styles/cards';
 
 
 // The meter: one number that matters, and the three phases behind it.
@@ -325,15 +326,18 @@ table.kv {
 
 // Certificates: the requests a CA is sent, and what it sent back.
 
+// The cards of the meter's own sections on the node's certificates page - the
+// SunSpec roles, the signing requests, the form that asks for one: h3s below
+// the heading of their group, as the cards of the kinds are, and drawn as a
+// card's heading as those are (WWCP_Node 9a942cd).
+.card.section-card > h3 {
+    @include cards.card-heading;
+}
+
 // A signing request: its subject can be long, and its state goes under it
 // rather than squeezing it.
-.signing-request {
-
-    h2 {
-        gap:        0.5rem;
-        flex-wrap:  wrap;
-    }
-
+.signing-request > h3 {
+    flex-wrap: wrap;
 }
 
 // The box under a signing request that takes the certificate it was answered

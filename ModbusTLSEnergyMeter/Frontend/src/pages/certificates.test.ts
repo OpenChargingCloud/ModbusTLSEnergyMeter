@@ -1,11 +1,16 @@
-// The certificate page drawn against a stand-in meter: a request half filled
-// in, and a certificate pasted for another, outlive a certificate being
-// switched off beside them - the field, its text and its focus; every
-// certificate keeps its row; the import form offers the uses of the kind
-// chosen in boxes of that kind; a request answered empties its own form and
-// no other.
+// The certificate page - the node's, with the meter's words and sections -
+// drawn against a stand-in meter: a request half filled in, and a certificate
+// pasted for another, outlive a certificate being switched off beside them -
+// the field, its text and its focus; every certificate keeps its row; the
+// import form offers the uses of the kind chosen in boxes of that kind; a
+// request answered empties its own form and no other; the roles stand below
+// the client roots and the requests below the identities; a listener with
+// nothing to show is said at the top; where an identity is shown and where
+// next is said in its row; what is typed into a request is held as a draft,
+// and Reload empties it.
 
-import { asked, field, open, type, until, type Asked } from '../../test/meter.ts';
+import { asked, change, field, open, said, type, until, type Asked } from '../../test/meter.ts';
+import { unsaved } from '@node/unsaved';
 import { chromeTakesTheFocus } from '@node/../test/dom.ts';
 
 import { strict as assert } from 'node:assert';
@@ -45,8 +50,14 @@ function aRequest(id: string, subject: string, answered = false): SigningRequest
              keyType: 'ecdsa-p256', note: null, answeredBy: answered ? [ 'cccc' ] : [], state: answered ? 'answered' : 'awaiting a certificate' };
 }
 
+/** How the stand-in's listeners stand: Modbus/TLS showing aaaa with nothing next, the web interface not served over HTTPS. */
+interface Listeners {
+    modbus?:  { used: boolean; current: string | null; next: string | null; nextAt: string | null };
+    web?:     { used: boolean; current: string | null; next: string | null; nextAt: string | null };
+}
+
 /** A meter with two identities and two requests waiting for their certificates, that takes what is asked. */
-function aMeter(): (one: Asked) => unknown {
+function aMeter(listeners: Listeners = {}): (one: Asked) => unknown {
 
     let identities  = [ anIdentity('aaaa', 'meter-a'), anIdentity('bbbb', 'meter-b') ];
     let waiting     = [ aRequest('r1', 'CN=meter7.lan'), aRequest('r2', 'CN=meter8.lan') ];
@@ -67,8 +78,8 @@ function aMeter(): (one: Asked) => unknown {
         keysAreUnencrypted:  false,
         listeners:           [ 'modbus', 'web' ],
         shown: {
-            modbus:  { used: true,  current: 'aaaa', next: null, nextAt: null },
-            web:     { used: false, current: null,   next: null, nextAt: null }
+            modbus:  listeners.modbus ?? { used: true,  current: 'aaaa', next: null, nextAt: null },
+            web:     listeners.web    ?? { used: false, current: null,   next: null, nextAt: null }
         }
     } as unknown as CertificateStore);
 
@@ -224,17 +235,126 @@ test('a request answered empties its own form, and no other', async () => {
     assert.equal(pemOf(root, 'r1').value, '', 'the certificate put in stayed in its form');
     assert.equal(pemOf(root, 'r2').value, '-----BEGIN CERTIFICATE-----\nr2', 'the other request lost what was pasted for it');
 
+    // Read again: the identity it became is in the store, the request says it was answered.
+    assert.ok(root.querySelector('[data-toggle="cccc"]') !== null, 'the identity put in is not among the identities');
+    assert.equal(root.querySelector('[data-answer="r1"]')!.closest('.signing-request')!.querySelector('h3 .chip')!.textContent, 'answered');
+
 });
 
 
 test('somebody who may only look gets no forms, and is told so', async () => {
 
     const root = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read' ], aMeter(),
-                            root => root.querySelector('table.records') !== null);
+                            root => root.querySelector('table.records') !== null && root.querySelector('.signing-request') !== null);
 
     assert.ok(root.querySelector('#import-form') === null, 'there is a form to import with');
     assert.ok(root.querySelector('#request-form') === null, 'there is a form to ask for a certificate with');
-    assert.ok(root.querySelector('[data-toggle]') === null, 'there are buttons to change a certificate with');
-    assert.match(root.querySelector('.notice')!.textContent!, /look at the certificates/);
+    assert.ok(root.querySelector('form.upload') === null, 'there is a form to answer a request with');
+    assert.ok(root.querySelector('[data-remove-request]') === null, 'there is a button to throw a request away with');
+    assert.ok([...root.querySelectorAll<HTMLButtonElement>('[data-toggle], [data-remove]')].every(button => button.disabled),
+              'a button to change a certificate with can be pressed');
+    assert.match(root.querySelector('.notice')!.textContent!, /look at the store/);
+
+});
+
+
+test('the roles stand below the client roots, and the requests below the identities', async () => {
+
+    const root   = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ], aMeter(), drawn);
+    const order  = [...root.querySelectorAll('[data-kind], #sunspec-roles, .signing-request, #request-form, h2')].
+                       map(one => one.getAttribute('data-kind') ?? (one.id || (one.classList.contains('signing-request') ? 'request' : one.textContent!.trim())));
+
+    const at = (what: string) => order.indexOf(what);
+
+    assert.ok(at('clientRoot') >= 0 && at('sunspec-roles') === at('clientRoot') + 1, `the roles do not follow the client roots: ${order.join(' | ')}`);
+    assert.ok(at('Signing requests') === at('tlsIdentity') + 1, `the requests do not follow the identities: ${order.join(' | ')}`);
+    assert.ok(at('request') > at('Signing requests') && at('request-form') > at('request'),
+              `the requests and the form to ask with are not below their heading: ${order.join(' | ')}`);
+    assert.match(root.querySelector('#sunspec-roles')!.textContent!, /SuperAdministratorSunSpec/);
+
+});
+
+
+test('a listener that runs with nothing to show is said at the top, and an identity says where it is shown and where next', async () => {
+
+    const root = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ],
+                            aMeter({ modbus: { used: true, current: null, next: 'bbbb', nextAt: '2026-12-24T18:00:00Z' } }), drawn);
+
+    const notices = [...root.querySelectorAll('.notice')].map(one => one.textContent!.replace(/\s+/g, ' ').trim());
+
+    assert.ok(notices.some(one => one.startsWith('The Modbus/TLS listener has no certificate it could show') &&
+                                  one.endsWith('Put in a TLS identity for it, or ask for one below.')),
+              `the listener with nothing to show was not said: ${notices.join(' | ')}`);
+    assert.ok(!notices.some(one => one.includes('web interface has no certificate')), 'the web interface, served over plain HTTP, was said to have nothing');
+
+    const chipsOf = (id: string) => [...root.querySelector(`[data-toggle="${id}"]`)!.closest('tr')!.querySelectorAll('.row-chips .chip')].
+                                        map(one => one.textContent!.trim());
+
+    assert.deepEqual(chipsOf('aaaa'), [ 'shown on Modbus/TLS' ]);
+    assert.equal(chipsOf('bbbb').length, 1);
+    assert.match(chipsOf('bbbb')[0]!, /^next on Modbus\/TLS, from /);
+
+    assert.match(root.textContent!, /served over plain HTTP at the moment/, 'the web interface over plain HTTP was not said');
+
+});
+
+
+test('what an identity is drawn with says nothing of plain HTTP where the web interface is served over HTTPS', async () => {
+
+    const root = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ],
+                            aMeter({ web: { used: true, current: 'bbbb', next: null, nextAt: null } }), drawn);
+
+    assert.doesNotMatch(root.textContent!, /served over plain HTTP/);
+
+});
+
+
+test('a request half filled in, or a certificate pasted for one, is a draft that leaving asks about', async () => {
+
+    for (const into of [ 'request', 'pem' ] as const) {
+
+        const root = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ], aMeter(), drawn);
+
+        assert.ok(unsaved.mayBeLost() && said.length === 0, 'an untouched page asked before it was left');
+
+        if (into === 'request')
+            type(field(root, '#request-form', 'subject'), 'CN=meter9.lan');
+        else
+            type(pemOf(root, 'r1'), '-----BEGIN CERTIFICATE-----');
+
+        unsaved.mayBeLost();
+
+        assert.equal(said.length, 1, `what was typed into the ${into === 'request' ? 'request' : 'certificate pasted'} was not held`);
+
+    }
+
+});
+
+
+test('Reload empties a request half filled in, and its notes go back to the first listener and the default key', async () => {
+
+    const root      = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ], aMeter(), drawn);
+    const listener  = field<HTMLSelectElement>(root, '#request-form', 'listener');
+    const keyType   = field<HTMLSelectElement>(root, '#request-form', 'keyType');
+    const note      = () => root.querySelector('#request-listener-note')!.textContent!;
+    const remark    = () => root.querySelector('#request-key-type-note')!.textContent!;
+
+    type(field(root, '#request-form', 'subject'), 'CN=meter9.lan');
+    change(listener, 'web');
+    change(keyType,  'rsa-3072');
+
+    await until(() => note().startsWith('Shown to a browser') && remark() === 'Slower, and as good.', 'the notes did not follow what was chosen');
+
+    const before = asked.length;
+
+    root.querySelector<HTMLButtonElement>('#reload')!.click();
+
+    await until(() => asked.slice(before).some(one => one.path === '/certificates/requests'), 'Reload did not ask for the requests');
+    await until(() => note().startsWith('Shown to a charging station'), 'the note of the listener did not go back to the first listener');
+
+    assert.equal(remark(), 'What every peer reads.', 'the note of the key did not go back to the default key');
+    assert.equal(field(root, '#request-form', 'subject').value, '', 'Reload left the subject typed');
+    assert.equal(listener.value, 'modbus');
+    assert.equal(keyType.value, 'ecdsa-p256');
 
 });
