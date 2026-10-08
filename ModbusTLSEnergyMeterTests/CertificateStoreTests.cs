@@ -176,11 +176,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
 
                 Assert.That(oldModbus?.Kind,                              Is.EqualTo(CertificateKind.TLSIdentity));
-                Assert.That(oldModbus?.Usages,                            Is.EqualTo(new[] { ListenerCertificates.Modbus }));
+                Assert.That(oldModbus?.Usages,                            Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
                 Assert.That(oldModbus?.HasPrivateKey,                     Is.True, "the base64 text was read as the PKCS#12 it is");
 
                 Assert.That(oldWeb?.Kind,                                 Is.EqualTo(CertificateKind.TLSIdentity));
-                Assert.That(oldWeb?.Usages,                               Is.EqualTo(new[] { ListenerCertificates.Web }));
+                Assert.That(oldWeb?.Usages,                               Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Web }));
                 Assert.That(oldWeb?.HasPrivateKey,                        Is.True, "paired with the key that asked for it");
 
                 Assert.That(oldCA?.Kind,                                  Is.EqualTo(CertificateKind.ClientRoot));
@@ -233,7 +233,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(identities.Count,           Is.EqualTo(1), "one certificate, found twice");
                 Assert.That(identities[0].Thumbprint,   Is.EqualTo(CertificateEntry.ThumbprintOf(startedWith)));
                 Assert.That(identities[0].ChainLength,  Is.GreaterThan(0), "with the intermediates of the file it came in");
-                Assert.That(identities[0].Usages,       Is.EqualTo(new[] { ListenerCertificates.Modbus }));
+                Assert.That(identities[0].Usages,       Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
             });
 
         }

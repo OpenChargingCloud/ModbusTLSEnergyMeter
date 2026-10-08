@@ -281,7 +281,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         protected override void CompleteCertificatesJSON(JObject JSON)
         {
 
-            JSON["listeners"] = new JArray(Certificates.Listeners);
+            JSON["listeners"] = new JArray(Certificates.Listeners.Select(listener => listener.ToString()));
 
             if (JSON["certificates"]?[CertificateKind.TLSIdentity.AsText()] is JArray identities)
                 foreach (var identity in identities.OfType<JObject>())
@@ -328,9 +328,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <param name="Entry">The certificate as it is now.</param>
         /// <param name="ActiveAfter">Whether it would be switched on afterwards; false for a deletion.</param>
         /// <param name="UsagesAfter">What it would be for afterwards, as the store keeps usages; null for every use.</param>
-        public override String? WhatWouldLose(CertificateEntry        Entry,
-                                              Boolean                 ActiveAfter,
-                                              IReadOnlyList<String>?  UsagesAfter)
+        public override String? WhatWouldLose(CertificateEntry                  Entry,
+                                              Boolean                           ActiveAfter,
+                                              IReadOnlyList<CertificateUsage>?  UsagesAfter)
         {
 
             if (Entry.Kind == CertificateKind.TLSIdentity)

@@ -1230,7 +1230,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(store?["listeners"]?.Values<String>(),                                Is.EqualTo(new[] { "modbus", "web" }));
                 Assert.That(store?["kinds"]?["tlsIdentity"]?["usages"]?.Values<String>(),         Is.EqualTo(new[] { "modbus", "web" }), "an identity is told a listener");
                 Assert.That(store?["kinds"]?["tlsRoot"]?["usages"]?.Values<String>(),             Is.EqualTo(new[] { "dns", "nts" }),    "a root a service");
-                Assert.That(store?["kinds"]?["clientRoot"]?["hasUsages"]?.Value<Boolean>(),       Is.False);
+                Assert.That(store?["kinds"]?["clientRoot"]?["hasUsages"]?.Value<Boolean>(),       Is.True,                               "every kind may be marked");
+                Assert.That(store?["kinds"]?["clientRoot"]?["usages"]?.Values<String>(),          Is.EqualTo(Array.Empty<String>()),     "a client root is offered no uses, the identities' listeners not among them");
 
                 Assert.That(identity,                                                             Is.Not.Null, store?.ToString());
                 Assert.That(identity?["usages"]?.Values<String>(),                                Is.EqualTo(new[] { "modbus" }));
@@ -1389,10 +1390,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #region TheStoreTakesItsKindsAndWhatEachIsFor()
 
         /// <summary>
-        /// A kind the meter keeps no certificate of, an identity "for dns" and a
-        /// root "for web" are each refused where they are typed, and a root for
-        /// the time servers is taken.
+        /// A kind the meter keeps no certificate of is refused where it is typed;
+        /// an identity "for dns" and a root "for web" are taken as marked - the
+        /// identity shown on no listener, as it is for none of them - and a root
+        /// for the time servers is taken.
         /// </summary>
+        /// <remarks>
+        /// Usages were a closed list, the listeners for an identity and the
+        /// services for a root, and both were refused; any certificate may be
+        /// marked with any usage now (WWCP_Node 63b1e8d).
+        /// </remarks>
         [Test]
         public async Task TheStoreTakesItsKindsAndWhatEachIsFor()
         {
@@ -1403,34 +1410,53 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var identity     = new CertificateRequest("CN=somebody", key, HashAlgorithmName.SHA256).
                                          CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30));
 
-            using var rootKey      = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-            var rootRequest        = new CertificateRequest("CN=Some Time Server Root", rootKey, HashAlgorithmName.SHA256);
-            rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
-            using var root         = rootRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(365));
+            using var webRoot      = ARoot("CN=Some Root For The Web");
+            using var timeRoot     = ARoot("CN=Some Time Server Root");
 
             var pkcs12             = Convert.ToBase64String(identity.Export(X509ContentType.Pkcs12));
-            var pem                = Convert.ToBase64String(Encoding.ASCII.GetBytes(root.ExportCertificatePem()));
+            var webPEM             = Convert.ToBase64String(Encoding.ASCII.GetBytes(webRoot. ExportCertificatePem()));
+            var timePEM            = Convert.ToBase64String(Encoding.ASCII.GetBytes(timeRoot.ExportCertificatePem()));
 
-            var (forDNS, dnsSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsIdentity", content = pkcs12, usages = new[] { "dns" } });
-            var (forWeb, webSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = pem,    usages = new[] { "web" } });
-            var (v2g,    v2gSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "v2gRoot",     content = pem });
-            var (taken,  entry)    = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = pem,    usages = new[] { "nts" } });
+            var (forDNS, dnsSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsIdentity", content = pkcs12,  usages = new[] { "dns" } });
+            var (forWeb, webSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = webPEM,  usages = new[] { "web" } });
+            var (v2g,    v2gSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "v2gRoot",     content = timePEM });
+            var (taken,  entry)    = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = timePEM, usages = new[] { "nts" } });
+
+            var (_,      store)    = await administrator.Call(HttpMethod.Get,  "api/v1/certificates");
+            var forNoListener      = store?["certificates"]?["tlsIdentity"]?.FirstOrDefault(one => one["id"]?.ToString() == dnsSaid?["id"]?.ToString());
 
             Assert.Multiple(() => {
 
-                Assert.That(forDNS,                              Is.EqualTo(HttpStatusCode.BadRequest));
-                Assert.That(dnsSaid?["error"]?.ToString(),       Does.Contain("'dns' is not a listener").And.Contain("modbus, web"));
+                Assert.That(forDNS,                                Is.EqualTo(HttpStatusCode.Created), $"{dnsSaid}");
+                Assert.That(dnsSaid?["usages"]?.Values<String>(),  Is.EqualTo(new[] { "dns" }));
+                Assert.That(forNoListener?["shownOn"]?.Values<String>(), Is.EqualTo(Array.Empty<String>()), "an identity for no listener was shown on one");
+                Assert.That(store?["shown"]?["modbus"]?["current"]?.ToString(), Is.Not.EqualTo(dnsSaid?["id"]?.ToString()),
+                            "the Modbus/TLS listener took an identity that is not for it");
 
-                Assert.That(forWeb,                              Is.EqualTo(HttpStatusCode.BadRequest));
-                Assert.That(webSaid?["error"]?.ToString(),       Does.Contain("'web' is not a usage").And.Contain("dns, nts"));
+                Assert.That(forWeb,                                Is.EqualTo(HttpStatusCode.Created), $"{webSaid}");
+                Assert.That(webSaid?["usages"]?.Values<String>(),  Is.EqualTo(new[] { "web" }));
 
-                Assert.That(v2g,                                 Is.EqualTo(HttpStatusCode.BadRequest));
-                Assert.That(v2gSaid?["error"]?.ToString(),       Does.Contain("tlsRoot, clientRoot, tlsServer, tlsIdentity"));
+                Assert.That(v2g,                                   Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(v2gSaid?["error"]?.ToString(),         Does.Contain("tlsRoot, clientRoot, tlsServer, tlsIdentity"));
 
-                Assert.That(taken,                               Is.EqualTo(HttpStatusCode.Created), $"{entry}");
-                Assert.That(entry?["usages"]?.Values<String>(),  Is.EqualTo(new[] { "nts" }));
+                Assert.That(taken,                                 Is.EqualTo(HttpStatusCode.Created), $"{entry}");
+                Assert.That(entry?["usages"]?.Values<String>(),    Is.EqualTo(new[] { "nts" }));
 
             });
+
+        }
+
+        /// <summary>
+        /// A self-signed CA of its own.
+        /// </summary>
+        private static X509Certificate2 ARoot(String Subject)
+        {
+
+            using var rootKey  = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var request        = new CertificateRequest(Subject, rootKey, HashAlgorithmName.SHA256);
+            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+
+            return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(365));
 
         }
 

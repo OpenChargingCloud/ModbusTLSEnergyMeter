@@ -327,7 +327,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.That(requests.TryAnswer(theirs.Id, theirCertificate, store, out var taken, out error), Is.True, error);
 
             Assert.Multiple(() => {
-                Assert.That(taken?.Usages,                          Is.EqualTo(new[] { ListenerCertificates.Modbus }));
+                Assert.That(taken?.Usages,                          Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
                 Assert.That(taken?.HasPrivateKey,                   Is.True);
                 Assert.That(requests.Get(theirs.Id)?.AnsweredBy,    Is.EqualTo(new[] { taken?.Id }));
             });

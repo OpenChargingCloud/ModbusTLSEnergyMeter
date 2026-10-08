@@ -2,7 +2,7 @@
 // drawn against a stand-in meter: a request half filled in, and a certificate
 // pasted for another, outlive a certificate being switched off beside them -
 // the field, its text and its focus; every certificate keeps its row; the
-// import form offers the uses of the kind chosen in boxes of that kind; a
+// upload offers every kind ticked its own uses, the listeners by their names; a
 // request answered empties its own form and no other; the roles stand below
 // the client roots and the requests below the identities; a listener with
 // nothing to show is said at the top; where an identity is shown and where
@@ -69,7 +69,7 @@ function aMeter(listeners: Listeners = {}): (one: Asked) => unknown {
         recognised:          [],
         kinds: {
             tlsRoot:      { description: 'A TLS root',          trustAnchor: true,  needsPrivateKey: false, hasUsages: true,  usages: [ 'dns', 'nts' ] },
-            clientRoot:   { description: 'A client root',       trustAnchor: true,  needsPrivateKey: false, hasUsages: false, usages: [] },
+            clientRoot:   { description: 'A client root',       trustAnchor: true,  needsPrivateKey: false, hasUsages: true,  usages: [] },
             tlsIdentity:  { description: 'A TLS identity',      trustAnchor: false, needsPrivateKey: true,  hasUsages: true,  usages: [ 'modbus', 'web' ] },
             tlsServer:    { description: 'A server certificate', trustAnchor: false, needsPrivateKey: false, hasUsages: true,  usages: [ 'dns', 'nts' ] }
         } as Record<CertificateKind, never>,
@@ -148,10 +148,10 @@ test('a request half filled in, and its focus, outlives a certificate being swit
     // and loses its focus - which the page has to give back.
     const browser = chromeTakesTheFocus(root);
 
-    root.querySelector<HTMLButtonElement>('[data-toggle="bbbb"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-toggle="bbbb:tlsIdentity"]')!.click();
 
     await until(() => asked.some(one => one.method === 'PATCH' && one.path === '/certificates/bbbb'), 'nothing was switched off');
-    await until(() => root.querySelector('[data-toggle="bbbb"]')!.textContent!.trim() === 'Switch on', 'the row did not say it was switched off');
+    await until(() => root.querySelector('[data-toggle="bbbb:tlsIdentity"]')!.textContent!.trim() === 'Switch on', 'the row did not say it was switched off');
 
     const after = field(root, '#request-form', 'subject');
 
@@ -171,49 +171,60 @@ test('a request half filled in, and its focus, outlives a certificate being swit
 test('a certificate keeps its row while another one is switched off, or the one before it deleted', async () => {
 
     const root  = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ], aMeter(), drawn);
-    const row   = root.querySelector('[data-toggle="bbbb"]')!.closest('tr');
+    const row   = root.querySelector('[data-toggle="bbbb:tlsIdentity"]')!.closest('tr');
 
-    root.querySelector<HTMLButtonElement>('[data-toggle="aaaa"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-toggle="aaaa:tlsIdentity"]')!.click();
 
-    await until(() => root.querySelector('[data-toggle="aaaa"]')!.textContent!.trim() === 'Switch on', 'the row did not say it was switched off');
+    await until(() => root.querySelector('[data-toggle="aaaa:tlsIdentity"]')!.textContent!.trim() === 'Switch on', 'the row did not say it was switched off');
 
-    assert.ok(root.querySelector('[data-toggle="bbbb"]')!.closest('tr') === row, 'the row of the other certificate was drawn anew');
+    assert.ok(root.querySelector('[data-toggle="bbbb:tlsIdentity"]')!.closest('tr') === row, 'the row of the other certificate was drawn anew');
 
-    root.querySelector<HTMLButtonElement>('[data-remove="aaaa"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-remove="aaaa:tlsIdentity"]')!.click();
 
-    await until(() => root.querySelector('[data-toggle="aaaa"]') === null, 'the certificate was not deleted');
+    await until(() => root.querySelector('[data-toggle="aaaa:tlsIdentity"]') === null, 'the certificate was not deleted');
 
-    assert.ok(root.querySelector('[data-toggle="bbbb"]')!.closest('tr') === row, 'the row of the other certificate was drawn anew when the one before it went');
+    assert.ok(root.querySelector('[data-toggle="bbbb:tlsIdentity"]')!.closest('tr') === row, 'the row of the other certificate was drawn anew when the one before it went');
 
 });
 
 
-test('the import form offers the uses of the kind chosen, in boxes of that kind', async () => {
+test('the upload offers every kind ticked the uses it is offered, in boxes of its own, the listeners by their names', async () => {
 
-    const root  = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ], aMeter(), drawn);
-    const kind  = field<HTMLSelectElement>(root, '#import-form', 'kind');
-    const boxes = () => [...root.querySelectorAll<HTMLInputElement>('#import-usages input[name="usage"]')];
+    const root   = await open(certificatesPage, '/configuration/certificates', [ 'certificates:read', 'certificates:edit' ], aMeter(), drawn);
+    const kind   = (name: string) => root.querySelector<HTMLInputElement>(`#upload-kinds input[name="kind"][value="${name}"]`)!;
+    const usages = (of: string) => root.querySelector<HTMLElement>(`[data-usages-of="${of}"]`);
+    const boxes  = (of: string) => [...root.querySelectorAll<HTMLInputElement>(`[data-usages-of="${of}"] input[name="usage-${of}"]`)];
 
-    assert.deepEqual(boxes().map(box => box.value), [ 'dns', 'nts' ], 'a TLS root was not offered its servers');
+    const tick = (name: string) => {
+        kind(name).checked = true;
+        kind(name).dispatchEvent(new Event('change', { bubbles: true }));
+    };
 
-    kind.value = 'tlsIdentity';
-    kind.dispatchEvent(new Event('change', { bubbles: true }));
+    assert.ok(root.querySelector('[data-usages-of]') === null, 'uses were offered before a kind was ticked');
 
-    await until(() => boxes().map(box => box.value).join() === 'modbus,web', 'an identity was not offered its listeners');
+    tick('tlsIdentity');
 
-    boxes()[1]!.checked = true;
+    await until(() => boxes('tlsIdentity').map(box => box.value).join() === 'modbus,web', 'an identity was not offered its listeners');
 
-    kind.value = 'tlsRoot';
-    kind.dispatchEvent(new Event('change', { bubbles: true }));
+    assert.deepEqual([...usages('tlsIdentity')!.querySelectorAll('label.checkbox')].map(one => one.textContent!.trim()), [ 'Modbus/TLS', 'web interface' ],
+                     'the listeners were not offered by their names');
+    assert.match(usages('tlsIdentity')!.textContent!, /None ticked: on every listener/);
 
-    await until(() => boxes().map(box => box.value).join() === 'dns,nts', 'the root was not offered its servers again');
+    boxes('tlsIdentity')[1]!.checked = true;
+    boxes('tlsIdentity')[1]!.dispatchEvent(new Event('change', { bubbles: true }));
 
-    assert.ok(boxes().every(box => !box.checked), 'what was ticked for an identity stayed ticked for a root');
+    tick('tlsRoot');
 
-    kind.value = 'clientRoot';
-    kind.dispatchEvent(new Event('change', { bubbles: true }));
+    await until(() => boxes('tlsRoot').map(box => box.value).join() === 'dns,nts', 'a TLS root was not offered its servers');
 
-    await until(() => root.querySelector<HTMLElement>('#import-usages')!.hidden === true, 'a client root was offered uses it has none of');
+    assert.ok(boxes('tlsRoot').every(box => !box.checked), 'what was ticked for the identity was ticked for the root');
+    assert.deepEqual(boxes('tlsIdentity').map(box => box.checked), [ false, true ], 'the identity lost what was ticked for it');
+
+    tick('clientRoot');
+
+    await until(() => usages('clientRoot') !== null, 'a client root ticked was not offered a use of its own');
+
+    assert.equal(boxes('clientRoot').length, 0, 'a client root was offered uses it has none of');
 
 });
 
@@ -236,7 +247,7 @@ test('a request answered empties its own form, and no other', async () => {
     assert.equal(pemOf(root, 'r2').value, '-----BEGIN CERTIFICATE-----\nr2', 'the other request lost what was pasted for it');
 
     // Read again: the identity it became is in the store, the request says it was answered.
-    assert.ok(root.querySelector('[data-toggle="cccc"]') !== null, 'the identity put in is not among the identities');
+    assert.ok(root.querySelector('[data-toggle="cccc:tlsIdentity"]') !== null, 'the identity put in is not among the identities');
     assert.equal(root.querySelector('[data-answer="r1"]')!.closest('.signing-request')!.querySelector('h3 .chip')!.textContent, 'answered');
 
 });
@@ -287,7 +298,7 @@ test('a listener that runs with nothing to show is said at the top, and an ident
               `the listener with nothing to show was not said: ${notices.join(' | ')}`);
     assert.ok(!notices.some(one => one.includes('web interface has no certificate')), 'the web interface, served over plain HTTP, was said to have nothing');
 
-    const chipsOf = (id: string) => [...root.querySelector(`[data-toggle="${id}"]`)!.closest('tr')!.querySelectorAll('.row-chips .chip')].
+    const chipsOf = (id: string) => [...root.querySelector(`[data-toggle="${id}:tlsIdentity"]`)!.closest('tr')!.querySelectorAll('.row-chips .chip')].
                                         map(one => one.textContent!.trim());
 
     assert.deepEqual(chipsOf('aaaa'), [ 'shown on Modbus/TLS' ]);
