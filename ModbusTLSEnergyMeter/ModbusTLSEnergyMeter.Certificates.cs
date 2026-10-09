@@ -283,7 +283,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             JSON["listeners"] = new JArray(Certificates.Listeners.Select(listener => listener.ToString()));
 
-            if (JSON["certificates"]?[CertificateKind.TLSIdentity.AsText()] is JArray identities)
+            if (JSON["certificates"]?[CertificateKind.TLSServerIdentity.AsText()] is JArray identities)
                 foreach (var identity in identities.OfType<JObject>())
                     identity["shownOn"] = new JArray(ShownOn(identity["id"]?.Value<String>()));
 
@@ -333,7 +333,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                               IReadOnlyList<CertificateUsage>?  UsagesAfter)
         {
 
-            if (Entry.Kind == CertificateKind.TLSIdentity)
+            if (Entry.Kind == CertificateKind.TLSServerIdentity)
             {
 
                 foreach (var listener in ListenerCertificates.All)
@@ -440,7 +440,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             using var certificate  = request.CreateSelfSigned(now.AddMinutes(-5), now.Add(SelfSignedLifetime));
 
             if (!Certificates.Import(certificate.Export(X509ContentType.Pkcs12),
-                                     CertificateKind.TLSIdentity,
+                                     CertificateKind.TLSServerIdentity,
                                      null,
                                      "made by this meter at the first start",
                                      [ ListenerCertificates.Web ],

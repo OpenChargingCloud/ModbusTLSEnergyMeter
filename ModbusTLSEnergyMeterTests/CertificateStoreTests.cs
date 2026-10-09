@@ -29,6 +29,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
 using cloud.charging.open.protocols.WWCP.Node.Certificates;
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
+using cloud.charging.open.protocols.WWCP.Node.Logging;
 using cloud.charging.open.protocols.WWCP.Node.TestKit;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
@@ -175,11 +176,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
 
-                Assert.That(oldModbus?.Kind,                              Is.EqualTo(CertificateKind.TLSIdentity));
+                Assert.That(oldModbus?.Kind,                              Is.EqualTo(CertificateKind.TLSServerIdentity));
                 Assert.That(oldModbus?.Usages,                            Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
                 Assert.That(oldModbus?.HasPrivateKey,                     Is.True, "the base64 text was read as the PKCS#12 it is");
 
-                Assert.That(oldWeb?.Kind,                                 Is.EqualTo(CertificateKind.TLSIdentity));
+                Assert.That(oldWeb?.Kind,                                 Is.EqualTo(CertificateKind.TLSServerIdentity));
                 Assert.That(oldWeb?.Usages,                               Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Web }));
                 Assert.That(oldWeb?.HasPrivateKey,                        Is.True, "paired with the key that asked for it");
 
@@ -227,7 +228,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await using var meter  = NewMeter();
 
-            var identities         = meter.Certificates.ByKind(CertificateKind.TLSIdentity);
+            var identities         = meter.Certificates.ByKind(CertificateKind.TLSServerIdentity);
 
             Assert.Multiple(() => {
                 Assert.That(identities.Count,           Is.EqualTo(1), "one certificate, found twice");
@@ -256,7 +257,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             await using (var first = NewMeter())
             {
 
-                var identity  = first.Certificates.ByKind(CertificateKind.TLSIdentity).Single();
+                var identity  = first.Certificates.ByKind(CertificateKind.TLSServerIdentity).Single();
                 identityId    = identity.Id;
 
                 Assert.That(first.Certificates.Relabel(identityId, "renamed since", out _, out var error), Is.True, error);
@@ -265,7 +266,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await using var second = NewMeter();
 
-            var identities  = second.Certificates.ByKind(CertificateKind.TLSIdentity);
+            var identities  = second.Certificates.ByKind(CertificateKind.TLSServerIdentity);
             var clientRoots = second.Certificates.ByKind(CertificateKind.ClientRoot);
 
             Assert.Multiple(() => {
@@ -280,7 +281,64 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #endregion
 
 
-        #region (private) NewMeter() / Meta(...)
+        #region AMeterFromBeforeKeepsItsIdentitiesAsServerIdentities()
+
+        /// <summary>
+        /// What the listeners of a meter from before showed was kept as TLS
+        /// identities. Started now, the meter keeps them as TLS server
+        /// identities - each with its name, its switch and its listeners - the
+        /// certificate it was started with found among them rather than put in
+        /// again, and each listener showing what it showed. Started again,
+        /// nothing is moved or put in twice.
+        /// </summary>
+        [Test]
+        public async Task AMeterFromBeforeKeepsItsIdentitiesAsServerIdentities()
+        {
+
+            var before  = new CertificateStore(Path.Combine(directory!, "data", "certificates"), new EventLog(),
+                                               [ CertificateKind.TLSIdentity ], Listeners: ListenerCertificates.All);
+
+            Assert.That(before.Import(File.ReadAllBytes(Path.Combine(directory!, "pki", "server.pfx")), CertificateKind.TLSIdentity, "demo",
+                                      "the one it was started with, from before", [ ListenerCertificates.Modbus ], out var startedWith, out var error),  Is.True, error);
+            Assert.That(before.Import(AnIdentity("meter-test-002 web interface"), CertificateKind.TLSIdentity, null,
+                                      "the web interface's, from before",          [ ListenerCertificates.Web ],    out var web,         out var error2), Is.True, error2);
+            Assert.That(before.Import(AnIdentity("meter-test-002 spare"),         CertificateKind.TLSIdentity, null,
+                                      "a spare, switched off",                     null,                            out var spare,       out var error3), Is.True, error3);
+            Assert.That(before.SetActive(spare!.Id, false, out _, out var error4), Is.True, error4);
+
+            await using (var meter = NewMeter())
+            {
+
+                var store = meter.Certificates;
+
+                Assert.Multiple(() => {
+
+                    Assert.That(store.ByKind(CertificateKind.TLSServerIdentity).Select(entry => entry.Id).Order(),
+                                Is.EqualTo(new[] { startedWith!.Id, web!.Id, spare.Id }.Order()),
+                                "not every identity is kept as a server identity, or the one it was started with was put in again");
+                    Assert.That(store.ByKind(CertificateKind.TLSIdentity),                                        Is.Empty);
+
+                    Assert.That(store.Get(startedWith.Id, CertificateKind.TLSServerIdentity)?.Label,               Is.EqualTo("the one it was started with, from before"), "its name");
+                    Assert.That(store.Get(web.Id,         CertificateKind.TLSServerIdentity)?.Usages,              Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Web }), "its listener");
+                    Assert.That(store.Get(spare.Id,       CertificateKind.TLSServerIdentity)?.IsActive,            Is.False, "its switch");
+
+                    Assert.That(meter.ListenerCertificatesFor(ListenerCertificates.Modbus)?.Current?.Entry.Id,     Is.EqualTo(startedWith.Id), "Modbus/TLS shows another one");
+                    Assert.That(meter.ListenerCertificatesFor(ListenerCertificates.Web)?.Current?.Entry.Id,        Is.EqualTo(web.Id),         "the web interface shows another one");
+
+                });
+
+            }
+
+            await using var again = NewMeter();
+
+            Assert.That(again.Certificates.ByKind(CertificateKind.TLSServerIdentity).Count, Is.EqualTo(3), "something was moved or put in twice");
+
+        }
+
+        #endregion
+
+
+        #region (private) NewMeter() / AnIdentity(Name) / Meta(...)
 
         /// <summary>
         /// A meter on the data directory of this test, started with the demo
@@ -302,6 +360,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    ConfigFile:         new WWCPConfigFile(Path.Combine(directory!, "configuration.json")),
                    LogToConsole:       false
                );
+
+        /// <summary>
+        /// A self-signed identity, as a PKCS#12 with its key.
+        /// </summary>
+        private static Byte[] AnIdentity(String Name)
+        {
+
+            using var key          = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            using var certificate  = new CertificateRequest($"CN={Name}", key, HashAlgorithmName.SHA256).
+                                         CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(365));
+
+            return certificate.Export(X509ContentType.Pkcs12);
+
+        }
 
         /// <summary>
         /// What the meter's own store wrote beside a certificate.

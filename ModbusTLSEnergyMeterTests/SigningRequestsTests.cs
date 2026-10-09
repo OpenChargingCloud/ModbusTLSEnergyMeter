@@ -320,7 +320,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
                 Assert.That(requests.TryAnswer(mine.Id, theirCertificate, store, out _, out var refused),   Is.False);
                 Assert.That(refused,                                                                         Does.Contain("not made for the key of this request"));
-                Assert.That(store.ByKind(CertificateKind.TLSIdentity),                                       Is.Empty, "nothing was put into the store");
+                Assert.That(store.ByKind(CertificateKind.TLSServerIdentity),                                       Is.Empty, "nothing was put into the store");
                 Assert.That(requests.Get(mine.Id)?.AnsweredBy,                                               Is.Empty);
             });
 
@@ -361,7 +361,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
                 Assert.That(requests.TryAnswer(request.Id, expired, store, out _, out var refused),  Is.False);
                 Assert.That(refused,                                                                  Does.Contain("ran out"));
-                Assert.That(store.ByKind(CertificateKind.TLSIdentity),                                Is.Empty);
+                Assert.That(store.ByKind(CertificateKind.TLSServerIdentity),                                Is.Empty);
                 Assert.That(requests.Get(request.Id)?.AnsweredBy,                                     Is.Empty, "and the request still waits");
             });
 
@@ -483,7 +483,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             => new (Path.Combine(directory!, "certificates"),
                     new EventLog(),
-                    CertificateKindExtensions.TLS,
+                    ModbusTLSEnergyMeter.CertificateKinds,
                     Listeners: ListenerCertificates.All);
 
         /// <summary>

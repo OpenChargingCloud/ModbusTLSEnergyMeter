@@ -262,7 +262,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             var json = Entry.ToJSON(WithDiagnostics: true);
 
-            if (Entry.Kind == CertificateKind.TLSIdentity)
+            if (Entry.Kind == CertificateKind.TLSServerIdentity)
                 json.Add("shownOn", new JArray(meter.ShownOn(Entry.Id)));
 
             return json;

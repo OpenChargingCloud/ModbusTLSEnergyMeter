@@ -1,7 +1,8 @@
 import { api, type AnsweredRequest, type Certificate, type CertificateKind, type CertificateStore, type NewSigningRequest, type SigningRequest, type SigningRequests, type TLSListener } from '../api/client';
 import { auth } from '../auth';
 import { usageName } from '@node/pages/certificateUsages';
-import { certificatesPage as theNodesCertificatesPage, type CertificatesSection, type KindWords, type SectionContext } from '@node/pages/certificates';
+import { certificatesPage as theNodesCertificatesPage, serverIdentitiesPage as theNodesServerIdentitiesPage,
+         type CertificatesOptions, type CertificatesSection, type KindWords, type SectionContext } from '@node/pages/certificates';
 import type { Page } from '@node/router';
 import { errorMessage, field, whileSaving } from '@node/ui';
 import { html, nothing, repeat, type TemplateResult } from '@node/view';
@@ -60,8 +61,8 @@ const aboutKind: Record<CertificateKind, KindWords> = {
                      not affected: there a person signs in with an account.`
     },
 
-    tlsIdentity: {
-        title:  'TLS identities',
+    tlsServerIdentity: {
+        title:  'TLS server identities',
         icon:   'fa-id-card',
         uses:   html`A listener only ever shows an identity that is for it. Taking the last one a listener could
                      show away from it is refused - put another one in first.`
@@ -104,8 +105,15 @@ const aboutListener: Record<string, { icon: string; checkedBy: string; nothing: 
 
 /**
  * Everything this meter believes, everything it presents, and the servers it
- * recognises - the node's certificate store, on the node's page - and the
+ * recognises - the node's certificate store, on the node's pages - and the
  * keys made here, with the requests a CA is sent for them.
+ *
+ * Two pages since WWCP_Node told certificates from identities: Certificates
+ * keeps what is believed and recognised, without a private key - the roots,
+ * with the SunSpec roles below the client roots, and the servers recognised;
+ * Server identities keeps who the meter's own servers are, each with its
+ * private key - the identities its listeners show, with the signing requests
+ * below them. The meter has no client identity, so no Identities page.
  *
  * Grouped by what a certificate is to this meter, which is the whole shape of
  * this page. A **root** is what it believes, every one of a kind that is
@@ -131,10 +139,10 @@ const aboutListener: Record<string, { icon: string; checkedBy: string; nothing: 
  * requests below the identities. This was three pages while the meter kept
  * three stores of its own, and then a page of its own of 1258 lines.
  */
-export const certificatesPage: Page = theNodesCertificatesPage<CertificateStore>({
+const options: CertificatesOptions<CertificateStore> = {
 
     title:         'Certificates',
-    subtitle:      'The roots this meter believes, the certificates it presents, and the servers it recognises.',
+    subtitle:      'The roots this meter believes and the servers it recognises - certificates alone, never with a private key.',
     expiringSoon,
     usageNames:    listenerNames,
     kinds:         aboutKind,
@@ -145,8 +153,8 @@ export const certificatesPage: Page = theNodesCertificatesPage<CertificateStore>
                            asked for at every handshake: switching one on or off takes effect with the next
                            connection, and connections already open are not touched.`,
 
-        presents:     store => html`
-                          TLS identities, each with its private key: what the Modbus/TLS listener shows a charging
+        serves:       store => html`
+                          TLS server identities, each with its private key: what the Modbus/TLS listener shows a charging
                           station or a controller, and what the web interface shows a browser. Each is told which of
                           the two it is for, and one never told is for both. Of those a listener may show that are
                           switched on and valid, it shows the one whose validity began last, and asks again at every
@@ -170,7 +178,7 @@ export const certificatesPage: Page = theNodesCertificatesPage<CertificateStore>
                           filter(listener => store.shown[listener]?.used === true && store.shown[listener]?.current === null).
                           map   (listener => html`
                               ${aboutListener[listener]?.nothing ?? `The ${listener} listener has no certificate it could show.`}
-                              ${auth.can('certificates', 'edit') ? 'Put in a TLS identity for it, or ask for one below.' : nothing}
+                              ${auth.can('certificates', 'edit') ? 'Put in a TLS server identity for it under Server identities, or ask for one there.' : nothing}
                           `),
 
     // Where an identity is shown, and where it takes over next and when - the
@@ -183,7 +191,13 @@ export const certificatesPage: Page = theNodesCertificatesPage<CertificateStore>
 
     sections: context => [ rolesSection(), requestsSection(context) ]
 
-});
+};
+
+/** What the meter believes and recognises: the roots, the SunSpec roles below the client roots, the servers recognised. */
+export const certificatesPage: Page = theNodesCertificatesPage<CertificateStore>(options);
+
+/** Who the meter's own servers are: the identities its listeners show, the signing requests below them. */
+export const serverIdentitiesPage: Page = theNodesServerIdentitiesPage<CertificateStore>(options);
 
 
 /**
@@ -545,6 +559,7 @@ function requestsSection(context: SectionContext<CertificateStore>): Certificate
     return {
 
         below:  'presents',
+        page:   'serverIdentities',
 
         load:   async () => { requests = await api.certificates.requests(); },
 

@@ -10,7 +10,7 @@ import { nodeMenu, startNode } from '@node/start';
 import type { Me } from './api/client';
 
 import { meterPage }            from './pages/meter';
-import { certificatesPage }     from './pages/certificates';
+import { certificatesPage, serverIdentitiesPage } from './pages/certificates';
 import { signingKeysPage }      from './pages/signingKeys';
 import { sessionsPage }         from './pages/sessions';
 import { accountsPage }         from './pages/accounts';
@@ -18,9 +18,11 @@ import { metrologicalLogPage }  from './pages/metrologicalLog';
 
 
 // The certificates had three pages while the meter kept three stores of its
-// own. A bookmark to one of them still arrives - at the page that has all of
-// them now, which asks for the sign-in where one is needed.
-const toCertificates = (): string => '/configuration/certificates';
+// own. A bookmark to one of them still arrives - the listeners' at the page of
+// what the meter's servers show, the clients' at the one of the roots - which
+// asks for the sign-in where one is needed.
+const toCertificates        = (): string => '/configuration/certificates';
+const toServerIdentities    = (): string => '/configuration/server-identities';
 
 // What a meter has pages for beside what every node has: what it measures and
 // signs, its signing keys and its accounts, and the log book beside the log.
@@ -36,7 +38,12 @@ startNode({
         nodeMenu.configuration([
             nodeMenu.dns,
             nodeMenu.nts,
+            // The SSH server: every node's page, for the administrators here -
+            // it lists every account's keys and sessions, which a viewer and an
+            // auditor of this meter are not shown.
+            nodeMenu.ssh,
             nodeMenu.certificates,
+            nodeMenu.serverIdentities,
             { path: '/configuration/keys',       label: 'Signing keys',      icon: 'fa-key',             permission: [ 'keys:read' ] }
         ]),
         { path: '/sessions',                     label: 'Sessions',          icon: 'fa-file-signature',  permission: [ 'meter:read' ] },
@@ -50,9 +57,9 @@ startNode({
     ],
 
     routes: [
-        { path: '/configuration/certificates/modbus',   page: certificatesPage,  guard: toCertificates },
-        { path: '/configuration/certificates/web',      page: certificatesPage,  guard: toCertificates },
-        { path: '/configuration/certificates/clients',  page: certificatesPage,  guard: toCertificates }
+        { path: '/configuration/certificates/modbus',   page: serverIdentitiesPage,  guard: toServerIdentities },
+        { path: '/configuration/certificates/web',      page: serverIdentitiesPage,  guard: toServerIdentities },
+        { path: '/configuration/certificates/clients',  page: certificatesPage,      guard: toCertificates }
     ],
 
     pages: {
@@ -66,7 +73,8 @@ startNode({
         // node's page, as the one of the time servers is; startNode brings
         // both under their own paths.
         '/configuration':                dnsPage,
-        '/configuration/certificates':   certificatesPage,
+        '/configuration/certificates':       certificatesPage,
+        '/configuration/server-identities':  serverIdentitiesPage,
         '/configuration/keys':           signingKeysPage,
         '/configuration/accounts':       accountsPage,
         '/sessions':                     sessionsPage,

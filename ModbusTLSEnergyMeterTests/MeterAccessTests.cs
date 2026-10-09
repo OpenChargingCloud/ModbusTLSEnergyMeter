@@ -79,7 +79,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
 
                 Assert.That(access.Resources,
-                            Is.EqualTo(new[] { "configuration", "dns", "nts", "certificates", "meter", "keys", "log", "accounts" }));
+                            Is.EqualTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "meter", "keys", "log", "accounts" }));
 
                 Assert.That(access.Roles.Select(role => role.Name),
                             Is.EqualTo(new[] { "viewer", "auditor", "guest", "systemadmin" }));
@@ -110,6 +110,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("viewer",       "keys:read",           true)]
         [TestCase("viewer",       "log:read",            true)]
         [TestCase("viewer",       "accounts:read",       false)]
+        [TestCase("viewer",       "ssh:read",            false)]
         [TestCase("viewer",       "nts:run",             false)]
         [TestCase("viewer",       "dns:edit",            false)]
         [TestCase("viewer",       "nts:edit",            false)]
@@ -124,6 +125,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("auditor",      "log:read",            true)]
         [TestCase("auditor",      "nts:run",             true)]
         [TestCase("auditor",      "accounts:read",       false)]
+        [TestCase("auditor",      "ssh:read",            false)]
         [TestCase("auditor",      "dns:edit",            false)]
         [TestCase("auditor",      "nts:edit",            false)]
         [TestCase("auditor",      "meter:edit",          false)]
@@ -135,6 +137,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("guest",        "configuration:read",  false)]
         [TestCase("guest",        "nts:read",            false)]
         [TestCase("guest",        "certificates:read",   false)]
+        [TestCase("guest",        "ssh:read",            false)]
         [TestCase("guest",        "keys:read",           false)]
         [TestCase("guest",        "log:read",            false)]
         [TestCase("guest",        "meter:run",           false)]

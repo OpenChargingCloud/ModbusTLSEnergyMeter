@@ -200,7 +200,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             => new (Path.Combine(directory!, "certificates"),
                     new EventLog(),
-                    CertificateKindExtensions.TLS,
+                    ModbusTLSEnergyMeter.CertificateKinds,
                     Listeners: ListenerCertificates.All);
 
         /// <summary>
@@ -217,7 +217,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var key          = ECDsa.Create(ECCurve.NamedCurves.nistP256);
             using var certificate  = new CertificateRequest(Subject, key, HashAlgorithmName.SHA256).CreateSelfSigned(NotBefore, NotAfter);
 
-            Assert.That(Store.Import(certificate.Export(X509ContentType.Pkcs12), CertificateKind.TLSIdentity, null, Subject, [ Listener ], out var entry, out var error),
+            Assert.That(Store.Import(certificate.Export(X509ContentType.Pkcs12), CertificateKind.TLSServerIdentity, null, Subject, [ Listener ], out var entry, out var error),
                         Is.True, error);
 
             return entry!;

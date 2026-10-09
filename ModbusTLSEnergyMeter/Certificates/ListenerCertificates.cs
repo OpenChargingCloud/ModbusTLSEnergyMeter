@@ -109,7 +109,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// </summary>
         public IReadOnlyList<CertificateEntry> Candidates
 
-            => [.. Store.UsableFor(CertificateKind.TLSIdentity, Listener).
+            => [.. Store.UsableFor(CertificateKind.TLSServerIdentity, Listener).
                          OrderByDescending(entry => entry.NotBefore).
                          ThenByDescending (entry => entry.NotAfter).
                          ThenByDescending (entry => entry.Id, StringComparer.Ordinal)];
@@ -138,7 +138,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         /// </summary>
         public CertificateEntry? Next
 
-            => Store.ByKind(CertificateKind.TLSIdentity).
+            => Store.ByKind(CertificateKind.TLSServerIdentity).
                      Where  (entry => entry.IsActive && entry.IsNotYetValid && entry.IsFor(Listener)).
                      OrderBy(entry => entry.NotBefore).
                      FirstOrDefault();

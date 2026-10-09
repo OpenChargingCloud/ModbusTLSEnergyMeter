@@ -521,7 +521,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             if (!TryCredential(PEM, File.ReadAllText(keyFile), TimeProvider.GetUtcNow(), out var pkcs12, out Error))
                 return false;
 
-            if (!Store.Import(pkcs12, CertificateKind.TLSIdentity, null, request.Note, [ request.Listener ], out Entry, out Error))
+            if (!Store.Import(pkcs12, CertificateKind.TLSServerIdentity, null, request.Note, [ request.Listener ], out Entry, out Error))
                 return false;
 
             lock (requestLock)

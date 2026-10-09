@@ -110,7 +110,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         /// <summary>
         /// What this meter adds to the node's resources - configuration, dns,
-        /// nts and certificates - in the order a permission list is read in.
+        /// nts, certificates and ssh - in the order a permission list is read
+        /// in. None of its own roles reads ssh: the SSH server's page lists
+        /// every account's keys and sessions, which is the accounts by another
+        /// name, and so is the administrators' alone.
         /// </summary>
         public static readonly IReadOnlyList<String>  Resources  = [ Meter, Keys, Log, Accounts ];
 
@@ -174,7 +177,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// </summary>
         public const String  SystemAdminDescription  = "Everything: the readings, the configuration, the meter mode and the energy " +
                                                        "counters, the certificates this meter shows and the CAs it accepts, the " +
-                                                       "signing keys, and these accounts.";
+                                                       "signing keys, the SSH server, and these accounts.";
 
         #endregion
 

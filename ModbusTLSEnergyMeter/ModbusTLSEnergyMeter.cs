@@ -147,6 +147,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         public const           String     LogDirectoryName         = "logs";
 
         /// <summary>
+        /// The kinds of certificate this meter keeps: the roots of the time and
+        /// name servers it asks, the CAs its Modbus/TLS clients are issued by,
+        /// the servers it recognises, and what its listeners show - each server
+        /// identity told which of them it is for. No client identity: the meter
+        /// dials nobody who asks it who it is.
+        /// </summary>
+        public static readonly IReadOnlyList<CertificateKind> CertificateKinds = [
+            CertificateKind.TLSRoot,
+            CertificateKind.ClientRoot,
+            CertificateKind.TLSServer,
+            CertificateKind.TLSServerIdentity
+        ];
+
+        /// <summary>
         /// The Modbus/TLS frontend, as a start that cannot have its port names
         /// it.
         /// </summary>
@@ -550,12 +564,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    Frontend:                        Frontend ?? new EmbeddedContentSource(MeterHTTPAPI.FrontendResourcePrefix, typeof(ModbusTLSEnergyMeter).Assembly),
 
                    // Every certificate this meter shows and believes, in the
-                   // node's store: what its two listeners show - each identity
-                   // told which of them it is for - the CAs its Modbus/TLS
-                   // clients are issued by, and the roots and servers of the
-                   // time and name servers it asks.
+                   // node's store - see CertificateKinds.
                    CertificatesPath:                Setup.CertificatesPath,
-                   CertificateKinds:                CertificateKindExtensions.TLS,
+                   CertificateKinds:                CertificateKinds,
                    CertificateListeners:            ListenerCertificates.All,
 
                    LogToConsole:                    LogToConsole,
@@ -610,11 +621,24 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // with its signing request, until a CA answers.
             this.signingRequests     = new SigningRequests(Path.Combine(Certificates.Directory, SigningRequests.DirectoryName), this.TimeProvider);
 
+            // What its listeners show were TLS identities until a node told
+            // who it is as a client from who its servers are: a meter that kept
+            // them so keeps them as TLS server identities from now on, with
+            // their names, their switches and their listeners. Asked at every
+            // start, and once they are moved there is nothing left to move.
+            // Before the files it was started with are put in, which are found
+            // among them by their fingerprint.
+            if (!Certificates.MoveKind(CertificateKind.TLSIdentity, CertificateKind.TLSServerIdentity, out var movedIdentities, out var notMoved))
+                Log.Error($"The TLS identities could not be kept as TLS server identities: {notMoved}", "certificates");
+            else if (movedIdentities > 0)
+                Log.Notice($"{movedIdentities} TLS identit{(movedIdentities == 1 ? "y is" : "ies are")} kept as TLS server identit{(movedIdentities == 1 ? "y" : "ies")} now: what the listeners show.",
+                           "certificates");
+
             // What this meter was started with is in the store as well, so that
             // there is one place that decides what is shown and a meter started
             // the old way needs nothing done to it. Put in once: what somebody
             // did with it since - relabelled it, switched it off - stands.
-            AdoptAtTheStart(ServerPfxPath,    ServerPfxPassword, startupCertificate, CertificateKind.TLSIdentity, "the certificate this meter was started with", [ ListenerCertificates.Modbus ]);
+            AdoptAtTheStart(ServerPfxPath,    ServerPfxPassword, startupCertificate, CertificateKind.TLSServerIdentity, "the certificate this meter was started with", [ ListenerCertificates.Modbus ]);
             AdoptAtTheStart(ClientCACertPath, null,              ClientCA,           CertificateKind.ClientRoot,  "the CA this meter was started with",          null);
 
             // What a meter from before kept in stores of its own is moved into

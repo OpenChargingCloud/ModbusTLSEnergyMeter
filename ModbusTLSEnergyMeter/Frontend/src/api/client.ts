@@ -290,7 +290,7 @@ export interface MeterReadings {
  * shows. A server certificate is neither, but kept to recognise a server by
  * its fingerprint.
  */
-export type CertificateKind = 'tlsRoot' | 'clientRoot' | 'tlsServer' | 'tlsIdentity';
+export type CertificateKind = 'tlsRoot' | 'clientRoot' | 'tlsServer' | 'tlsServerIdentity';
 
 /** One of the two listeners of this meter that show a certificate: the Modbus/TLS port, and the web interface. */
 export type TLSListener = 'modbus' | 'web';

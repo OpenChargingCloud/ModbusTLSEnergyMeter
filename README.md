@@ -235,7 +235,7 @@ meter has on top.
 Everything below `/api/v1` needs the session cookie, and each resource names
 the permission it wants: an operation - `read`, `edit` or `run` - on a resource,
 written `meter:edit`, as on every node. The resources are the node's -
-`configuration`, `dns`, `nts`, `certificates` - and the meter's:
+`configuration`, `dns`, `nts`, `certificates`, `ssh` - and the meter's:
 
 | Resource | read | edit | run |
 |----------|------|------|-----|
@@ -244,6 +244,7 @@ written `meter:edit`, as on every node. The resources are the node's -
 | `dns` | the name servers | changing them | looking a name up |
 | `nts` | the time servers, and the clock | changing them | asking one: `sync`, `test` |
 | `certificates` | the store and the signing requests | a key and its request, a certificate, a CA | |
+| `ssh` | the SSH server: whether and where it runs, its host key, the sessions, every account's keys | switching it on or off, its port, passwords | |
 | `keys` | the signing keys | making one, choosing the default, throwing one away | |
 | `log` | the log, the log book, the event stream | | |
 | `accounts` | who may sign in, and as what | making one, giving a role, resetting a password, taking one away | |
@@ -252,14 +253,16 @@ What a person may do follows from the groups their account is in:
 
 | Role | may |
 |------|-----|
-| `viewer`      | read everything but the accounts |
+| `viewer`      | read everything but the accounts and the SSH server |
 | `auditor`     | what a viewer may, and `nts:run` |
 | `guest`       | `meter:read` |
 | `systemadmin` | everything: every operation on every resource |
 
 The viewer is the meter's own and narrower than a node's, which may read
 everything: who may sign in to a meter is not something everybody who may look
-at it has been told. Starting a session is `meter:run` rather than part of
+at it has been told. For the same reason no role of the meter's reads `ssh` -
+the SSH server's page lists every account's keys and who is connected - and the
+page is the administrators'. Starting a session is `meter:run` rather than part of
 `meter:edit`, because it is what a station operator does every day, and
 clearing the energy counters is the one thing here that destroys something.
 
@@ -432,7 +435,7 @@ keeps four kinds:
 
 | kind | what it is | below `certificates/` |
 |---|---|---|
-| `tlsIdentity` | what a listener of this meter shows, with its key | `tls/identity/` |
+| `tlsServerIdentity` | what a listener of this meter shows, with its key | `tls/server-identity/` |
 | `clientRoot` | a CA Modbus/TLS clients are issued by | `roots/clients/` |
 | `tlsRoot` | a root a time or name server this meter asks may chain to | `roots/tls/` |
 | `tlsServer` | a time or name server's own certificate, kept to be recognised | `tls/servers/` |
@@ -451,16 +454,19 @@ They are not the same certificate: one both would accept would have to be issued
 by a CA that is both pinned by the charging station and trusted by the browser,
 and nothing issues such a thing. An identity never told is shown on both. A TLS
 root is told the same way which servers it vouches for, `dns` or `nts`, and a
-client root is for Modbus/TLS alone - the store refuses an identity "for dns" and
-a root "for web" where they are typed, rather than keeping either to mean
-nothing.
+client root is for Modbus/TLS alone. Any certificate may be marked with any
+usage, one made up among them: an identity "for dns" is kept, and shown on no
+listener, as it is for none of them.
 
 Private keys are kept unencrypted, readable only by the account the meter runs
 as where the platform says so, and the store says so in the log at every start.
 A certificate copied into its directory by hand is taken in at the next start,
 or at `POST /api/v1/certificates/reload`; every change of what the store holds
-goes into the log book, tagged `security`. On the page, all of it is under
-Configuration -> Certificates.
+goes into the log book, tagged `security`. On the pages, what the meter believes
+and recognises - the roots, with the SunSpec roles, and the servers - is under
+Configuration -> Certificates, never with a private key; what its listeners
+show, with the signing requests, is under Configuration -> Server identities.
+The meter has no identity of its own as a client, and so no Identities page.
 
 ### From before
 
@@ -473,6 +479,12 @@ off where it was. What was moved is put below `certificates/moved/` rather than
 deleted. What cannot be moved - a key of a kind this platform cannot hold with
 its certificate, such as Ed448 - stays where it is and is named in the log at
 every start.
+
+A meter that kept what its listeners show as `tlsIdentity`, below
+`tls/identity/` - as every node called an identity before it told who it is as
+a client from who its servers are - keeps them as `tlsServerIdentity` from its
+next start: each file moved to `tls/server-identity/`, with its name, its
+switch and its listeners, and the log says how many.
 
 ### Asking for one
 

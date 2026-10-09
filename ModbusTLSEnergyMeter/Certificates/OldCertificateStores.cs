@@ -154,7 +154,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                     }
 
                     if (credential is not null &&
-                        !Store.Import(credential, CertificateKind.TLSIdentity, null, note, [ Listener ], out entry, out error))
+                        !Store.Import(credential, CertificateKind.TLSServerIdentity, null, note, [ Listener ], out entry, out error))
                     {
                         Log.Warning($"The {Listener} certificate '{note ?? id}' could not be moved into the certificate store, " +
                                     $"and stays in '{directory}': {error}",

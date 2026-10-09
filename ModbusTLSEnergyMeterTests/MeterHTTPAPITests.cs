@@ -137,7 +137,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 // Every operation on every resource, spelled out - "*" is the
                 // node's shorthand and never reaches a page.
                 Assert.That(me?["permissions"]?.Values<String>(),
-                            Is.EquivalentTo(new[] { "configuration", "dns", "nts", "certificates", "meter", "keys", "log", "accounts" }.
+                            Is.EquivalentTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "meter", "keys", "log", "accounts" }.
                                                 SelectMany(resource => new[] { "read", "edit", "run" }.Select(operation => $"{resource}:{operation}"))));
 
             });
@@ -444,6 +444,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/accounts"),
                             Is.EqualTo(HttpStatusCode.Forbidden),           "may not see the accounts");
+
+                Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/configuration/ssh"),
+                            Is.EqualTo(HttpStatusCode.Forbidden),           "nor the SSH server, which lists every account's keys and sessions");
 
                 Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/accounts",
                                                 new { userId = "smuggled", role = "systemadmin" }),
@@ -1220,15 +1223,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var (status, store) = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
 
-            var identity  = store?["certificates"]?["tlsIdentity"]?.FirstOrDefault(entry => entry["label"]?.ToString() == "the certificate this meter was started with");
+            var identity  = store?["certificates"]?["tlsServerIdentity"]?.FirstOrDefault(entry => entry["label"]?.ToString() == "the certificate this meter was started with");
             var clientCA  = store?["certificates"]?["clientRoot"]?. FirstOrDefault(entry => entry["label"]?.ToString() == "the CA this meter was started with");
 
             Assert.Multiple(() => {
 
                 Assert.That(status,                                                               Is.EqualTo(HttpStatusCode.OK));
-                Assert.That(store?["kinds"]?.Children<JProperty>().Select(kind => kind.Name),     Is.EqualTo(new[] { "tlsRoot", "clientRoot", "tlsServer", "tlsIdentity" }));
+                Assert.That(store?["kinds"]?.Children<JProperty>().Select(kind => kind.Name),     Is.EqualTo(new[] { "tlsRoot", "clientRoot", "tlsServer", "tlsServerIdentity" }));
                 Assert.That(store?["listeners"]?.Values<String>(),                                Is.EqualTo(new[] { "modbus", "web" }));
-                Assert.That(store?["kinds"]?["tlsIdentity"]?["usages"]?.Values<String>(),         Is.EqualTo(new[] { "modbus", "web" }), "an identity is told a listener");
+                Assert.That(store?["kinds"]?["tlsServerIdentity"]?["usages"]?.Values<String>(),         Is.EqualTo(new[] { "modbus", "web" }), "an identity is told a listener");
                 Assert.That(store?["kinds"]?["tlsRoot"]?["usages"]?.Values<String>(),             Is.EqualTo(new[] { "dns", "nts" }),    "a root a service");
                 Assert.That(store?["kinds"]?["clientRoot"]?["hasUsages"]?.Value<Boolean>(),       Is.True,                               "every kind may be marked");
                 Assert.That(store?["kinds"]?["clientRoot"]?["usages"]?.Values<String>(),          Is.EqualTo(Array.Empty<String>()),     "a client root is offered no uses, the identities' listeners not among them");
@@ -1271,7 +1274,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var (_, before)       = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
             var shownBefore       = before?["shown"]?["modbus"]?["current"]?.ToString();
-            var startedWith       = before?["certificates"]?["tlsIdentity"]?.First(entry => entry["id"]?.ToString() == shownBefore);
+            var startedWith       = before?["certificates"]?["tlsServerIdentity"]?.First(entry => entry["id"]?.ToString() == shownBefore);
             var startedAt         = new DateTimeOffset(DateTime.SpecifyKind(startedWith!["notBefore"]!.Value<DateTime>(), DateTimeKind.Utc));
 
             var (made, request)   = await administrator.Call(HttpMethod.Post, "api/v1/certificates/requests",
@@ -1417,13 +1420,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var webPEM             = Convert.ToBase64String(Encoding.ASCII.GetBytes(webRoot. ExportCertificatePem()));
             var timePEM            = Convert.ToBase64String(Encoding.ASCII.GetBytes(timeRoot.ExportCertificatePem()));
 
-            var (forDNS, dnsSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsIdentity", content = pkcs12,  usages = new[] { "dns" } });
+            var (forDNS, dnsSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsServerIdentity", content = pkcs12,  usages = new[] { "dns" } });
             var (forWeb, webSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = webPEM,  usages = new[] { "web" } });
             var (v2g,    v2gSaid)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "v2gRoot",     content = timePEM });
             var (taken,  entry)    = await administrator.Call(HttpMethod.Post, "api/v1/certificates", new { kind = "tlsRoot",     content = timePEM, usages = new[] { "nts" } });
 
             var (_,      store)    = await administrator.Call(HttpMethod.Get,  "api/v1/certificates");
-            var forNoListener      = store?["certificates"]?["tlsIdentity"]?.FirstOrDefault(one => one["id"]?.ToString() == dnsSaid?["id"]?.ToString());
+            var forNoListener      = store?["certificates"]?["tlsServerIdentity"]?.FirstOrDefault(one => one["id"]?.ToString() == dnsSaid?["id"]?.ToString());
 
             Assert.Multiple(() => {
 
@@ -1437,7 +1440,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(webSaid?["usages"]?.Values<String>(),  Is.EqualTo(new[] { "web" }));
 
                 Assert.That(v2g,                                   Is.EqualTo(HttpStatusCode.BadRequest));
-                Assert.That(v2gSaid?["error"]?.ToString(),         Does.Contain("tlsRoot, clientRoot, tlsServer, tlsIdentity"));
+                Assert.That(v2gSaid?["error"]?.ToString(),         Does.Contain("tlsRoot, clientRoot, tlsServer, tlsServerIdentity"));
 
                 Assert.That(taken,                                 Is.EqualTo(HttpStatusCode.Created), $"{entry}");
                 Assert.That(entry?["usages"]?.Values<String>(),    Is.EqualTo(new[] { "nts" }));
