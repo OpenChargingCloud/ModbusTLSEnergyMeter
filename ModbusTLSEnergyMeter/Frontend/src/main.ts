@@ -15,6 +15,7 @@ import { signingKeysPage }      from './pages/signingKeys';
 import { sessionsPage }         from './pages/sessions';
 import { accountsPage }         from './pages/accounts';
 import { metrologicalLogPage }  from './pages/metrologicalLog';
+import { upstreamPage }         from './pages/upstream';
 
 
 // The certificates had three pages while the meter kept three stores of its
@@ -44,7 +45,10 @@ startNode({
             nodeMenu.ssh,
             nodeMenu.certificates,
             nodeMenu.serverIdentities,
-            { path: '/configuration/keys',       label: 'Signing keys',      icon: 'fa-key',             permission: [ 'keys:read' ] }
+            { path: '/configuration/keys',       label: 'Signing keys',      icon: 'fa-key',             permission: [ 'keys:read' ] },
+            // What it measures with: its own simulation, or the meter in front
+            // of which it stands.
+            { path: '/configuration/upstream',   label: 'Upstream',          icon: 'fa-link',            permission: [ 'meter:read' ] }
         ]),
         { path: '/sessions',                     label: 'Sessions',          icon: 'fa-file-signature',  permission: [ 'meter:read' ] },
         nodeMenu.logs,
@@ -76,6 +80,7 @@ startNode({
         '/configuration/certificates':       certificatesPage,
         '/configuration/server-identities':  serverIdentitiesPage,
         '/configuration/keys':           signingKeysPage,
+        '/configuration/upstream':       upstreamPage,
         '/configuration/accounts':       accountsPage,
         '/sessions':                     sessionsPage,
         '/metrological-log':             metrologicalLogPage

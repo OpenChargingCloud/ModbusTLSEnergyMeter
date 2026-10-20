@@ -194,6 +194,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                     "sessions", "signing"
                 );
 
+            // The counter of a meter in front of which this one stands is that
+            // meter's, and is checked against when the session is stopped.
+            if (backends.Upstream is not null)
+                return;
+
             var (imported, _, scaleFactor) = Device.EnergyCounters;
             var standingAt                 = (Decimal) (imported * Math.Pow(10, scaleFactor)) / 1000m;
 

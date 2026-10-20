@@ -60,6 +60,37 @@ function aMeter(now: { power: number; mode: MeterModeName; refusesModes?: boolea
     };
 }
 
+test('a meter in front of another one shows that meter, how reaching it goes, and neither a simulation nor commands', async () => {
+
+    const behind = (one: Asked) => {
+        if (one.method === 'GET' && one.path === '/meter') {
+            const reading = readings(3680, 'import') as unknown as Record<string, unknown>;
+            delete reading['meterMode'];
+            delete reading['simulation'];
+            reading['upstream'] = { server: '10.0.0.7:802', unit: 1, tls: true, state: 'connected', since: '2026-10-20T10:00:00.000Z',
+                                    error: null, protocol: 'Tls13', cipherSuite: 'TLS_AES_256_GCM_SHA384',
+                                    identity: { id: 'aaaaaaaaaaaaaaaa', label: 'Upstream reader', role: 'ReadOnlySunSpec', subject: 'CN=Reader' },
+                                    judged: null };
+            return reading;
+        }
+        if (one.method === 'GET' && one.path === '/status')
+            return { serialNumber: 'meter-001', device: 'the meter at 10.0.0.7:802, over Modbus/TLS', startedAt: '2026-10-04T09:00:00Z',
+                     modbus: { address: '0.0.0.0', port: 802, running: true, baseAddress: null, registerCount: null },
+                     web: { url: 'http://127.0.0.1/' } };
+        return undefined;
+    };
+
+    const root = await open(meterPage, '/meter', [ 'meter:read', 'meter:edit' ], behind,
+                            root => root.querySelector('#upstream-server') !== null && root.querySelector('#total-power')!.textContent !== '-');
+
+    assert.match(root.querySelector('#upstream-server')!.textContent!, /10\.0\.0\.7:802, unit 1/);
+    assert.match(root.querySelector('#upstream-state')!.textContent!, /connected/);
+    assert.equal(root.querySelector('#mode-form'),    null, 'commands of a simulation it does not have are offered');
+    assert.equal(root.querySelector('#load'),         null, 'a simulated site it does not have is shown');
+    assert.equal(root.querySelector('#mode-chip')!.textContent, 'behind');
+
+});
+
 const drawn  = (root: HTMLElement) => root.querySelector('#mode-form') !== null && root.querySelector('#total-power')!.textContent !== '-';
 const polled = (n: number) => () => asked.filter(one => one.method === 'GET' && one.path === '/meter').length >= n;
 

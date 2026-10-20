@@ -27,6 +27,9 @@ using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
 using cloud.charging.open.protocols.WWCP.Node.Web;
 
+using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
+using cloud.charging.open.EnergyMeters.ModbusTLS.Upstream;
+
 using LogLevel = cloud.charging.open.protocols.WWCP.Node.Logging.LogLevel;
 
 #endregion
@@ -142,6 +145,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             RegisterCertificateTemplates();
             RegisterAccountTemplates();
             RegisterSignedValueTemplates();
+            RegisterUpstreamTemplates();
 
             AddHandler(HTTPPath.Root + "v1/logs/verify",                GetLogVerification,  HTTPMethod.GET);
 
@@ -186,14 +190,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         {
 
             yield return new JProperty("serialNumber",  meter.SerialNumber);
-            yield return new JProperty("device",        meter.Device.DisplayName);
+            yield return new JProperty("device",        meter.Upstream is UpstreamConfiguration upstream
+                                                            ? $"the meter at {upstream.Server}, over {(upstream.TLS ? "Modbus/TLS" : "Modbus/TCP")}"
+                                                            : meter.Device.DisplayName);
 
             yield return new JProperty("modbus",        new JObject(
                              new JProperty("address",        meter.ListenAddress.ToString()),
                              new JProperty("port",           meter.ListenPort),
                              new JProperty("running",        meter.IsRunning),
-                             new JProperty("baseAddress",    meter.Device.BaseAddress),
-                             new JProperty("registerCount",  meter.Device.RegisterCount)
+                             new JProperty("baseAddress",    meter.Upstream is null ? meter.Device.BaseAddress   : null),
+                             new JProperty("registerCount",  meter.Upstream is null ? meter.Device.RegisterCount : null)
                          ));
 
             yield return new JProperty("web",           new JObject(
@@ -229,11 +235,30 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// GET /api/v1/meter: what the meter is measuring, as numbers rather
         /// than as registers.
         /// </summary>
-        private Task<HTTPResponse> GetMeter(HTTPRequest Request)
+        private async Task<HTTPResponse> GetMeter(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
-                return Task.FromResult(refused);
+                return refused;
+
+            // What the meter in front of which this one stands measures, read
+            // from it now - with how it goes, and nothing about a simulation.
+            if (meter.Backends.Upstream is UpstreamDevice upstream)
+            {
+                try
+                {
+                    var measured = await UpstreamReadings.Read(meter.Backends.Read);
+                    measured["upstream"] = upstream.StatusJSON();
+                    return JSONResponse(Request, HTTPStatusCode.OK, measured);
+                }
+                catch (Exception e) when (e is EnergyUnreadable or ModbusException)
+                {
+                    return ErrorJSON(Request, HTTPStatusCode.BadGateway,
+                                     $"The meter at {upstream.Configuration.Server} could not be read: " +
+                                     (e is ModbusException modbus ? $"{modbus.Code}." : e.Message) +
+                                     (upstream.StatusJSON().Value<String>("error") is String why ? $" {why}" : ""));
+                }
+            }
 
             var registers = meter.Device.ReadHolding(
                                 SunSpecMeterMap.BaseAddress,
@@ -241,8 +266,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                             );
 
             if (registers is null)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                                 "The register block of this meter could not be read."));
+                return ErrorJSON(Request, HTTPStatusCode.InternalServerError,
+                                 "The register block of this meter could not be read.");
 
             var readings = ReadingsJSON(registers);
 
@@ -258,9 +283,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                              new JProperty("dayLength_s",   meter.Device.SimulatedDayLength.TotalSeconds)
                          ));
 
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK, readings)
-                   );
+            return JSONResponse(Request, HTTPStatusCode.OK, readings);
 
         }
 
@@ -272,37 +295,52 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// GET /api/v1/meter/registers?start=40000&amp;count=98: the raw
         /// register block, for whoever would rather read it as SunSpec wrote it.
         /// </summary>
-        private Task<HTTPResponse> GetRegisters(HTTPRequest Request)
+        private async Task<HTTPResponse> GetRegisters(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
-                return Task.FromResult(refused);
+                return refused;
 
             var start = SunSpecMeterMap.BaseAddress;
             var count = SunSpecMeterMap.RegisterCount;
 
             if (Request.QueryString.GetString("start") is String startText &&
                 !UInt16.TryParse(startText, out start))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "'start' must be a register address."));
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, "'start' must be a register address.");
 
             if (Request.QueryString.GetString("count") is String countText &&
                 (!UInt16.TryParse(countText, out count) || count == 0 || count > 125))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "'count' must be between 1 and 125."));
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, "'count' must be between 1 and 125.");
 
-            var registers = meter.Device.ReadHolding(start, count);
+            UInt16[]? registers;
+
+            if (meter.Backends.Upstream is UpstreamDevice upstream)
+            {
+                try
+                {
+                    registers = await meter.Backends.Read(start, count);
+                }
+                catch (ModbusException e)
+                {
+                    return ErrorJSON(Request, e.Code is ModbusExceptionCode.GatewayPathUnavailable or ModbusExceptionCode.GatewayTargetFailed
+                                                  ? HTTPStatusCode.BadGateway
+                                                  : HTTPStatusCode.BadRequest,
+                                     $"The meter at {upstream.Configuration.Server} answered {start}..{start + count - 1} with {e.Code}.");
+                }
+            }
+            else
+                registers = meter.Device.ReadHolding(start, count);
 
             if (registers is null)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest,
-                                                 $"{start}..{start + count - 1} is outside this meter's registers."));
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest,
+                                 $"{start}..{start + count - 1} is outside this meter's registers.");
 
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.OK,
-                           new JObject(
-                               new JProperty("start",      start),
-                               new JProperty("count",      count),
-                               new JProperty("registers",  new JArray(registers.Select(register => (Int32) register)))
-                           ))
-                   );
+            return JSONResponse(Request, HTTPStatusCode.OK,
+                       new JObject(
+                           new JProperty("start",      start),
+                           new JProperty("count",      count),
+                           new JProperty("registers",  new JArray(registers.Select(register => (Int32) register)))
+                       ));
 
         }
 
@@ -319,6 +357,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Meter), true, out var user, out var refused))
                 return Task.FromResult(refused);
+
+            if (meter.Upstream is UpstreamConfiguration upstream)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                                 $"This meter stands in front of the meter at {upstream.Server} and measures with it: " +
+                                                  "which way the energy flows is what that meter measures, and no mode of this one's."));
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return Task.FromResult(errorResponse);
@@ -367,6 +410,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             if (!TryAuthorize(Request, Permission.Edit(MeterAccess.Meter), true, out var user, out var refused))
                 return Task.FromResult(refused);
+
+            if (meter.Upstream is UpstreamConfiguration upstream)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                                 $"This meter stands in front of the meter at {upstream.Server} and measures with it: " +
+                                                  "its energy counters are that meter's, and are nothing this one clears."));
 
             if (!meter.Device.WriteHolding(SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterResetEnergy), 0xCAFE))
                 return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.InternalServerError,

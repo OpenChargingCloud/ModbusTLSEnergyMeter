@@ -368,3 +368,12 @@ label.stacked {
     color:           $color-muted;
 
 }
+
+
+// Why the meter behind is not reached or not believed: a sentence with a
+// fingerprint in it, which breaks inside the fingerprint rather than widen the
+// card past the page.
+.upstream-error,
+#upstream-error {
+    overflow-wrap:  anywhere;
+}

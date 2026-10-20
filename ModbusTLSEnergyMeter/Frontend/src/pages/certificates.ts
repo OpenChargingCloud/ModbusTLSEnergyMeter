@@ -71,6 +71,14 @@ const aboutKind: Record<CertificateKind, KindWords> = {
     tlsServer: {
         title:  'Server certificates',
         icon:   'fa-server'
+    },
+
+    tlsIdentity: {
+        title:  'TLS identities',
+        icon:   'fa-user-shield',
+        hint:   html`Whom this meter is to the meter in front of which it stands, over Modbus/TLS - a certificate with
+                     its private key, carrying a SunSpec role, by which that meter decides what this one may do. See
+                     the Upstream page.`
     }
 
 };

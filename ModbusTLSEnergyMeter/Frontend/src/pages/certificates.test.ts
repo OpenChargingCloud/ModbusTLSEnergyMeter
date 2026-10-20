@@ -76,7 +76,7 @@ function aMeter(listeners: Listeners = {}): (one: Asked) => unknown {
             tlsServerIdentity:  { description: 'A TLS server identity',  group: 'credential',  page: 'serverIdentities',   trustAnchor: false, needsPrivateKey: true,  hasUsages: true, usages: [ 'modbus', 'web' ] }
         } as Record<CertificateKind, never>,
         usages:              [ 'dns', 'nts' ],
-        certificates:        { tlsRoot: [], clientRoot: [], tlsServer: [], tlsServerIdentity: identities } as Record<CertificateKind, Certificate[]>,
+        certificates:        { tlsRoot: [], clientRoot: [], tlsServer: [], tlsIdentity: [], tlsServerIdentity: identities } as Record<CertificateKind, Certificate[]>,
         keysAreUnencrypted:  false,
         listeners:           [ 'modbus', 'web' ],
         shown: {

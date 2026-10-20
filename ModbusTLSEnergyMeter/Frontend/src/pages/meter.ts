@@ -1,9 +1,10 @@
-import { api, type MeterModeName, type MeterReadings, type Status } from '../api/client';
+import { api, type MeterModeName, type MeterReadings, type Status, type UpstreamState } from '../api/client';
 import { auth } from '../auth';
 import { must } from '@node/html';
 import type { Page } from '@node/router';
+import { toURL } from '@node/basePath';
 import { reloadButton, shell } from '@node/shell';
-import { errorMessage, formatNumber } from '@node/ui';
+import { errorMessage, formatNumber, formatTimestamp } from '@node/ui';
 import { anyFormTypedSinceDrawn, unsaved } from '@node/unsaved';
 import { html, nothing, render } from '@node/view';
 
@@ -26,6 +27,11 @@ const MODES: { name: MeterModeName; label: string }[] = [
  * and the generation are what the mode selects BETWEEN, and without them a
  * meter in front of a generator reading zero at three in the morning looks
  * broken rather than dark.
+ *
+ * A meter that stands in front of another one measures with that one: what
+ * it reads is that meter's, and in place of the simulated site and the two
+ * commanded registers - neither of which it has then - it says which meter
+ * that is and how reaching it goes.
  *
  * Drawn by view.ts, every two seconds: a draw changes only what differs - the
  * numbers - and leaves the mode selector alone, the mode chosen in it and the
@@ -64,7 +70,9 @@ export const meterPage: Page = {
         /** The page, every time: what does not change stays, the numbers are written anew. */
         function draw(meter: MeterReadings): void {
 
-            const total = meter.total;
+            const total    = meter.total;
+            const power    = total.power_W ?? 0;
+            const upstream = meter.upstream ?? null;
 
             render(content, html`
 
@@ -74,16 +82,18 @@ export const meterPage: Page = {
 
                         <h2>
                             <i class="fa-solid fa-bolt"></i> Measuring
-                            <span class="chip" id="mode-chip" title="${meter.meterMode.description}">${meter.meterMode.name}</span>
+                            ${meter.meterMode
+                                  ? html`<span class="chip" id="mode-chip" title="${meter.meterMode.description}">${meter.meterMode.name}</span>`
+                                  : html`<span class="chip" id="mode-chip" title="what the meter behind this one measures">behind</span>`}
                         </h2>
 
-                        <div class="reading ${total.power_W < 0 ? 'exporting' : ''}" id="reading">
+                        <div class="reading ${power < 0 ? 'exporting' : ''}" id="reading">
                             <span class="value" id="total-power">${formatNumber(total.power_W, 0)}</span>
                             <span class="unit">W</span>
                         </div>
-                        <p class="muted small reading-note" id="direction">${total.power_W > 0 ? 'importing'
-                                                                           : total.power_W < 0 ? 'exporting'
-                                                                                               : 'nothing flowing'}</p>
+                        <p class="muted small reading-note" id="direction">${power > 0 ? 'importing'
+                                                                           : power < 0 ? 'exporting'
+                                                                                       : 'nothing flowing'}</p>
 
                         <div class="table-scroll">
                             <table class="numbers">
@@ -130,6 +140,9 @@ export const meterPage: Page = {
 
                     </section>
 
+                    ${upstream !== null ? upstreamCard(upstream) : nothing}
+
+                    ${meter.simulation ? html`
                     <section class="card">
 
                         <h2><i class="fa-solid fa-sun"></i> The simulated site</h2>
@@ -149,10 +162,11 @@ export const meterPage: Page = {
                         </p>
 
                     </section>
+                    ` : nothing}
 
                     <section class="card">
 
-                        <h2><i class="fa-solid fa-circle-info"></i> This meter</h2>
+                        <h2><i class="fa-solid fa-circle-info"></i> ${upstream !== null ? 'The meter behind' : 'This meter'}</h2>
 
                         <div class="table-scroll">
                             <table class="kv">
@@ -162,7 +176,9 @@ export const meterPage: Page = {
                                 <tr><td>Unit address</td><td>${meter.unitAddress}</td></tr>
                                 ${status ? html`
                                     <tr><td>Modbus/TLS</td><td>${status.modbus.address}:${status.modbus.port}</td></tr>
-                                    <tr><td>Registers</td><td>${status.modbus.baseAddress} - ${status.modbus.baseAddress + status.modbus.registerCount - 1}</td></tr>
+                                    ${status.modbus.baseAddress !== null && status.modbus.registerCount !== null
+                                          ? html`<tr><td>Registers</td><td>${status.modbus.baseAddress} - ${status.modbus.baseAddress + status.modbus.registerCount - 1}</td></tr>`
+                                          : nothing}
                                     <tr><td>Running since</td><td>${new Date(status.startedAt).toLocaleString()}</td></tr>
                                 ` : nothing}
                             </table>
@@ -170,7 +186,7 @@ export const meterPage: Page = {
 
                     </section>
 
-                    ${mayWrite ? html`
+                    ${mayWrite && meter.meterMode ? html`
                         <section class="card">
 
                             <h2><i class="fa-solid fa-sliders"></i> Commanded registers</h2>
@@ -180,7 +196,7 @@ export const meterPage: Page = {
                                 <label>Meter mode (register 40094)
                                     <select name="mode" id="mode">
                                         ${MODES.map(mode => html`
-                                            <option value="${mode.name}" ?selected=${mode.name === meter.meterMode.name}>${mode.label}</option>
+                                            <option value="${mode.name}" ?selected=${mode.name === meter.meterMode!.name}>${mode.label}</option>
                                         `)}
                                     </select>
                                 </label>
@@ -325,17 +341,50 @@ export const meterPage: Page = {
 };
 
 
+/** The meter in front of which this one stands, and how reaching it goes. */
+function upstreamCard(Upstream: UpstreamState) {
+
+    const tone = Upstream.state === 'connected' ? 'ok' : 'bad';
+
+    return html`
+        <section class="card">
+
+            <h2><i class="fa-solid fa-link"></i> In front of</h2>
+
+            <div class="table-scroll">
+                <table class="kv">
+                    <tr><td>The meter at</td><td id="upstream-server">${Upstream.server}, unit ${Upstream.unit}</td></tr>
+                    <tr><td>Over</td><td>${Upstream.tls ? `Modbus/TLS${Upstream.protocol ? `, ${Upstream.protocol}` : ''}` : 'Modbus/TCP'}</td></tr>
+                    <tr><td>State</td><td><span class="chip ${tone}" id="upstream-state">${Upstream.state}</span>, since ${formatTimestamp(Upstream.since)}</td></tr>
+                    ${Upstream.identity ? html`<tr><td>Shown</td><td>${Upstream.identity.label} (${Upstream.identity.role})</td></tr>` : nothing}
+                </table>
+            </div>
+
+            ${Upstream.error ? html`<p class="form-error" id="upstream-error">${Upstream.error}</p>` : nothing}
+
+            <p class="hint">
+                Every request a client asks this meter is passed on to that meter, and what this one
+                signs is what that one counted. Which meter that is, is set on the
+                <a href="${toURL('/configuration/upstream')}">Upstream</a> page.
+            </p>
+
+        </section>
+    `;
+
+}
+
+
 /** Why the meter reads what it reads, given what the site is doing. */
 function whyThisReading(meter: MeterReadings): string {
 
-    switch (meter.meterMode.name)
+    switch (meter.meterMode?.name)
     {
 
         case 'import':
             return 'In front of a load it sees the load and not the generator, whether or not the sun is up.';
 
         case 'export':
-            return meter.simulation.generation_W > 0
+            return (meter.simulation?.generation_W ?? 0) > 0
                        ? 'In front of a generator it sees the generation and not the load.'
                        : 'In front of a generator with the sun down there is nothing to see: zero is the reading, not a fault.';
 

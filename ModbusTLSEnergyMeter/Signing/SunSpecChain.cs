@@ -160,6 +160,80 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
         #endregion
 
+        #region Common(Read)
+
+        /// <summary>
+        /// Who the device says it is, in its common model: who made it, what it
+        /// is called, its version and its serial number - or null where it has
+        /// none.
+        /// </summary>
+        public async Task<(String Manufacturer, String Model, String Version, String SerialNumber)?> Common(ReadRegisters Read)
+        {
+
+            var common = Models.FirstOrDefault(model => model.Id == 1);
+
+            if (common.Id != 1 || common.Length < 64)
+                return null;
+
+            var registers = await ReadBlock(Read, common.Address, common.Length + 2);
+
+            return (Text(registers, 2, 16), Text(registers, 18, 16), Text(registers, 42, 8), Text(registers, 50, 16));
+
+        }
+
+        /// <summary>
+        /// A SunSpec string: ASCII, two characters to a register, padded with
+        /// NUL - what is no printable character left out.
+        /// </summary>
+        private static String Text(UInt16[]  Registers,
+                                   Int32     Offset,
+                                   Int32     Length)
+        {
+
+            var text = new System.Text.StringBuilder(Length * 2);
+
+            for (var i = 0; i < Length && Offset + i < Registers.Length; i++)
+                foreach (var character in new[] { (Char) (Registers[Offset + i] >> 8), (Char) (Registers[Offset + i] & 0xFF) })
+                    if (character is >= ' ' and <= '~')
+                        text.Append(character);
+
+            return text.ToString().Trim();
+
+        }
+
+        #endregion
+
+        #region (static) ReadBlock(Read, First, Count)
+
+        /// <summary>
+        /// A block of registers, in requests of at most 125.
+        /// </summary>
+        public static async Task<UInt16[]> ReadBlock(ReadRegisters  Read,
+                                                     UInt16         First,
+                                                     Int32          Count)
+        {
+
+            var block = new List<UInt16>(Count);
+
+            while (block.Count < Count)
+            {
+
+                var count = (UInt16) Math.Min(MaxRead, Count - block.Count);
+                var read  = await Read((UInt16) (First + block.Count), count);
+
+                if (read.Length != count)
+                    throw new EnergyUnreadable($"Asked for {count} registers from {First + block.Count}, the meter answered {read.Length}.");
+
+                block.AddRange(read);
+
+            }
+
+            return [.. block];
+
+        }
+
+        #endregion
+
         #region ImportedWh(Read)
 
         /// <summary>

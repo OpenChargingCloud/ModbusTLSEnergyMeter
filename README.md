@@ -44,6 +44,52 @@ Neither one's rights are expressible in the other's vocabulary, which is why
 there are two ports and not one.
 
 
+## In front of another meter
+
+Without being told otherwise this meter measures with its own simulation. Told
+to, it stands in front of another meter - any SunSpec meter, over plain Modbus/TCP
+or over Modbus/TLS - and measures with that one: every request a client asks is
+passed on to it, and what this meter adds sits behind that meter's models. The
+[session model](#over-modbus-the-session-model) is then what turns a meter that
+only counts into one that signs charging sessions, with the energy the meter
+behind it counted.
+
+It is said in the `upstream` section of the configuration file, or on the
+**Upstream** page, which writes the same section and takes effect at once:
+
+```json
+"upstream": { "host": "10.0.0.7", "port": 802, "unit": 1, "tls": true,
+              "identity": "3f2a9c1d0b7e6a55", "trustOnFirstUse": "certificate" }
+```
+
+| | |
+|---|---|
+| `host` | its name or address; empty or no section for none |
+| `port` | 502 for Modbus/TCP, 802 for Modbus/TLS by default |
+| `unit` | its unit address, 1 by default - a client's unit address is not passed on |
+| `tls` | Modbus/TLS rather than plain Modbus/TCP |
+| `identity` | over TLS, the TLS identity of the certificate store it is shown, which has to carry a SunSpec role; without one, the identity with the least role that may read |
+| `certificateFingerprint`, `rootFingerprint`, `trustOnFirstUse`, `onMismatch` | over TLS, what its certificate is held to, as for a time server |
+
+Over TLS its certificate has to be issued for the host it is reached at and chain
+to a root of the machine or a TLS root of the store for `upstream`; beyond that
+it is held to what its section says, and a certificate or a root is learned the
+first time it is believed where `trustOnFirstUse` says so. The certificate store
+keeps TLS identities for this alone.
+
+What cannot be passed on is answered as a gateway answers it: `0A` where the
+meter behind cannot be reached or is not believed, `0B` where it was reached and
+did not answer. Connecting again is tried at most every three seconds. Its
+registers are its own and nothing about them is known here, so a write passed on
+to it needs `NetworkAdministratorSunSpec`; the session model's command and
+parameters stay commanded.
+
+While it stands in front of another meter the **Meter** page shows that meter's
+readings, which meter that is and how reaching it goes; there is no meter mode
+and nothing to clear, both answered with 409. A document it signs names it as
+the gateway (`GI`, `GS`, `GV`) and the meter behind as the meter (`MV`, `MM`,
+`MS`, `MF`), from that meter's common model.
+
 ## What it simulates
 
 A site with a load and a photovoltaic generator, and the meter reads whichever
@@ -240,7 +286,7 @@ written `meter:edit`, as on every node. The resources are the node's -
 
 | Resource | read | edit | run |
 |----------|------|------|-----|
-| `meter` | the readings, the registers, the signed readings, the sessions | the meter mode, clearing the energy counters | starting and stopping a session |
+| `meter` | the readings, the registers, the signed readings, the sessions, the meter in front of which it stands | the meter mode, clearing the energy counters, the meter in front of which it stands | starting and stopping a session |
 | `configuration` | what the node is made of | | |
 | `dns` | the name servers | changing them | looking a name up |
 | `nts` | the time servers, and the clock | changing them | asking one: `sync`, `test` |
@@ -314,6 +360,8 @@ mean the group they were moved into.
 | `GET  /api/v1/meter/registers?start=&count=` | the raw register block |
 | `PUT  /api/v1/meter/mode` | `{"mode": 0\|1\|2}` or `{"mode": "net"\|"import"\|"export"}` |
 | `POST /api/v1/meter/energy/reset` | clear both energy counters |
+| `GET  /api/v1/configuration/upstream` | the meter in front of which it stands, how reaching it goes, the identities it can be shown |
+| `PUT  /api/v1/configuration/upstream` | stand in front of another meter - see [In front of another meter](#in-front-of-another-meter) - or, with a blank host, in front of none |
 | `GET  /api/v1/configuration` | what the node is made of: its web server, its accounts, its log and its time |
 | `GET/PUT /api/v1/configuration/dns` | how it resolves names |
 | `POST /api/v1/configuration/dns/query` | `{"name", "recordTypes", "server"}`: look one name up |

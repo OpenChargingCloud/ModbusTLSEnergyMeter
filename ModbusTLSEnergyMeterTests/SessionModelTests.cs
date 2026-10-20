@@ -556,7 +556,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             try
             {
 
-                var command = (UInt16) (meter.SessionModelFactory.ModelAddress + 2 + SessionModel.Command);
+                var command = (UInt16) (meter.SessionModelFactory!.ModelAddress + 2 + SessionModel.Command);
 
                 using (var reader = await TLSConnection.Open(meter.ListenPort, pki, SunSpecRoles.ReadOnly))
                     Assert.That(await reader.Write(command, new[] { (UInt16) SessionCommand.Start }), Is.EqualTo(ModbusExceptionCode.IllegalFunction));

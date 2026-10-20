@@ -36,6 +36,7 @@ using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
 using cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Logging;
+using cloud.charging.open.EnergyMeters.ModbusTLS.Upstream;
 
 using LogLevel             = cloud.charging.open.protocols.WWCP.Node.Logging.LogLevel;
 using cloud.charging.open.protocols.WWCP.Node.SecureShell;
@@ -149,15 +150,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <summary>
         /// The kinds of certificate this meter keeps: the roots of the time and
         /// name servers it asks, the CAs its Modbus/TLS clients are issued by,
-        /// the servers it recognises, and what its listeners show - each server
-        /// identity told which of them it is for. No client identity: the meter
-        /// dials nobody who asks it who it is.
+        /// the servers it recognises, what its listeners show - each server
+        /// identity told which of them it is for - and whom it is to the meter
+        /// in front of which it stands, over Modbus/TLS: a TLS identity whose
+        /// certificate carries a SunSpec role.
         /// </summary>
         public static readonly IReadOnlyList<CertificateKind> CertificateKinds = [
             CertificateKind.TLSRoot,
             CertificateKind.ClientRoot,
             CertificateKind.TLSServer,
-            CertificateKind.TLSServerIdentity
+            CertificateKind.TLSServerIdentity,
+            CertificateKind.TLSIdentity
         ];
 
         /// <summary>
@@ -200,7 +203,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private readonly  MeterKeyStore            signingKeys;
         private readonly  ChargingSessions         sessions;
         private readonly  SessionSigner            signer;
-        private readonly  SessionModelBackendFactory sessionModel;
+        private readonly  MeterBackends            backends;
+        private readonly  SunSpecBackendFactory    simulation;
         private readonly  X509Certificate2         startupCertificate;
 
         private           ITimer?                  certificateTimer;
@@ -318,8 +322,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// The session model behind the device's models: where it is, and what
         /// of it may be written.
         /// </summary>
-        public SessionModelBackendFactory  SessionModelFactory
-            => sessionModel;
+        public SessionModelBackendFactory?  SessionModelFactory
+            => backends.SessionModel;
+
+        /// <summary>
+        /// What this meter measures with - its simulation, or the meter in
+        /// front of which it stands - as every Modbus/TLS connection is handed
+        /// it.
+        /// </summary>
+        public MeterBackends       Backends
+            => backends;
 
         /// <summary>
         /// The certificate this meter is showing its Modbus/TLS clients at the
@@ -585,6 +597,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    CertificateKinds:                CertificateKinds,
                    CertificateListeners:            ListenerCertificates.All,
 
+                   // What a TLS root may vouch for beside the node's own: the
+                   // meter in front of which this one stands.
+                   CertificateUsages:               [ UpstreamConfiguration.Usage ],
+
                    LogToConsole:                    LogToConsole,
                    ConsoleLogLevel:                 ConsoleLogLevel,
                    LogPath:                         Setup.LogPath,
@@ -738,30 +754,38 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                     "simulation"
                 );
 
-            // The session model behind the device's models, where its list of
-            // models ended: what begins and ends a charging session over
-            // Modbus, and what the document it ends in is read from. The
-            // simulation answers at once, so walking it here waits for nothing.
-            var deviceBackends   = new SunSpecBackendFactory(this.device);
-            var registers        = SunSpecChain.Of(deviceBackends.CreateAsync(0, null, CancellationToken.None).GetAwaiter().GetResult());
-            var chain            = SunSpecChain.Walk(registers).GetAwaiter().GetResult();
+            // What this meter measures with - its simulation, until the file
+            // says it stands in front of another meter - with the session model
+            // behind its models: what begins and ends a charging session over
+            // Modbus, and what the document it ends in is read from.
+            this.simulation      = new SunSpecBackendFactory(this.device);
+
+            this.backends        = new MeterBackends(
+                                       simulation,
+                                       this.device.CommandedAddresses,
+                                       this.device.ProtectedAddresses,
+                                       done    => this.Log.Notice (done,    "sessions", "signing", "modbus"),
+                                       refused => this.Log.Warning(refused, "sessions", "signing", "modbus")
+                                   );
 
             this.signer          = new SessionSigner(
                                        sessions,
                                        signingKeys,
-                                       () => chain.ImportedWh(registers),
-                                       () => new MeterDescription(this.SerialNumber, Version, this.device.DisplayName),
+                                       backends.ImportedWh,
+                                       Description,
                                        () => ClockIsSynchronised,
                                        SaveTheEnergyCounters
                                    );
 
-            this.sessionModel    = new SessionModelBackendFactory(
-                                       deviceBackends,
-                                       signer,
-                                       chain.End,
-                                       done    => this.Log.Notice (done,    "sessions", "signing", "modbus"),
-                                       refused => this.Log.Warning(refused, "sessions", "signing", "modbus")
-                                   );
+            backends.SignWith(signer);
+
+            // The simulation answers at once, so finding where its models end
+            // waits for nothing; a meter in front of which this one stands is
+            // asked once it listens.
+            if (ReadTheUpstream() is UpstreamConfiguration upstream)
+                MeasureWith(upstream, Said: false);
+            else
+                backends.Locate().GetAwaiter().GetResult();
 
             this.frontend        = new ModbusTlsFrontend(
                                        new ModbusTlsFrontendOptions(
@@ -784,14 +808,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                                                                          ?? throw new InvalidOperationException("This meter has no valid Modbus/TLS certificate to show."),
                                            ClientTrustAnchors:         clientRoots.Anchors
                                        ),
-                                       sessionModel,
+                                       backends,
 
                                        // What a session is begun with, and
                                        // the command, are commanded: what a
-                                       // charging station's role may write.
+                                       // charging station's role may write -
+                                       // asked anew at every write, because
+                                       // what this meter measures with may
+                                       // change while it runs.
                                        new AuthorizationPolicy(
-                                           this.device.ProtectedAddresses,
-                                           this.device.CommandedAddresses.Union(sessionModel.WritableAddresses).ToHashSet()
+                                           backends.Protected,
+                                           backends.Commanded
                                        ),
                                        loggerFactory.CreateLogger<ModbusTlsFrontend>()
                                    );
@@ -842,6 +869,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             RestoreTheEnergyCounters();
             ResumeTheChargingSession();
+
+            // Where the models of the meter in front of which this one stands
+            // end, as soon as it answers - not waited for: a meter that is not
+            // there yet is asked again at every connection.
+            if (backends.Upstream is not null)
+                _ = backends.Locate();
 
             runTask = frontend.RunAsync(cts.Token);
 
@@ -911,6 +944,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 catch (TimeoutException)            { }
                 catch (OperationCanceledException)  { }
             }
+
+            // The connection to the meter in front of which this one stands,
+            // once nobody asks through it any more.
+            if (backends.Upstream is UpstreamDevice upstream)
+                await upstream.Close();
 
             // The event streams of the JSON API are not ended here: the node
             // ends them itself before it asks this, as for every kind of node.

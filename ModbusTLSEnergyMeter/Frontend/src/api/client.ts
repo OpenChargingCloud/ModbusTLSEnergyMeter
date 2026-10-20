@@ -9,7 +9,11 @@ import { apiURL,
          type NodeMe,
          type NodeResource,
          type NodeStatus,
-         type Operation }  from '@node/api/client';
+         type Operation,
+         type KnownServer,
+         type PinKeys,
+         type ServerJudgement,
+         type ServerPins }  from '@node/api/client';
 
 
 // What every node answers - the log, name resolution, the time, the store,
@@ -221,8 +225,9 @@ export interface Status extends NodeStatus {
         address:        string;
         port:           number;
         running:        boolean;
-        baseAddress:    number;
-        registerCount:  number;
+        /** The simulation's; null while the meter stands in front of another one. */
+        baseAddress:    number | null;
+        registerCount:  number | null;
     };
     web: { url: string };
 }
@@ -244,9 +249,10 @@ export interface MeterMode {
 /** One phase, or all three added up. */
 export interface Phase {
     name:       string;
-    voltage_V:  number;
-    current_A:  number;
-    power_W:    number;
+    /** Null where the meter behind does not measure it. */
+    voltage_V:  number | null;
+    current_A:  number | null;
+    power_W:    number | null;
 }
 
 /**
@@ -272,12 +278,72 @@ export interface MeterReadings {
     serialNumber:  string;
     unitAddress:   number;
     sunSpecModel:  number;
-    frequency_Hz:  number;
+    frequency_Hz:  number | null;
     phases:        Phase[];
     total:         Phase;
-    energy:        { exported_Wh: number; imported_Wh: number };
-    meterMode:     MeterMode;
-    simulation:    Simulation;
+    energy:        { exported_Wh: number | null; imported_Wh: number | null };
+    /** The simulation's mode and site; neither while the meter stands in front of another one. */
+    meterMode?:    MeterMode;
+    simulation?:   Simulation;
+    /** The meter in front of which this one stands, and how that goes - where it stands in front of one. */
+    upstream?:     UpstreamState;
+}
+
+
+// The meter in front of which this one stands
+
+/** How the meter in front of which this one stands goes. */
+export interface UpstreamState {
+    /** How the node's judgements name it: "10.0.0.7:802". */
+    server:       string;
+    unit:         number;
+    tls:          boolean;
+    /** "connected", or what is in the way: "notConnected", "unreachable", "untrusted", "refused", "noIdentity", "noAnswer". */
+    state:        string;
+    since:        string;
+    error:        string | null;
+    protocol:     string | null;
+    cipherSuite:  string | null;
+    identity:     UpstreamIdentity | null;
+    judged:       { accepted: boolean; outcome: string; why: string | null } | null;
+}
+
+/** A TLS identity of the store whose certificate carries a SunSpec role. */
+export interface UpstreamIdentity {
+    id:       string;
+    label:    string;
+    role:     string;
+    subject:  string;
+}
+
+/** The upstream page's: the meter in front of which this one stands, as the file says it, and how it goes. */
+export interface UpstreamPage {
+    /** Whether it stands in front of one at all. */
+    upstream:    boolean;
+    host:        string | null;
+    port:        number | null;
+    unit:        number | null;
+    tls:         boolean;
+    identity:    string | null;
+    server:      string | null;
+    heldTo:      ServerPins | null;
+    judgement:   ServerJudgement | null;
+    known:       KnownServer | null;
+    state:       UpstreamState | null;
+    identities:  UpstreamIdentity[];
+    usage:       string;
+    defaults:    { tcpPort: number; tlsPort: number; unit: number };
+    file:        string;
+}
+
+/** A change to it; a blank host stands in front of none. */
+export interface UpstreamUpdate extends PinKeys {
+    host:          string;
+    port:          number | null;
+    unit:          number | null;
+    tls:           boolean;
+    identity:      string | null;
+    pinsAsShown?:  PinKeys;
 }
 
 
@@ -290,7 +356,7 @@ export interface MeterReadings {
  * shows. A server certificate is neither, but kept to recognise a server by
  * its fingerprint.
  */
-export type CertificateKind = 'tlsRoot' | 'clientRoot' | 'tlsServer' | 'tlsServerIdentity';
+export type CertificateKind = 'tlsRoot' | 'clientRoot' | 'tlsServer' | 'tlsIdentity' | 'tlsServerIdentity';
 
 /** One of the two listeners of this meter that show a certificate: the Modbus/TLS port, and the web interface. */
 export type TLSListener = 'modbus' | 'web';
@@ -481,6 +547,13 @@ export const api = {
         setMode:      (mode: MeterModeName)  => request<MeterMode>    ('PUT',  '/meter/mode', { mode }),
         /** The same register a Modbus client writes, so there is one way of clearing them. */
         resetEnergy:  ()                     => request<unknown>      ('POST', '/meter/energy/reset', {})
+    },
+
+    /** The meter in front of which this one stands. */
+    upstream: {
+        get:   ()                        => request<UpstreamPage>('GET', '/configuration/upstream'),
+        /** Reached anew where it is reached another way now - which takes a connection, so it may take a moment. */
+        save:  (update: UpstreamUpdate)  => request<UpstreamPage>('PUT', '/configuration/upstream', update, 30_000)
     },
 
     /**

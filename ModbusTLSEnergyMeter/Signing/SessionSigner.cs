@@ -59,14 +59,23 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
 
     /// <summary>
-    /// What this meter says about itself in every OCMF document it signs.
+    /// What this meter says about itself in every OCMF document it signs: as
+    /// the gateway that signs, and about the meter that measured - which are
+    /// one device while it measures with its own simulation, and two once it
+    /// stands in front of another meter.
     /// </summary>
-    /// <param name="SerialNumber">The serial number of the meter, which is also the gateway's.</param>
-    /// <param name="Version">The version of this software.</param>
-    /// <param name="Model">What the meter is called.</param>
-    public sealed record MeterDescription(String  SerialNumber,
-                                          String  Version,
-                                          String  Model);
+    /// <param name="SerialNumber">The serial number of the gateway, OCMF "GS".</param>
+    /// <param name="Version">The version of this software, OCMF "GV".</param>
+    /// <param name="Model">What the meter that measured is called, OCMF "MM".</param>
+    /// <param name="Vendor">Who made it, OCMF "MV".</param>
+    /// <param name="MeterSerialNumber">Its serial number, OCMF "MS"; the gateway's where null.</param>
+    /// <param name="MeterFirmware">Its firmware, OCMF "MF"; this software's version where null.</param>
+    public sealed record MeterDescription(String   SerialNumber,
+                                          String   Version,
+                                          String   Model,
+                                          String   Vendor             = "Vanaheimr",
+                                          String?  MeterSerialNumber  = null,
+                                          String?  MeterFirmware      = null);
 
 
     /// <summary>
@@ -366,10 +375,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
                               new JProperty("PG",  Pagination),
 
-                              new JProperty("MV",  "Vanaheimr"),
+                              new JProperty("MV",  meter.Vendor),
                               new JProperty("MM",  meter.Model),
-                              new JProperty("MS",  meter.SerialNumber),
-                              new JProperty("MF",  meter.Version)
+                              new JProperty("MS",  meter.MeterSerialNumber ?? meter.SerialNumber),
+                              new JProperty("MF",  meter.MeterFirmware     ?? meter.Version)
 
                           );
 
