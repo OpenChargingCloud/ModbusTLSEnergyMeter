@@ -127,6 +127,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
                     using var handshake = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
                     handshake.CancelAfter(Timeout);
 
+                    // Never a session resumed: the meter behind decides what
+                    // this one may do by the role in the certificate it shows,
+                    // and a resumed TLS session shows none - it sees a peer
+                    // without a role and hangs up. On Linux a session for a
+                    // host name is offered to every server of that name whose
+                    // tickets can read it.
                     await tls.AuthenticateAsClientAsync(
                               new SslClientAuthenticationOptions {
                                   TargetHost                           = Host,
@@ -136,6 +142,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
                                   EnabledSslProtocols                  = SslProtocols.Tls12 | SslProtocols.Tls13,
                                   CertificateRevocationCheckMode       = X509RevocationMode.NoCheck,
                                   AllowRenegotiation                   = false,
+                                  AllowTlsResume                       = false,
                                   EncryptionPolicy                     = EncryptionPolicy.RequireEncryption,
                                   RemoteCertificateValidationCallback  = Judge
                               },
