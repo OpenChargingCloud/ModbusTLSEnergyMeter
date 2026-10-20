@@ -85,26 +85,34 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// charging session looks like is two of these in one document, and that
         /// is what /sessions/stop answers with.
         /// </remarks>
-        private Task<HTTPResponse> GetSignedMeterValue(HTTPRequest Request)
+        private async Task<HTTPResponse> GetSignedMeterValue(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Read(MeterAccess.Meter), false, out _, out var refused))
-                return Task.FromResult(refused);
+                return refused;
 
             var format = (Request.QueryString.GetString("format") ?? "ocmf").Trim().ToLowerInvariant();
 
             if (!TryGetSigningKey(Request, Request.QueryString.GetString("key"), format, out var key, out var noKey))
-                return Task.FromResult(noKey);
+                return noKey;
 
-            if (!TryReadEnergy(Request, out var importedWh, out var unreadable))
-                return Task.FromResult(unreadable);
+            Decimal importedWh;
+
+            try
+            {
+                importedWh = await meter.Signer.ReadImportedWh();
+            }
+            catch (EnergyUnreadable e)
+            {
+                return ErrorJSON(Request, HTTPStatusCode.InternalServerError, e.Message);
+            }
 
             var now = meter.TimeProvider.GetUtcNow();
 
             try
             {
 
-                return Task.FromResult(format switch {
+                return format switch {
 
                     "ocmf"   => JSONResponse(Request, HTTPStatusCode.OK,
                                     new JObject(
@@ -113,8 +121,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                         new JProperty("ocmf",       OCMFWriter.Build(
                                                                         meter.SigningKeys,
                                                                         key,
-                                                                        OCMFPayload(key, $"F{meter.Sessions.NextFiscal()}", null, null),
-                                                                        [ Reading(now, importedWh / 1000m, null) ]
+                                                                        meter.Signer.Payload($"F{meter.Sessions.NextFiscal()}"),
+                                                                        [ meter.Signer.Reading(now, importedWh / 1000m, null) ]
                                                                     )),
                                         new JProperty("publicKey",  MeterPublicKey.ToJSON(key))
                                     )),
@@ -133,13 +141,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                     _        => ErrorJSON(Request, HTTPStatusCode.BadRequest,
                                           $"Unknown format '{format}'. This meter writes 'ocmf' and 'alfen'.")
 
-                });
+                };
 
             }
             catch (Exception e)
             {
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                                 $"That reading could not be signed: {e.Message}"));
+                return ErrorJSON(Request, HTTPStatusCode.InternalServerError,
+                                 $"That reading could not be signed: {e.Message}");
             }
 
         }
@@ -149,7 +157,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         #region (private) GetSession        (Request)
 
         /// <summary>
-        /// GET /api/v1/sessions: the charging session that is running, if one is.
+        /// GET /api/v1/sessions: the charging session that is running, if one
+        /// is, and the document the last one ended in, until the next begins.
         /// </summary>
         private Task<HTTPResponse> GetSession(HTTPRequest Request)
         {
@@ -163,7 +172,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                new JProperty("running",  meter.Sessions.Current is not null),
                                meter.Sessions.Current is ChargingSession session
                                    ? new JProperty("session", session.ToJSON())
-                                   : new JProperty("session", JValue.CreateNull())
+                                   : new JProperty("session", JValue.CreateNull()),
+                               meter.Sessions.Last is SignedSession last
+                                   ? new JProperty("last",    last.ToJSON())
+                                   : new JProperty("last",    JValue.CreateNull())
                            ))
                    );
 
@@ -175,7 +187,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         /// <summary>
         /// POST /api/v1/sessions/start with an optional
-        /// {"key": "...", "identification": "...", "identificationType": "..."}.
+        /// {"key": "...", "identification": "...", "identificationType": "...",
+        /// "chargePointIdType": "...", "chargePointId": "...", "tariffText": "...",
+        /// "stationSessionId": "..."}.
         /// </summary>
         /// <remarks>
         /// Answers with the time and the public key, because those are the two
@@ -185,46 +199,36 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// meter stood somewhere at some moment, which is not evidence of
         /// anything.
         /// </remarks>
-        private Task<HTTPResponse> PostSessionStart(HTTPRequest Request)
+        private async Task<HTTPResponse> PostSessionStart(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Run(MeterAccess.Meter), true, out var user, out var refused))
-                return Task.FromResult(refused);
+                return refused;
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
-                return Task.FromResult(errorResponse);
+                return errorResponse;
 
             if (!TryGetSigningKey(Request, json["key"]?.Value<String>(), "ocmf", out var key, out var noKey))
-                return Task.FromResult(noKey);
+                return noKey;
 
-            if (!TryReadEnergy(Request, out var importedWh, out var unreadable))
-                return Task.FromResult(unreadable);
+            if (!SessionParameters.TryParse(json, out var parameters, out var invalid))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, invalid);
 
-            if (!meter.Sessions.TryStart(
-                     importedWh / 1000m,
-                     key.Id,
-                     json["identification"]?.Value<String>(),
-                     json["identificationType"]?.Value<String>(),
-                     out var session,
-                     out var problem))
-            {
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, problem));
-            }
+            var answer = await meter.Signer.Start(parameters, key);
 
-            // The session's start reading is now on disk; the counter it was
-            // taken from goes down beside it, so that a crash in between cannot
-            // leave a session starting at a reading this meter no longer stands
-            // at.
-            meter.SaveTheEnergyCounters();
+            if (answer.Value is not StartedSession started)
+                return Refused(Request, answer.Refusal!);
+
+            var session = started.Session;
 
             meter.Log.Notice(
-                $"'{user.Id}' started the charging session '{session.Id}' at {session.StartValue} kWh, " +
-                $"to be signed with '{key.Id}'.",
+                $"'{user.Id}' started the charging session '{session.Id}'" +
+                (session.Parameters.StationSessionId is String id ? $" ('{id}')" : "") +
+                $" at {session.StartValue} kWh, to be signed with '{key.Id}'.",
                 "sessions", "signing", "web"
             );
 
-            return Task.FromResult(
-                       JSONResponse(Request, HTTPStatusCode.Created,
+            return JSONResponse(Request, HTTPStatusCode.Created,
                            new JObject(
 
                                new JProperty("timestamp",   session.StartedAt.UtcDateTime.ToString("o")),
@@ -238,8 +242,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                                // before the session began.
                                new JProperty("publicKey",   MeterPublicKey.ToJSON(key))
 
-                           ))
-                   );
+                           ));
 
         }
 
@@ -258,93 +261,88 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
         /// trusted to have drawn correctly. Here the subtraction is inside what
         /// was signed.
         /// </remarks>
-        private Task<HTTPResponse> PostSessionStop(HTTPRequest Request)
+        private async Task<HTTPResponse> PostSessionStop(HTTPRequest Request)
         {
 
             if (!TryAuthorize(Request, Permission.Run(MeterAccess.Meter), true, out var user, out var refused))
-                return Task.FromResult(refused);
+                return refused;
 
-            if (!TryReadEnergy(Request, out var importedWh, out var unreadable))
-                return Task.FromResult(unreadable);
+            // A body is optional: {"stationSessionId": "..."} stops only the
+            // session that is known by it.
+            String? stationSessionId = null;
 
-            // Looked at before the session is taken away, so that a refusal
-            // leaves it running rather than losing it.
-            if (meter.Sessions.Current is ChargingSession open &&
-                importedWh / 1000m < open.StartValue)
-            {
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict,
-                                                 $"This session started at {open.StartValue} kWh and the meter now stands at " +
-                                                 $"{importedWh / 1000m} kWh, so stopping it would report less energy than none. " +
-                                                  "The counter has gone backwards - cleared, or lost further than the last time " +
-                                                  "it was written down. The session is still running and can be stopped once the " +
-                                                  "counter passes where it began."));
-            }
-
-            if (!meter.Sessions.TryStop(out var session, out var problem))
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict, problem));
-
-            // The key the session began with, not whatever is the identity now:
-            // a document whose two readings were signed by different keys is not
-            // one document.
-            var key = meter.SigningKeys.Get(session.KeyId);
-
-            if (key is null)
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.Conflict,
-                                                 $"The key '{session.KeyId}' this session was started with is gone, " +
-                                                  "so the session cannot be signed as one document."));
-
-            var now      = meter.TimeProvider.GetUtcNow();
-            var stopValue = importedWh / 1000m;
-
-            try
+            if (!String.IsNullOrWhiteSpace(Request.HTTPBodyAsUTF8String))
             {
 
-                var document = OCMFWriter.Build(
-                                   meter.SigningKeys,
-                                   key,
-                                   OCMFPayload(key,
-                                               $"T{meter.Sessions.NextTransaction()}",
-                                               session.Identification,
-                                               session.IdentificationType),
-                                   [
-                                       Reading(session.StartedAt, session.StartValue, "B"),
-                                       Reading(now,               stopValue,          "E")
-                                   ]
-                               );
+                if (!TryParseJSONObject(Request, out var json, out var errorResponse))
+                    return errorResponse;
 
-                meter.SaveTheEnergyCounters();
+                if (json["stationSessionId"] is JToken token && token.Type != JTokenType.Null)
+                {
 
-                meter.Log.Notice(
-                    $"'{user.Id}' stopped the charging session '{session.Id}': " +
-                    $"{session.StartValue} kWh to {stopValue} kWh, {stopValue - session.StartValue} kWh in all.",
-                    "sessions", "signing", "web"
-                );
+                    if (token.Type != JTokenType.String)
+                        return ErrorJSON(Request, HTTPStatusCode.BadRequest, "'stationSessionId' is a text.");
 
-                return Task.FromResult(
-                           JSONResponse(Request, HTTPStatusCode.OK,
-                               new JObject(
+                    stationSessionId = token.Value<String>();
 
-                                   new JProperty("timestamp",   now.UtcDateTime.ToString("o")),
-                                   new JProperty("sessionId",   session.Id),
-                                   new JProperty("startValue",  session.StartValue),
-                                   new JProperty("stopValue",   stopValue),
-                                   new JProperty("energy_kWh",  stopValue - session.StartValue),
-                                   new JProperty("unit",        "kWh"),
-
-                                   new JProperty("ocmf",        document),
-                                   new JProperty("publicKey",   MeterPublicKey.ToJSON(key))
-
-                               ))
-                       );
+                }
 
             }
-            catch (Exception e)
-            {
-                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                                 $"That session could not be signed: {e.Message}"));
-            }
+
+            var answer = await meter.Signer.Stop(stationSessionId);
+
+            if (answer.Value is not SignedSession signed)
+                return Refused(Request, answer.Refusal!);
+
+            meter.Log.Notice(
+                $"'{user.Id}' stopped the charging session '{signed.SessionId}'" +
+                (signed.StationSessionId is String id ? $" ('{id}')" : "") +
+                $": {signed.StartValue} kWh to {signed.StopValue} kWh, {signed.StopValue - signed.StartValue} kWh in all.",
+                "sessions", "signing", "web"
+            );
+
+            return JSONResponse(Request, HTTPStatusCode.OK,
+                       new JObject(
+
+                           new JProperty("timestamp",         signed.StoppedAt.UtcDateTime.ToString("o")),
+                           new JProperty("sessionId",         signed.SessionId),
+                           new JProperty("stationSessionId",  signed.StationSessionId),
+                           new JProperty("startValue",        signed.StartValue),
+                           new JProperty("stopValue",         signed.StopValue),
+                           new JProperty("energy_kWh",        signed.StopValue - signed.StartValue),
+                           new JProperty("unit",              "kWh"),
+
+                           new JProperty("ocmf",              signed.Document),
+                           new JProperty("publicKey",         meter.SigningKeys.Get(signed.KeyId) is MeterKey key
+                                                                  ? MeterPublicKey.ToJSON(key)
+                                                                  : new JObject(
+                                                                        new JProperty("publicKey",  signed.PublicKey),
+                                                                        new JProperty("encoding",   signed.PublicKeyEncoding)
+                                                                    ))
+
+                       ));
 
         }
+
+        #endregion
+
+        #region (private) Refused(Request, Refusal)
+
+        /// <summary>
+        /// A session that was not begun or not ended, as the answer that says
+        /// why.
+        /// </summary>
+        private static HTTPResponse Refused(HTTPRequest     Request,
+                                            SessionRefusal  Refusal)
+
+            => ErrorJSON(Request,
+                         Refusal.Kind switch {
+                             SessionRefusalKind.InvalidParameter  => HTTPStatusCode.BadRequest,
+                             SessionRefusalKind.Unreadable        => HTTPStatusCode.InternalServerError,
+                             SessionRefusalKind.SigningFailed     => HTTPStatusCode.InternalServerError,
+                             _                                    => HTTPStatusCode.Conflict
+                         },
+                         Refusal.Why);
 
         #endregion
 
@@ -534,109 +532,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private) TryReadEnergy(Request, out ImportedWh, out Unreadable)
-
-        /// <summary>
-        /// What the imported energy counter stands at, in Wh, or the answer
-        /// saying it could not be read - the one GET /api/v1/meter gives.
-        /// </summary>
-        private Boolean TryReadEnergy(HTTPRequest                             Request,
-                                      out Decimal                             ImportedWh,
-                                      [NotNullWhen(false)] out HTTPResponse?  Unreadable)
-        {
-
-            ImportedWh = 0;
-
-            var registers = meter.Device.ReadHolding(
-                                SunSpecMeterMap.BaseAddress,
-                                SunSpecMeterMap.RegisterCount
-                            );
-
-            if (registers is null)
-            {
-                Unreadable = ErrorJSON(Request, HTTPStatusCode.InternalServerError,
-                                       "The register block of this meter could not be read.");
-                return false;
-            }
-
-            var scaleFactor  = (Int16) registers[SunSpecMeterMap.OffMeterWh_SF];
-            var raw          = ((UInt32) registers[SunSpecMeterMap.OffMeterTotWhImp] << 16) |
-                                         registers[SunSpecMeterMap.OffMeterTotWhImp + 1];
-
-            ImportedWh  = (Decimal) (raw * Math.Pow(10, scaleFactor));
-            Unreadable  = null;
-            return true;
-
-        }
-
-        #endregion
-
-        #region (private) OCMFPayload(...) / Reading(...) / AlfenRecord(...)
-
-        /// <summary>
-        /// Everything an OCMF document says about the meter it came from.
-        /// </summary>
-        private JObject OCMFPayload(MeterKey  Key,
-                                    String    Pagination,
-                                    String?   Identification,
-                                    String?   IdentificationType)
-        {
-
-            var payload = new JObject(
-
-                              new JProperty("FV",  "1.0"),
-
-                              // The gateway and the meter are the same device
-                              // here, and saying so twice is what the format
-                              // expects rather than a mistake.
-                              new JProperty("GI",  "Vanaheimr ModbusTLSEnergyMeter"),
-                              new JProperty("GS",  meter.SerialNumber),
-                              new JProperty("GV",  meter.Version),
-
-                              new JProperty("PG",  Pagination),
-
-                              new JProperty("MV",  "Vanaheimr"),
-                              new JProperty("MM",  meter.Device.DisplayName),
-                              new JProperty("MS",  meter.SerialNumber),
-                              new JProperty("MF",  meter.Version)
-
-                          );
-
-            // Absent rather than false when nobody was identified: "IS": false
-            // says the meter looked and found nobody, which is a different claim
-            // from a reading that was never about a person.
-            if (Identification is not null)
-            {
-                payload.Add("IS",  true);
-                payload.Add("IT",  IdentificationType ?? "UNDEFINED");
-                payload.Add("ID",  Identification);
-            }
-            else
-                payload.Add("IS",  false);
-
-            return payload;
-
-        }
-
-        /// <summary>
-        /// One reading, with the letter that says how far this meter's clock can
-        /// be trusted.
-        /// </summary>
-        /// <remarks>
-        /// "S" only when a time server actually answered. A meter that claimed a
-        /// synchronised clock it does not have would be lying about the one
-        /// thing a reading cannot be checked against afterwards.
-        /// </remarks>
-        private OCMFReadingToWrite Reading(DateTimeOffset  Timestamp,
-                                           Decimal         Value,
-                                           String?         Transaction)
-
-            => new (
-                   Timestamp,
-                   Value,
-                   Transaction,
-                   TimeSync:  meter.ClockIsSynchronised ? "S" : "I"
-               );
+        #region (private) AlfenRecord(...)
 
         /// <summary>
         /// One Alfen-shaped record, with this meter's own values in the fields

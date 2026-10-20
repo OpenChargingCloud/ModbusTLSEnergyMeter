@@ -35,14 +35,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
     /// <param name="StartedAt">When it began.</param>
     /// <param name="StartValue">What the meter stood at then, in kWh.</param>
     /// <param name="KeyId">The key the whole session will be signed with.</param>
-    /// <param name="Identification">Who started it, when anybody said.</param>
-    /// <param name="IdentificationType">How they were identified, e.g. "ISO14443".</param>
-    public class ChargingSession(String          Id,
-                                 DateTimeOffset  StartedAt,
-                                 Decimal         StartValue,
-                                 String          KeyId,
-                                 String?         Identification       = null,
-                                 String?         IdentificationType   = null)
+    /// <param name="Parameters">Who charges, where, on which terms, and what whoever began it calls it.</param>
+    public class ChargingSession(String              Id,
+                                 DateTimeOffset      StartedAt,
+                                 Decimal             StartValue,
+                                 String              KeyId,
+                                 SessionParameters?  Parameters   = null)
     {
 
         #region Properties
@@ -67,11 +65,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
         /// </remarks>
         public String          KeyId               { get; } = KeyId;
 
+        /// <summary>
+        /// Who charges, where, on which terms, and what whoever began it calls
+        /// it - everything but the last of them signed into its document.
+        /// </summary>
+        public SessionParameters  Parameters       { get; } = Parameters ?? SessionParameters.Nothing;
+
         /// <summary>Who started it, when anybody said.</summary>
-        public String?         Identification      { get; } = Identification;
+        public String?         Identification
+            => Parameters.Identification;
 
         /// <summary>How they were identified.</summary>
-        public String?         IdentificationType  { get; } = IdentificationType;
+        public String?         IdentificationType
+            => Parameters.IdentificationType;
 
         #endregion
 
@@ -81,9 +87,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
         /// The session as it is kept on disk while it runs.
         /// </summary>
         /// <remarks>
-        /// More than <see cref="ToJSON"/> gives out: the identification type
-        /// goes in as well, because the document written at the end has to say
-        /// how the person was identified and a restart must not lose that.
+        /// Everything the session was begun with, because the document written
+        /// at the end has to say how the person was identified, where and on
+        /// which tariff, and a restart must not lose any of it.
         /// </remarks>
         internal JObject StoredJSON()
 
@@ -92,12 +98,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                    new JProperty("startedAt",           StartedAt.UtcDateTime.ToString("o")),
                    new JProperty("startValue",          StartValue),
                    new JProperty("keyId",               KeyId),
-                   Identification is not null
-                       ? new JProperty("identification",      Identification)
-                       : new JProperty("identification",      JValue.CreateNull()),
-                   IdentificationType is not null
-                       ? new JProperty("identificationType",  IdentificationType)
-                       : new JProperty("identificationType",  JValue.CreateNull())
+                   TextOrNull("identification",      Parameters.Identification),
+                   TextOrNull("identificationType",  Parameters.IdentificationType),
+                   TextOrNull("chargePointIdType",   Parameters.ChargePointIdType),
+                   TextOrNull("chargePointId",       Parameters.ChargePointId),
+                   TextOrNull("tariffText",          Parameters.TariffText),
+                   TextOrNull("stationSessionId",    Parameters.StationSessionId)
                );
 
         /// <summary>
@@ -122,8 +128,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                        startedAt,
                        startValue.Value,
                        keyId,
-                       JSON["identification"]?.    Type == JTokenType.String ? JSON["identification"]!.    Value<String>() : null,
-                       JSON["identificationType"]?.Type == JTokenType.String ? JSON["identificationType"]!.Value<String>() : null
+                       new SessionParameters(
+                           Text(JSON, "identificationType"),
+                           Text(JSON, "identification"),
+                           Text(JSON, "chargePointIdType"),
+                           Text(JSON, "chargePointId"),
+                           Text(JSON, "tariffText"),
+                           Text(JSON, "stationSessionId")
+                       )
                    );
 
         }
@@ -140,10 +152,118 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                    new JProperty("startValue",  StartValue),
                    new JProperty("unit",        "kWh"),
                    new JProperty("keyId",       KeyId),
-                   Identification is not null
-                       ? new JProperty("identification", Identification)
-                       : new JProperty("identification", JValue.CreateNull())
+                   TextOrNull("identification",      Parameters.Identification),
+                   TextOrNull("identificationType",  Parameters.IdentificationType),
+                   TextOrNull("chargePointIdType",   Parameters.ChargePointIdType),
+                   TextOrNull("chargePointId",       Parameters.ChargePointId),
+                   TextOrNull("tariffText",          Parameters.TariffText),
+                   TextOrNull("stationSessionId",    Parameters.StationSessionId)
                );
+
+        #endregion
+
+        #region (private static) TextOrNull(Name, Text) / Text(JSON, Name)
+
+        private static JProperty TextOrNull(String   Name,
+                                            String?  Text)
+
+            => Text is not null
+                   ? new JProperty(Name, Text)
+                   : new JProperty(Name, JValue.CreateNull());
+
+        private static String? Text(JObject  JSON,
+                                    String   Name)
+
+            => JSON[Name]?.Type == JTokenType.String
+                   ? JSON[Name]!.Value<String>()
+                   : null;
+
+        #endregion
+
+    }
+
+
+    /// <summary>
+    /// A charging session that was stopped, as the one document it ended in.
+    /// </summary>
+    /// <param name="SessionId">What this meter called it.</param>
+    /// <param name="StationSessionId">What whoever began it called it.</param>
+    /// <param name="StartedAt">When it began.</param>
+    /// <param name="StoppedAt">When it ended.</param>
+    /// <param name="StartValue">What the meter stood at when it began, in kWh.</param>
+    /// <param name="StopValue">What the meter stood at when it ended, in kWh.</param>
+    /// <param name="Document">The signed OCMF document.</param>
+    /// <param name="KeyId">The key it was signed with.</param>
+    /// <param name="PublicKey">That key as an OCMF reader wants it.</param>
+    /// <param name="PublicKeyEncoding">How that is written.</param>
+    public sealed record SignedSession(String          SessionId,
+                                       String?         StationSessionId,
+                                       DateTimeOffset  StartedAt,
+                                       DateTimeOffset  StoppedAt,
+                                       Decimal         StartValue,
+                                       Decimal         StopValue,
+                                       String          Document,
+                                       String          KeyId,
+                                       String          PublicKey,
+                                       String          PublicKeyEncoding)
+    {
+
+        #region ToJSON() / TryParse(JSON)
+
+        public JObject ToJSON()
+
+            => new (
+                   new JProperty("sessionId",          SessionId),
+                   new JProperty("stationSessionId",   StationSessionId),
+                   new JProperty("startedAt",          StartedAt.UtcDateTime.ToString("o")),
+                   new JProperty("stoppedAt",          StoppedAt.UtcDateTime.ToString("o")),
+                   new JProperty("startValue",         StartValue),
+                   new JProperty("stopValue",          StopValue),
+                   new JProperty("energy_kWh",         StopValue - StartValue),
+                   new JProperty("unit",               "kWh"),
+                   new JProperty("ocmf",               Document),
+                   new JProperty("keyId",              KeyId),
+                   new JProperty("publicKey",          PublicKey),
+                   new JProperty("encoding",           PublicKeyEncoding)
+               );
+
+        /// <summary>
+        /// A stopped session read back from disk, or null when the file says
+        /// nothing usable.
+        /// </summary>
+        internal static SignedSession? TryParse(JObject JSON)
+        {
+
+            var sessionId   = JSON["sessionId"]?. Value<String>();
+            var document    = JSON["ocmf"]?.      Value<String>();
+            var keyId       = JSON["keyId"]?.     Value<String>();
+            var publicKey   = JSON["publicKey"]?. Value<String>();
+            var encoding    = JSON["encoding"]?.  Value<String>();
+            var startValue  = JSON["startValue"]?.Value<Decimal>();
+            var stopValue   = JSON["stopValue"]?. Value<Decimal>();
+
+            if (sessionId is null || document is null || keyId is null || publicKey is null || encoding is null ||
+                startValue is null || stopValue is null)
+                return null;
+
+            if (!MeterJSON.TryReadMoment(JSON["startedAt"], out var startedAt) ||
+                !MeterJSON.TryReadMoment(JSON["stoppedAt"], out var stoppedAt))
+                return null;
+
+            return new SignedSession(
+                       sessionId,
+                       JSON["stationSessionId"]?.Type == JTokenType.String ? JSON["stationSessionId"]!.Value<String>() : null,
+                       startedAt,
+                       stoppedAt,
+                       startValue.Value,
+                       stopValue.Value,
+                       document,
+                       keyId,
+                       publicKey,
+                       encoding
+                   );
+
+        }
 
         #endregion
 
@@ -173,6 +293,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
         private readonly Lock    countersLock = new();
         private readonly String  countersPath;
         private readonly String  sessionPath;
+        private readonly String  lastPath;
 
         private UInt64           transactions;
         private UInt64           fiscals;
@@ -189,6 +310,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
 
         /// <summary>The session that is running, or null when none is.</summary>
         public ChargingSession?  Current       { get; private set; }
+
+        /// <summary>
+        /// The last session that was stopped, as the document it ended in - or
+        /// null when none was, or a session has begun since.
+        /// </summary>
+        /// <remarks>
+        /// Kept on disk, because a charging station that asks for it a moment
+        /// after the meter was restarted is asking for something that was
+        /// signed and must not have gone. It goes when the next session begins,
+        /// which is when whoever stopped this one has had every chance to read
+        /// it.
+        /// </remarks>
+        public SignedSession?    Last          { get; private set; }
 
         #endregion
 
@@ -207,6 +341,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
             this.TimeProvider  = TimeProvider ?? System.TimeProvider.System;
             this.countersPath  = System.IO.Path.Combine(this.Path, "counters.json");
             this.sessionPath   = System.IO.Path.Combine(this.Path, "session.json");
+            this.lastPath      = System.IO.Path.Combine(this.Path, "last.json");
 
             Directory.CreateDirectory(this.Path);
 
@@ -244,6 +379,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                 // An unreadable session file leaves no session running, which is
                 // the safe direction: nothing gets signed on a start reading
                 // nobody can vouch for.
+            }
+
+            try
+            {
+
+                if (File.Exists(lastPath))
+                    Last = SignedSession.TryParse(MeterJSON.ReadFile(lastPath));
+
+            }
+            catch
+            {
+                // An unreadable document is one nobody can be handed again. It
+                // was signed, and whoever stopped the session was answered with
+                // it at the time.
             }
 
         }
@@ -296,6 +445,23 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                                 String?                            IdentificationType,
                                 [NotNullWhen(true)]  out ChargingSession?  Session,
                                 [NotNullWhen(false)] out String?          Error)
+
+            => TryStart(StartValue,
+                        KeyId,
+                        new SessionParameters(IdentificationType, Identification),
+                        out Session,
+                        out Error);
+
+
+        /// <summary>
+        /// Begin a charging session at the given reading, with who charges,
+        /// where, on which terms, and what whoever began it calls it.
+        /// </summary>
+        public Boolean TryStart(Decimal                            StartValue,
+                                String                             KeyId,
+                                SessionParameters                  Parameters,
+                                [NotNullWhen(true)]  out ChargingSession?  Session,
+                                [NotNullWhen(false)] out String?          Error)
         {
 
             lock (countersLock)
@@ -317,11 +483,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                               now,
                               StartValue,
                               KeyId,
-                              Identification,
-                              IdentificationType
+                              Parameters
                           );
 
                 WriteSession();
+
+                // The document of the session before has been there for whoever
+                // stopped it to read; a session beginning is the end of that.
+                Last = null;
+                WriteLast();
 
                 Session = Current;
                 Error   = null;
@@ -356,6 +526,58 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Signing
                 Error    = null;
                 return true;
 
+            }
+
+        }
+
+        #endregion
+
+        #region Keep(Signed)
+
+        /// <summary>
+        /// Keep the document a session was stopped into, until the next one
+        /// begins.
+        /// </summary>
+        public void Keep(SignedSession Signed)
+        {
+            lock (countersLock)
+            {
+                Last = Signed;
+                WriteLast();
+            }
+        }
+
+        #endregion
+
+        #region (private) WriteLast()
+
+        /// <summary>
+        /// Write down the document of the last session, or take the file away
+        /// when there is none.
+        /// </summary>
+        private void WriteLast()
+        {
+
+            try
+            {
+
+                if (Last is null)
+                {
+                    if (File.Exists(lastPath))
+                        File.Delete(lastPath);
+                    return;
+                }
+
+                var temporary = lastPath + ".new";
+                File.WriteAllText(temporary, Last.ToJSON().ToString());
+                File.Move(temporary, lastPath, overwrite: true);
+
+            }
+            catch
+            {
+                // A document that could not be written down is one a restart
+                // would lose. Whoever stopped the session has it already, or
+                // can read it until the meter is restarted.
             }
 
         }

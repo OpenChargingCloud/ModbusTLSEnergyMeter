@@ -199,6 +199,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private readonly  SigningRequests          signingRequests;
         private readonly  MeterKeyStore            signingKeys;
         private readonly  ChargingSessions         sessions;
+        private readonly  SessionSigner            signer;
+        private readonly  SessionModelBackendFactory sessionModel;
         private readonly  X509Certificate2         startupCertificate;
 
         private           ITimer?                  certificateTimer;
@@ -304,6 +306,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// </summary>
         public ChargingSessions    Sessions
             => sessions;
+
+        /// <summary>
+        /// Who begins and ends the charging sessions of this meter, whichever
+        /// door they come through.
+        /// </summary>
+        public SessionSigner       Signer
+            => signer;
+
+        /// <summary>
+        /// The session model behind the device's models: where it is, and what
+        /// of it may be written.
+        /// </summary>
+        public SessionModelBackendFactory  SessionModelFactory
+            => sessionModel;
 
         /// <summary>
         /// The certificate this meter is showing its Modbus/TLS clients at the
@@ -722,6 +738,31 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                     "simulation"
                 );
 
+            // The session model behind the device's models, where its list of
+            // models ended: what begins and ends a charging session over
+            // Modbus, and what the document it ends in is read from. The
+            // simulation answers at once, so walking it here waits for nothing.
+            var deviceBackends   = new SunSpecBackendFactory(this.device);
+            var registers        = SunSpecChain.Of(deviceBackends.CreateAsync(0, null, CancellationToken.None).GetAwaiter().GetResult());
+            var chain            = SunSpecChain.Walk(registers).GetAwaiter().GetResult();
+
+            this.signer          = new SessionSigner(
+                                       sessions,
+                                       signingKeys,
+                                       () => chain.ImportedWh(registers),
+                                       () => new MeterDescription(this.SerialNumber, Version, this.device.DisplayName),
+                                       () => ClockIsSynchronised,
+                                       SaveTheEnergyCounters
+                                   );
+
+            this.sessionModel    = new SessionModelBackendFactory(
+                                       deviceBackends,
+                                       signer,
+                                       chain.End,
+                                       done    => this.Log.Notice (done,    "sessions", "signing", "modbus"),
+                                       refused => this.Log.Warning(refused, "sessions", "signing", "modbus")
+                                   );
+
             this.frontend        = new ModbusTlsFrontend(
                                        new ModbusTlsFrontendOptions(
                                            ListenAddress:      this.ListenAddress,
@@ -743,8 +784,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                                                                          ?? throw new InvalidOperationException("This meter has no valid Modbus/TLS certificate to show."),
                                            ClientTrustAnchors:         clientRoots.Anchors
                                        ),
-                                       new SunSpecBackendFactory(device),
-                                       new AuthorizationPolicy(device),
+                                       sessionModel,
+
+                                       // What a session is begun with, and
+                                       // the command, are commanded: what a
+                                       // charging station's role may write.
+                                       new AuthorizationPolicy(
+                                           this.device.ProtectedAddresses,
+                                           this.device.CommandedAddresses.Union(sessionModel.WritableAddresses).ToHashSet()
+                                       ),
                                        loggerFactory.CreateLogger<ModbusTlsFrontend>()
                                    );
 

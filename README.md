@@ -103,7 +103,8 @@ SunSpec Common Model 1 followed by a subset of Meter Model 213, based at 40000:
 | 40089 - 40093 | energy exported, energy imported, scale factor (0) |
 | 40094 | meter mode - **commanded**, `0` net, `1` import only, `2` export only |
 | 40095 | reset energy - **commanded**, write `0xCAFE` to clear both counters |
-| 40096 - 40097 | end-of-models marker |
+| 40096 - 51247 | the session model, 64900 - see [Over Modbus](#over-modbus-the-session-model) |
+| 51248 - 51249 | end-of-models marker |
 
 Everything not marked is read-only; a write to it is refused whatever the role.
 Measurements move once a second.
@@ -712,11 +713,93 @@ it a charging session: two separately signed readings are two facts about a
 meter, and the energy between them is an inference somebody else has to be
 trusted to have drawn correctly. Here the subtraction is inside what was signed.
 
+The start takes more than who charges, and all of it is optional:
+
+| | OCMF | |
+|---|---|---|
+| `identificationType` | `IT` | how they were identified: `ISO14443` for a card, `EMAID` for a contract, `LOCAL` or `CENTRAL` for an account - one of the names OCMF has |
+| `identification` | `ID` | whom they were identified as |
+| `chargePointIdType` | `CT` | `EVSEID` or `CBIDC` |
+| `chargePointId` | `CI` | the EVSE, or the charge box and its connector |
+| `tariffText` | `TT` | the tariff - in the Bonn form `001;EUR;0;35;0;0`, or free text |
+| `stationSessionId` | - | what whoever began the session calls it |
+
+All but the last are signed. OCMF has no field for a session id, and one of this
+meter's own inside what is signed would be read by no verifier there is; it comes
+back beside the document instead, so that a station can tell its document from
+another's. A stop may name it, `{"stationSessionId": "..."}`, and is then refused
+if another session is running. A document with a tariff text says `"FV": "1.1"`,
+the version that brought `TT`.
+
 One session at a time, because this meter is one measuring point. Starting a
 second while the first runs is a 409 naming the one that is open, and the key
 the session started with is the key it is signed with at the end - a document
 whose two readings were signed by different keys is not one document.
 
+
+### Over Modbus: the session model
+
+There is no standard for this. The German calibration law asks that the energy of
+a charging session be signed by the meter that measured it, with who charged and
+on which terms inside what was signed; SunSpec has models for what a meter
+measures and none for whom. So the meter has a model of its own, in the range
+SunSpec leaves to manufacturers, and a charging station finds it the way it finds
+every SunSpec model - by walking the list from `SunS`. It is right behind the
+device's own models, where their list used to end, and the end of the list is
+behind it.
+
+It is a wrapper and not a part of the simulation: a Modbus backend around another
+one, which answers for the session model and hands every other request to the
+device. The energy a session is signed with is read from the device's first meter
+model the way a charging station reads it - integers with a scale factor for 201
+to 204, a float for 211 to 214, Hermod's 24 registers for 213 - so the same
+wrapper goes around any SunSpec meter.
+
+Model 64900, its points counted from the register after its length:
+
+| Point | Registers | | |
+|---:|---:|---|---|
+| 0 | 1 | command | **commanded** - `1` starts a session, `2` stops it; reads 0 |
+| 1 | 1 | state | `0` none, `1` running, `2` stopped and its document here |
+| 2 | 1 | error | why this connection's last command was refused, `0` when it was not |
+| 3 | 1 | pad | |
+| 4 | 64 | error text | the same in words |
+| 68 | 32 | session id | **commanded** - for a start, what the session is to be known by; for a stop, the session meant |
+| 100 | 8 | `IT` | **commanded** |
+| 108 | 40 | `ID` | **commanded** |
+| 148 | 8 | `CT` | **commanded** |
+| 156 | 40 | `CI` | **commanded** |
+| 196 | 128 | `TT` | **commanded** - more than one request writes: at most 123 registers go into one |
+| 324 | 32 | current session id | the session id the running session, or the stopped one whose document is here, is known by |
+| 356 | 1 | public key length | in bytes |
+| 357 | 2600 | public key | hex, as an OCMF reader wants it: a SubjectPublicKeyInfo for ECDSA, the raw key for EdDSA and ML-DSA |
+| 2957 | 1 | document length | in bytes |
+| 2958 | 8192 | document | the OCMF document of the last session that was stopped |
+
+Texts are UTF-8, two bytes to a register with the first in the high byte, padded
+with NUL. The length is 11150; at this meter the model's id is at 40096.
+
+**What a connection writes is that connection's.** The parameters of a command
+are not shared registers: one connection does not see what another wrote, and
+after each command they are empty again. An identification standing in a shared
+register would otherwise be signed into the next session of whoever forgot to
+write one.
+
+A start is the parameters, then `1` into the command register - in one request
+or several. A stop is `2`, with the session id first when the station wants to be
+sure it stops its own. A refused command is answered with exception `03`, or
+`04` when the counter could not be read or the session not signed, and the error
+registers of that connection say why; the state and the document are everybody's.
+
+The document of a stopped session is there, and on disk, until the next session
+begins - a station that reads it a moment after the meter was restarted still
+finds it. Reading it takes as many requests of 125 registers as its length needs.
+
+The command and the parameters are commanded: a certificate with
+`GridServiceSunSpec` - a charging station's - may begin and end a session, one
+with `ReadOnlySunSpec` may read the document and nothing else. Either door, the
+JSON API or Modbus, begins and ends the same session: one begun on the web page is
+stopped by a station, and the other way round.
 
 ### Across a restart
 
