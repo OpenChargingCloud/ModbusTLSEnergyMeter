@@ -1062,12 +1062,14 @@ LocalController uses, so one file can be written once and copied:
 ```json
 {
   "dns": { "enabled": true, "servers": [ "192.168.1.1" ] },
-  "nts": { "enabled": true,
-           "servers": [ "ptbtime1.ptb.de", "ptbtime2.ptb.de",
-                        "ptbtime3.ptb.de", "ptbtime4.ptb.de" ],
-           "minServers": 2,
-           "checkEverySeconds": 900,
-           "legalTimeAuthority": "PTB" }
+  "nts": { "groups": {
+    "legal": { "enabled": true,
+               "servers": [ "ptbtime1.ptb.de", "ptbtime2.ptb.de",
+                            "ptbtime3.ptb.de", "ptbtime4.ptb.de" ],
+               "minServers": 2,
+               "checkEverySeconds": 900,
+               "legalTimeAuthority": "PTB" }
+  } }
 }
 ```
 
@@ -1082,12 +1084,17 @@ the form the DNS page writes the list back in:
 A name server written as a URL - `udp://192.168.1.1:53` - is not a form the
 file takes, and a meter given one does not start.
 
-That `nts` block is what a meter asks when the file says nothing at all: the
-PTB's four, of which two have to answer. Naming them changes nothing; it is
+That `legal` group is what a meter asks when the file says nothing at all:
+the PTB's four, of which two have to answer. Naming them changes nothing; it is
 written out here because a file that names its time servers is a file somebody
-can check.
+can check. The section names its groups below `groups` - `legal`, the one the
+meter's legal time and its log book rest on, and any others, as on every node
+(see WWCP_Node's README). A section with keys outside of `groups` - the flat
+section of the files from before there were groups - is refused at the start,
+and says where they belong: move them into `nts.groups.legal`. No `nts`
+section at all, and `"nts": { }`, is the legal group as above.
 
-Every key of the section, and what it is when absent:
+Every key of a group, and what it is when absent:
 
 | Key | Default | |
 |---|---|---|
@@ -1135,10 +1142,10 @@ priority is asked first. The four above share priority 0, because they are
 peers - putting them in separate bands would say something about them that is
 not true.
 
-A section naming a single `hostname` and no list becomes a group of one, which
-is what every file written before there were groups says, and it keeps working.
-A group of one is held to a quorum of one, and a section asking two of it is
-refused. Saved over the API, such a section replaces the list - in the file as
+A group naming a single `hostname` and no list is a band of one, which is what
+a file written before there were lists of servers says, and it keeps working.
+A band of one is held to a quorum of one, and a group asking two of it is
+refused. Saved over the API, such a group replaces the list - in the file as
 well, so that the next start does not bring the list back.
 
 A section that is absent is not a section set to nothing: it means the file has

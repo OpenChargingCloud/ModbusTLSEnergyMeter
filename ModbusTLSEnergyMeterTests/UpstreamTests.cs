@@ -393,7 +393,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var configuration = Path.Combine(directory!, "configuration.json");
 
-            var json = new JObject(new JProperty("nts", new JObject(new JProperty("enabled", false))));
+            var json = new JObject(new JProperty("nts", new JObject(
+                                       new JProperty("groups", new JObject(
+                                           new JProperty("legal", new JObject(new JProperty("enabled", false))))))));
 
             if (Upstream is not null)
                 json[UpstreamConfiguration.SectionName] = Upstream;
