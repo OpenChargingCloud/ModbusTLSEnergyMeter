@@ -18,6 +18,7 @@
 #region Usings
 
 using System.Net;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -1283,9 +1284,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.That(made, Is.EqualTo(HttpStatusCode.Created), $"{request}");
 
             var id                = request!["id"]!.ToString();
-            var (downloaded, csr) = await administrator.GetText($"api/v1/certificates/requests/{id}");
+            var (downloaded, csr, disposition) = await administrator.GetFile($"api/v1/certificates/requests/{id}");
 
             Assert.That(downloaded, Is.EqualTo(HttpStatusCode.OK), csr);
+            Assert.Multiple(() => {
+                Assert.That(disposition?.DispositionType,  Is.EqualTo("attachment"));
+                Assert.That(disposition?.FileName?.Trim('"'), Is.EqualTo($"modbus-{id}.csr"));
+            });
 
             // Signed by the device CA the meter's own certificate came from, and
             // valid from a second after that one, so that it is the newer.
@@ -1819,6 +1824,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             {
                 using var response = await client.GetAsync(Path);
                 return (response.StatusCode, await response.Content.ReadAsStringAsync());
+            }
+
+            /// <summary>
+            /// What a path answers, as text, with the name it says to save it under.
+            /// </summary>
+            public async Task<(HttpStatusCode, String, ContentDispositionHeaderValue?)> GetFile(String Path)
+            {
+                using var response = await client.GetAsync(Path);
+                return (response.StatusCode, await response.Content.ReadAsStringAsync(), response.Content.Headers.ContentDisposition);
             }
 
             public async Task<HttpStatusCode> StatusOf(HttpMethod  Method,

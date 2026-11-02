@@ -160,7 +160,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                            HTTPStatusCode      = HTTPStatusCode.OK,
                            ContentType         = HTTPContentType.Application.OCTETSTREAM,
                            Content             = Encoding.ASCII.GetBytes(pem),
-                           ContentDisposition  = $"attachment; filename=\"{request.Listener}-{request.Id}.csr\"",
+                           ContentDisposition  = HTTPContentDisposition.Attachment($"{request.Listener}-{request.Id}.csr"),
                            CacheControl        = "no-store",
                            Connection          = ConnectionType.Close
                        }.AsImmutable
