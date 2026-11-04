@@ -107,6 +107,48 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         protected override WWCPNode NewNode(String   Directory,
                                             JObject  Configuration)
+
+            => NewMeter(Directory,
+                        Configuration,
+                        Path.Combine(Directory, "data"),
+                        LogKeepDays: 0);
+
+        #endregion
+
+        #region (protected override) NewNodeWritingLogFiles(Directory, Configuration, LogPath)
+
+        /// <summary>
+        /// A meter keeps its log files - and its log book beside them - in the
+        /// "logs" directory of its data directory, so one that writes them
+        /// into the given directory has the directory above it as its data.
+        /// </summary>
+        protected override WWCPNode? NewNodeWritingLogFiles(String   Directory,
+                                                            JObject  Configuration,
+                                                            String   LogPath)
+        {
+
+            if (Path.GetFileName(LogPath) != ModbusTLSEnergyMeter.LogDirectoryName)
+                return null;
+
+            var meter = NewMeter(Directory,
+                                 Configuration,
+                                 Path.GetDirectoryName(LogPath)!,
+                                 LogKeepDays: 1);
+
+            Assert.That(meter.LogPath, Is.EqualTo(Path.GetFullPath(LogPath)), "the meter writes its log files where it was asked to");
+
+            return meter;
+
+        }
+
+        #endregion
+
+        #region (private) NewMeter(Directory, Configuration, DataPath, LogKeepDays)
+
+        private ModbusTLSEnergyMeter NewMeter(String   Directory,
+                                              JObject  Configuration,
+                                              String   DataPath,
+                                              Int32    LogKeepDays)
         {
 
             var configuration = Path.Combine(Directory, WWCPConfigFile.DefaultFileName);
@@ -125,9 +167,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                        ListenPort:         TestPorts.Free(),
                        HTTPHostname:       IPv4Address.Localhost,
                        HTTPPort:           IPPort.Parse(TestPorts.Free()),
-                       DataPath:           Path.Combine(Directory, "data"),
+                       DataPath:           DataPath,
                        ConfigFile:         new WWCPConfigFile(configuration),
-                       LogKeepDays:        0,
+                       LogKeepDays:        LogKeepDays,
                        LogToConsole:       false,
                        BridgeDebugLog:     false
                    );
