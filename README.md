@@ -282,7 +282,8 @@ meter has on top.
 Everything below `/api/v1` needs the session cookie, and each resource names
 the permission it wants: an operation - `read`, `edit` or `run` - on a resource,
 written `meter:edit`, as on every node. The resources are the node's -
-`configuration`, `dns`, `nts`, `certificates`, `ssh` - and the meter's:
+`configuration`, `dns`, `nts`, `certificates`, `ssh`, `log`, which a node asks
+for only where its kind says so, and the meter does - and the meter's:
 
 | Resource | read | edit | run |
 |----------|------|------|-----|
@@ -293,7 +294,7 @@ written `meter:edit`, as on every node. The resources are the node's -
 | `certificates` | the store and the signing requests | a key and its request, a certificate, a CA | |
 | `ssh` | the SSH server: whether and where it runs, its host key, the sessions, every account's keys | switching it on or off, its port, passwords | |
 | `keys` | the signing keys | making one, choosing the default, throwing one away | |
-| `log` | the log, the log book, the event stream | | |
+| `log` | the log, the log book, the event stream, their files over SFTP | | |
 | `accounts` | who may sign in, and as what | making one, giving a role, resetting a password, taking one away | |
 
 What a person may do follows from the groups their account is in:

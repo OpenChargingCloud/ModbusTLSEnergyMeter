@@ -98,24 +98,27 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         public const String  Accounts  = "accounts";
 
         /// <summary>
-        /// The log, the log book beside it, and the event stream that follows
-        /// them. Read only: nobody edits evidence.
+        /// The log, the log book beside it, the event stream that follows
+        /// them and their files over SFTP: the node's "log", which this meter
+        /// asks for (see MeterHTTPAPI.ToReadTheLog). Read only: nobody edits
+        /// evidence.
         /// </summary>
         /// <remarks>
-        /// Open to anybody signed in on a node, and not here: every Modbus
-        /// request is in it, and so is who signed in when, which is more than
-        /// somebody who was given a look at the readings was given.
+        /// Open to anybody signed in on a node that does not ask for it, and
+        /// not here: every Modbus request is in it, and so is who signed in
+        /// when, which is more than somebody who was given a look at the
+        /// readings was given.
         /// </remarks>
-        public const String  Log       = "log";
+        public const String  Log       = NodeResources.Log;
 
         /// <summary>
         /// What this meter adds to the node's resources - configuration, dns,
-        /// nts, certificates and ssh - in the order a permission list is read
-        /// in. None of its own roles reads ssh: the SSH server's page lists
-        /// every account's keys and sessions, which is the accounts by another
-        /// name, and so is the administrators' alone.
+        /// nts, certificates, ssh and log - in the order a permission list is
+        /// read in. None of its own roles reads ssh: the SSH server's page
+        /// lists every account's keys and sessions, which is the accounts by
+        /// another name, and so is the administrators' alone.
         /// </summary>
-        public static readonly IReadOnlyList<String>  Resources  = [ Meter, Keys, Log, Accounts ];
+        public static readonly IReadOnlyList<String>  Resources  = [ Meter, Keys, Accounts ];
 
         #endregion
 

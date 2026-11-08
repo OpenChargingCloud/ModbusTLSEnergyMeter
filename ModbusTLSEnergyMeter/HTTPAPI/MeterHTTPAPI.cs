@@ -218,8 +218,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
             => Permission.Read(NodeResources.NTS);
 
         /// <summary>
-        /// The log and its event stream need the meter's own "log:read": the
-        /// log holds the addresses peers connect from and every certificate
+        /// The log, its event stream and its files over SFTP need "log:read",
+        /// which a node does not ask for by itself: the log holds the
+        /// addresses peers connect from and every certificate
         /// that was turned away - which is more than somebody allowed to watch
         /// a meter's readings was given.
         /// </summary>

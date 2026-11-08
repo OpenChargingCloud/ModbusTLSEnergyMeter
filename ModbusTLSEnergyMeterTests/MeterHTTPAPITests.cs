@@ -1201,7 +1201,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var refused = Assert.Throws<InvalidOperationException>(() => NewMeter());
 
             Assert.That(refused?.Message, Does.Contain("'registers'").
-                                          And.Contain("meter, keys, log, accounts"));
+                                          And.Contain("ssh, log, meter, keys, accounts"));
 
         }
 

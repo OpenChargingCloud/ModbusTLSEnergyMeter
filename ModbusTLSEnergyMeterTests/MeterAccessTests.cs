@@ -79,7 +79,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
 
                 Assert.That(access.Resources,
-                            Is.EqualTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "meter", "keys", "log", "accounts" }));
+                            Is.EqualTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "log", "meter", "keys", "accounts" }));
 
                 Assert.That(access.Roles.Select(role => role.Name),
                             Is.EqualTo(new[] { "viewer", "auditor", "guest", "systemadmin" }));
