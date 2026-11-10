@@ -67,6 +67,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// </summary>
         private String pki = default!;
 
+        /// <summary>
+        /// How many days of log files a meter of the suite keeps: a century,
+        /// so that none of the suite's day files is old enough to be thinned
+        /// out while a test reads it.
+        /// </summary>
+        private const Int32 KeepTheSuitesLogFiles = 100 * 365;
+
         #endregion
 
 
@@ -122,6 +129,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// "logs" directory of its data directory, so one that writes them
         /// into the given directory has the directory above it as its data.
         /// </summary>
+        /// <remarks>
+        /// It keeps them for a century. A meter that writes log files also
+        /// thins them out, and starts doing so the moment it starts: the day
+        /// files the suite puts into the directory are dated early in 2026,
+        /// and with a day of them kept one went from under a test that was
+        /// still reading it (NobodyWritesRemovesOrRenamesInTheLogs, a CI run
+        /// on Debian). What SFTP shows of the files is the question here, not
+        /// how long the meter keeps them - LogFileTests asks that.
+        /// </remarks>
         protected override WWCPNode? NewNodeWritingLogFiles(String   Directory,
                                                             JObject  Configuration,
                                                             String   LogPath)
@@ -133,7 +149,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var meter = NewMeter(Directory,
                                  Configuration,
                                  Path.GetDirectoryName(LogPath)!,
-                                 LogKeepDays: 1);
+                                 LogKeepDays: KeepTheSuitesLogFiles);
 
             Assert.That(meter.LogPath, Is.EqualTo(Path.GetFullPath(LogPath)), "the meter writes its log files where it was asked to");
 
