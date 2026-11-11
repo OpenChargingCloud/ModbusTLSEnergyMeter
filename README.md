@@ -1055,6 +1055,27 @@ is more than somebody allowed to watch the readings was given. A node leaves its
 log to anybody signed in; the meter's has more in it.
 
 
+## The command line
+
+`MeterCLI`, in `ModbusTLSEnergyMeter/CommandLine/`, is the meter's command
+line: the commands every node has - `syncNTS`, `queryDNS`, `log`, `who` and the
+rest - with the meter's serial number as the prompt. It is this library's and
+not the program's, and the meter hands it to **whoever signs in over SSH by
+itself**, so that a meter hosted by a test, a service or another program can be
+told the same as one run by ModbusTLSEnergyMeterCLI. A host with a console of
+its own runs one there:
+
+```csharp
+await new MeterCLI(meter).RunUntilStopped(meter.RunTask);
+```
+
+The meter has no command of its own yet. One would be a class in that folder
+built from a `MeterCLI` - a new file and nothing else, found without being
+listed, and tested in `ModbusTLSEnergyMeterTests/MeterCLITests.cs` as the
+command there stands in for it. A program with commands of its own derives
+from `MeterCLI` and sets `CommandLines` anew after making the meter.
+
+
 ## Name resolution and the time
 
 Both are read from a configuration file, in the same two sections that a

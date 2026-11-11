@@ -33,6 +33,7 @@ using cloud.charging.open.protocols.WWCP.Node.Configuration;
 using cloud.charging.open.protocols.WWCP.Node.Certificates;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
+using cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Signing;
 using cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI;
 using cloud.charging.open.EnergyMeters.ModbusTLS.Logging;
@@ -840,6 +841,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                        ExtAPI,
                                        HTTPRootPath
                                    );
+
+            #endregion
+
+            #region What somebody signed in over SSH gets
+
+            // The meter's command line, with its commands beside the node's -
+            // whichever program hosts this meter, and not only
+            // ModbusTLSEnergyMeterCLI. Before the node starts, as the node
+            // asks; a program with a command line of its own sets another
+            // after this.
+            CommandLines = (terminal, caller) => new MeterCLI(this, terminal, caller);
 
             #endregion
 
