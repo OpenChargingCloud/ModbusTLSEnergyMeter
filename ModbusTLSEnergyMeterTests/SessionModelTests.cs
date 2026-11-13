@@ -809,7 +809,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// <summary>
         /// A Modbus/TLS connection with the client certificate of a role.
         /// </summary>
-        private sealed class TLSConnection : IDisposable
+        internal sealed class TLSConnection : IDisposable
         {
 
             private readonly TcpClient  tcp;

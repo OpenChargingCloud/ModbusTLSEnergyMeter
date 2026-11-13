@@ -66,6 +66,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private void RecordModbusRequest(ModbusRequestInfo Info)
         {
 
+            // Where the connection comes from, and what it has asked so far:
+            // see ModbusConnections.
+            backends.Asked(Info.ConnectionId, Info.Peer, Info.Allowed);
+
             var level    = !Info.Allowed   ? LogLevel.Warning
                                : Info.IsException ? LogLevel.Warning
                                                   : LogLevel.Info;

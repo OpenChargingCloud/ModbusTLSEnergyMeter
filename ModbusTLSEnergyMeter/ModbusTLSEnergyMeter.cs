@@ -335,6 +335,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             => backends;
 
         /// <summary>
+        /// The Modbus/TLS connections open now, the oldest first: which, the
+        /// SunSpec role in the certificate its client showed, since when and
+        /// what it has asked so far.
+        /// </summary>
+        public IReadOnlyList<ModbusConnection>  ModbusConnections
+            => backends.Connections;
+
+        /// <summary>
         /// The certificate this meter is showing its Modbus/TLS clients at the
         /// moment, or the one it was started with when the store is empty.
         /// </summary>

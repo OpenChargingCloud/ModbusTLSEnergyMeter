@@ -39,8 +39,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
     /// written "meter:edit", and a role is a user group of the same name with
     /// the permissions it carries, as on every node. The node brings the
     /// administrators, who may do everything there is; the meter brings its
-    /// own viewer and the roles only it has. A role the configuration file
-    /// adds or redefines is heard like these.
+    /// own viewer, its own support and the roles only it has. A role the
+    /// configuration file adds or redefines is heard like these.
     /// </para>
     /// <para>
     /// The meter's viewer replaces the node's, which may read everything: here
@@ -113,8 +113,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         /// <summary>
         /// What this meter adds to the node's resources - configuration, dns,
-        /// nts, certificates, ssh and log - in the order a permission list is
-        /// read in. None of its own roles reads ssh: the SSH server's page
+        /// nts, certificates, ssh and log, and the six every node can be
+        /// asked over OCPP by somebody who signs for it: node, reset,
+        /// reset-immediate, state, firmware and signatures - in the order a
+        /// permission list is read in. Nothing of this meter answers to those
+        /// six yet: it speaks no OCPP. None of its own roles reads ssh: the SSH server's page
         /// lists every account's keys and sessions, which is the accounts by
         /// another name, and so is the administrators' alone.
         /// </summary>
@@ -150,6 +153,30 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                                      "nothing from it.");
 
         /// <summary>
+        /// Sees what is going on at this meter: what it measures, its
+        /// registers, the log and who is connected - and what the node's
+        /// support may: see the state, have it reported again and restart a
+        /// node that is idle.
+        /// </summary>
+        /// <remarks>
+        /// The meter's own, as the node allows a kind to bring one: the node's
+        /// support may do three things a node is asked over OCPP, and a meter
+        /// speaks none - an account that was only that could sign in and see
+        /// nothing. Somebody called because a meter misbehaves has to see the
+        /// readings and the log to say anything about it, and is not thereby
+        /// shown how the meter is configured, its certificates or its keys.
+        /// At the command line that is showMeterValues, readRegisters and
+        /// showConnections.
+        /// </remarks>
+        public static readonly Role  Support  = new ("support",
+                                                     [ .. Role.Support.Permissions,
+                                                       Permission.Read(Meter),
+                                                       Permission.Read(Log) ],
+                                                     "Sees the readings, the registers, the log and who is connected over Modbus/TLS - " +
+                                                     "what somebody needs who is called because the meter misbehaves. Changes nothing, " +
+                                                     "and sees neither the configuration nor the certificates, keys or accounts.");
+
+        /// <summary>
         /// Sees everything but the accounts, may ask a time server whether it
         /// answers, and changes nothing.
         /// </summary>
@@ -171,7 +198,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// The roles this meter brings. The administrators are the node's, and
         /// so is the order: the viewer first, the administrators last.
         /// </summary>
-        public static readonly IReadOnlyList<Role>  Roles  = [ Viewer, Auditor, Guest ];
+        public static readonly IReadOnlyList<Role>  Roles  = [ Viewer, Support, Auditor, Guest ];
 
         /// <summary>
         /// What the administrators may do, in the words somebody would use
@@ -264,6 +291,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             => Role.Name.ToLowerInvariant() switch {
                    WWCPNode.AdminRole  => "Administrator",
                    "auditor"           => "Auditor",
+                   "support"           => "Support",
                    "viewer"            => "Viewer",
                    "guest"             => "Guest",
                    _                   => Role.Name

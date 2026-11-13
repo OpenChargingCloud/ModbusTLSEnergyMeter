@@ -79,10 +79,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
 
                 Assert.That(access.Resources,
-                            Is.EqualTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "log", "meter", "keys", "accounts" }));
+                            Is.EqualTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "log",
+                                               "node", "reset", "reset-immediate", "state", "firmware", "signatures",
+                                               "meter", "keys", "accounts" }));
 
                 Assert.That(access.Roles.Select(role => role.Name),
-                            Is.EqualTo(new[] { "viewer", "auditor", "guest", "systemadmin" }));
+                            Is.EqualTo(new[] { "viewer", "support", "auditor", "guest", "systemadmin" }));
 
             });
 
@@ -119,6 +121,24 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("viewer",       "certificates:edit",   false)]
         [TestCase("viewer",       "keys:edit",           false)]
         [TestCase("viewer",       "accounts:edit",       false)]
+
+        // The meter's own: what the node's support may, and the readings and
+        // the log - what is going on at a meter - and nothing of how it is
+        // configured or who it says it is.
+        [TestCase("support",      "state:read",          true)]
+        [TestCase("support",      "state:run",           true)]
+        [TestCase("support",      "reset:run",           true)]
+        [TestCase("support",      "meter:read",          true)]
+        [TestCase("support",      "log:read",            true)]
+        [TestCase("support",      "reset-immediate:run", false)]
+        [TestCase("support",      "meter:edit",          false)]
+        [TestCase("support",      "meter:run",           false)]
+        [TestCase("support",      "configuration:read",  false)]
+        [TestCase("support",      "nts:read",            false)]
+        [TestCase("support",      "certificates:read",   false)]
+        [TestCase("support",      "keys:read",           false)]
+        [TestCase("support",      "accounts:read",       false)]
+        [TestCase("support",      "ssh:read",            false)]
 
         [TestCase("auditor",      "meter:read",          true)]
         [TestCase("auditor",      "certificates:read",   true)]

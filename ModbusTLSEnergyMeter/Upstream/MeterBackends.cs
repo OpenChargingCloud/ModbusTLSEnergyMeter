@@ -18,8 +18,11 @@
 #region Usings
 
 using System.Collections;
+using System.Collections.Concurrent;
 
 using Newtonsoft.Json.Linq;
+
+using org.GraphDefined.Vanaheimr.Illias;
 
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
@@ -46,6 +49,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
     /// ends, which is known only once the device answered. Until then a
     /// connection is handed the device alone: a meter that cannot be reached
     /// signs nothing anyway.
+    /// </para>
+    /// <para>
+    /// And so it is here that the connections open now are known: the
+    /// Modbus/TLS frontend asks for a backend once the TLS handshake of a
+    /// connection held, with its number and the role in its certificate, and
+    /// lets go of it when the connection is closed.
     /// </para>
     /// </remarks>
     public sealed class MeterBackends : IModbusBackendFactory
@@ -151,6 +160,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 
         private volatile Target  current;
 
+        private readonly ConcurrentDictionary<Int64, ModbusConnection>  connections = new ();
+
         #endregion
 
         #region Properties
@@ -195,6 +206,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         /// What only an administrator may write now.
         /// </summary>
         public IReadOnlySet<UInt16>  Protected  { get; }
+
+        /// <summary>
+        /// The Modbus/TLS connections open now, the oldest first.
+        /// </summary>
+        public IReadOnlyList<ModbusConnection>  Connections
+            => [ .. connections.Values.OrderBy(connection => connection.Id) ];
 
         #endregion
 
@@ -285,11 +302,59 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
                                                       CancellationToken  CancellationToken)
         {
 
+            var backend = await Direct(ConnectionId, Role, CancellationToken);
+
+            connections[ConnectionId] = new ModbusConnection(ConnectionId, Role, Timestamp.Now);
+
+            return new Connected(backend, () => connections.TryRemove(ConnectionId, out _));
+
+        }
+
+        #endregion
+
+        #region Direct(ConnectionId, Role, CancellationToken)
+
+        /// <summary>
+        /// The backend a Modbus/TLS connection is handed, for whoever asks
+        /// from within this meter and is no connection: its command line.
+        /// </summary>
+        /// <remarks>
+        /// The whole of it - the device and the session model behind its
+        /// models - and without the policy of the Modbus/TLS frontend, which
+        /// decides by the role in a certificate nobody showed here. Whoever
+        /// calls this says who may.
+        /// </remarks>
+        public async Task<IModbusBackend> Direct(Int64              ConnectionId       = 0,
+                                                 String?            Role               = null,
+                                                 CancellationToken  CancellationToken  = default)
+        {
+
             var target = current;
 
             return await target.ModelOf(this) is SessionModelBackendFactory model
                        ? await model.        CreateAsync(ConnectionId, Role, CancellationToken)
                        : await target.Device.CreateAsync(ConnectionId, Role, CancellationToken);
+
+        }
+
+        #endregion
+
+        #region Asked(ConnectionId, Peer, Allowed)
+
+        /// <summary>
+        /// A connection made a request: where it comes from is known from
+        /// here on, and what it asked is counted.
+        /// </summary>
+        /// <param name="ConnectionId">The number of the connection.</param>
+        /// <param name="Peer">Where it comes from.</param>
+        /// <param name="Allowed">Whether the policy allowed the request.</param>
+        public void Asked(Int64    ConnectionId,
+                          String?  Peer,
+                          Boolean  Allowed)
+        {
+
+            if (connections.TryGetValue(ConnectionId, out var connection))
+                connection.Asked(Peer, Allowed, Timestamp.Now);
 
         }
 
@@ -316,6 +381,38 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 
         #endregion
 
+
+        #region (class) Connected
+
+        /// <summary>
+        /// The backend of a connection, which says when the connection let
+        /// go of it.
+        /// </summary>
+        private sealed class Connected(IModbusBackend  Backend,
+                                       Action          Closed) : IModbusBackend
+        {
+
+            public Task<Byte[]> ProcessRequestAsync(Byte                  UnitId,
+                                                    ReadOnlyMemory<Byte>  RequestPDU,
+                                                    CancellationToken     CancellationToken)
+
+                => Backend.ProcessRequestAsync(UnitId, RequestPDU, CancellationToken);
+
+            public async ValueTask DisposeAsync()
+            {
+                try
+                {
+                    await Backend.DisposeAsync();
+                }
+                finally
+                {
+                    Closed();
+                }
+            }
+
+        }
+
+        #endregion
 
         #region (class) Addresses
 

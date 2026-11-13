@@ -27,9 +27,10 @@ export * from '@node/api/client';
 
 /**
  * What there is to be allowed to do something with: the node's resources -
- * configuration, dns, nts, certificates - and the meter's.
+ * configuration, dns, nts, certificates, ssh, log and the six every node can
+ * be asked over OCPP - and the meter's.
  */
-export type Resource = NodeResource | 'meter' | 'keys' | 'log' | 'accounts';
+export type Resource = NodeResource | 'meter' | 'keys' | 'accounts';
 
 /**
  * What somebody signed in to this meter may do: an operation on a resource,

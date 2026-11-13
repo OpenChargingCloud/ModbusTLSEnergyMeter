@@ -50,6 +50,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
     /// same word, and Styx runs neither of two that match.
     /// </para>
     /// <para>
+    /// The meter's own are showMeterValues, showConnections, readRegisters
+    /// and writeRegisters. The last is the one thing here the web interface
+    /// has no page for - any register, rather than the meter mode and the
+    /// energy counters - and it asks what the web interface asks for those
+    /// two: "meter:edit".
+    /// </para>
+    /// <para>
     /// Here, beside the meter, and not in the program that runs it: what a
     /// meter can be told is the meter's, and is told over SSH as well as at
     /// the console. The meter hands it to whoever signs in over SSH by itself

@@ -191,7 +191,7 @@ every OpenChargingCloud program with a web interface, and the meter adds its
 registers, its certificates, its signed readings and its roles.
 
 A role is a user group of the same name - `systemadmin`, `auditor`, `viewer`,
-`guest` - and that is what separates who may change this meter from who may
+`support`, `guest` - and that is what separates who may change this meter from who may
 only watch it. What a role may do is data, as on every node: operations on
 resources, written `meter:edit` (see [The JSON API](#the-json-api)). What an
 account may do is asked of its groups at every request rather than remembered
@@ -283,11 +283,15 @@ Everything below `/api/v1` needs the session cookie, and each resource names
 the permission it wants: an operation - `read`, `edit` or `run` - on a resource,
 written `meter:edit`, as on every node. The resources are the node's -
 `configuration`, `dns`, `nts`, `certificates`, `ssh`, `log`, which a node asks
-for only where its kind says so, and the meter does - and the meter's:
+for only where its kind says so, and the meter does - and the meter's. A node
+also knows `node`, `reset`, `reset-immediate`, `state`, `firmware` and
+`signatures`: what every kind of node can be asked over OCPP by somebody who
+signs for it. A meter speaks no OCPP, so nothing of it answers to these yet;
+they are named here because a role may name them.
 
 | Resource | read | edit | run |
 |----------|------|------|-----|
-| `meter` | the readings, the registers, the signed readings, the sessions, the meter in front of which it stands | the meter mode, clearing the energy counters, the meter in front of which it stands | starting and stopping a session |
+| `meter` | the readings, the registers, the signed readings, the sessions, the meter in front of which it stands | the meter mode, clearing the energy counters, the meter in front of which it stands, registers written at the command line | starting and stopping a session |
 | `configuration` | what the node is made of | | |
 | `dns` | the name servers | changing them | looking a name up |
 | `nts` | the time servers, and the clock | changing them | asking one: `sync`, `test` |
@@ -304,6 +308,7 @@ What a person may do follows from the groups their account is in:
 | `viewer`      | read everything but the accounts and the SSH server |
 | `auditor`     | what a viewer may, and `nts:run` |
 | `guest`       | `meter:read` |
+| `support`     | `meter:read`, `log:read`, and what a node's support may: `state:read`, `state:run`, `reset:run` |
 | `systemadmin` | everything: every operation on every resource |
 
 The viewer is the meter's own and narrower than a node's, which may read
@@ -313,6 +318,13 @@ the SSH server's page lists every account's keys and who is connected - and the
 page is the administrators'. Starting a session is `meter:run` rather than part of
 `meter:edit`, because it is what a station operator does every day, and
 clearing the energy counters is the one thing here that destroys something.
+The support is the meter's own as well. A node's may see what is going on in
+it and restart it once it is idle, which on a meter is nothing yet; the
+meter's also reads the readings, the registers and the log - what somebody
+called because a meter misbehaves has to see to say anything about it - and
+neither how the meter is configured nor its certificates, keys or accounts.
+At the command line that is `showMeterValues`, `readRegisters` and
+`showConnections`.
 
 Certificates and signing keys are each a resource of their own and not part of
 changing network settings, because they are bigger things than any of those:
@@ -1069,11 +1081,48 @@ its own runs one there:
 await new MeterCLI(meter).RunUntilStopped(meter.RunTask);
 ```
 
-The meter has no command of its own yet. One would be a class in that folder
-built from a `MeterCLI` - a new file and nothing else, found without being
-listed, and tested in `ModbusTLSEnergyMeterTests/MeterCLITests.cs` as the
-command there stands in for it. A program with commands of its own derives
-from `MeterCLI` and sets `CommandLines` anew after making the meter.
+Beside the node's, the meter has commands of its own:
+
+| Command | says or does | needs |
+|---------|--------------|-------|
+| `showMeterValues` | what the meter is measuring now: who it is, the three phases and their total, the frequency and both energy counters - what `GET /api/v1/meter` answers | `meter:read` |
+| `showConnections` | who is connected over Modbus/TLS now: the connection by the number the log has it under, the SunSpec role in the certificate its client showed, from where, since when, how many requests it made and how many of them were refused | `log:read` |
+| `readRegisters <address> [<count>]` | holding registers as a Modbus client reads them, up to 125 at once: each with its address, in hexadecimal, as a number, as a negative number where its highest bit is set, and as text where it is text | `meter:read` |
+| `writeRegisters <address> <value> [<value> ...]` | holding registers as a Modbus client writes them, the values one behind the other from the address on | `meter:edit` |
+
+```
+meter-0001> readRegisters 40000 2
+40000  0x5375  21365          "Su"
+40001  0x6E53  28243          "nS"
+meter-0001> writeRegisters 40094 1
+Register 40094 written: 0x0001.
+meter-0001> showConnections
+#7  GridServiceSunSpec  from 192.168.1.20:51234, since 14:02:11, 312 requests (1 refused), the last at 14:07:23
+```
+
+An address is written `40094` or `0x9C9E`, a value `1`, `0xFFFF` or `-1`. Both
+register commands ask what every Modbus/TLS connection is handed - the
+simulation or the meter in front of which this one stands, and the session
+model behind its models - so that what is read is what a client would be
+answered, and what a register does when it is written is the device's to say:
+one that cannot be written is answered with the Modbus exception a client would
+get, and nothing is written. What they do not ask is the policy of the
+Modbus/TLS listener, which decides by the SunSpec role in a client's
+certificate - nobody showed one here. What decides instead is what decides on
+the web interface: an account over SSH needs the permission in the table, and
+is refused in the sentence the web interface refuses it with; the console has
+the process and may do everything. Every `writeRegisters` is in the log book,
+with who wrote what and what the device answered.
+
+A connection is listed from the moment its TLS handshake held until it is
+closed; where it comes from is known with its first request, because the
+listener says the peer with every request and not before.
+
+A command is a class in that folder built from a `MeterCLI` - a new file and
+nothing else, found without being listed - and tested in
+`ModbusTLSEnergyMeterTests/MeterCLITests.cs`. A program with commands of its
+own derives from `MeterCLI` and sets `CommandLines` anew after making the
+meter.
 
 
 ## Name resolution and the time
@@ -1148,6 +1197,14 @@ chain has to end at, or both.
   "rootFingerprint":        "B676...64 hex digits...",
   "onMismatch":             "refuse" }
 ```
+
+Either may be the pin of a key instead of a fingerprint: `spki:` and the
+SHA-256 over the DER encoded SubjectPublicKeyInfo in hexadecimal - what a DANE
+record `3 1 1` holds - or, as curl writes it, `sha256//` and base64. A
+certificate renewed with the key it had keeps the pin of its key and loses its
+fingerprint. Both kinds can stand side by side - `certificateFingerprints` and
+`rootFingerprints` take a list - and the server is held to any one of them; the
+meter in front of which this one stands is held the same way.
 
 A fingerprint that does not match refuses the server - the key exchange does
 not happen - unless `onMismatch` is `"record"`, which uses it all the same and

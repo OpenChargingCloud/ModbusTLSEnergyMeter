@@ -138,7 +138,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 // Every operation on every resource, spelled out - "*" is the
                 // node's shorthand and never reaches a page.
                 Assert.That(me?["permissions"]?.Values<String>(),
-                            Is.EquivalentTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "meter", "keys", "log", "accounts" }.
+                            Is.EquivalentTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "log",
+                                                    "node", "reset", "reset-immediate", "state", "firmware", "signatures",
+                                                    "meter", "keys", "accounts" }.
                                                 SelectMany(resource => new[] { "read", "edit", "run" }.Select(operation => $"{resource}:{operation}"))));
 
             });
@@ -319,9 +321,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(rolesStatus, Is.EqualTo(HttpStatusCode.OK), "a guest may read what the roles mean");
 
-                // In the node's order: the viewer first, the administrators last.
+                // In the node's order: the viewer first, the support behind
+                // it - both the meter's own - and the administrators last.
                 Assert.That(roles?["roles"]?.Select(role => role["role"]?.ToString()),
-                            Is.EqualTo(new[] { "viewer", "auditor", "guest", "systemadmin" }));
+                            Is.EqualTo(new[] { "viewer", "support", "auditor", "guest", "systemadmin" }));
+
+                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "support")?["title"]?.ToString(),
+                            Is.EqualTo("Support"));
+
+                Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "support")?["permissions"]?.Values<String>(),
+                            Is.EquivalentTo(new[] { "state:read", "state:run", "reset:run", "meter:read", "log:read" }));
 
                 // What the table promises has to be what the meter enforces,
                 // otherwise it is a sentence somebody reads and believes.
@@ -1135,7 +1144,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                        new JProperty("timekeeper", new JArray("meter:read", "nts:read", "nts:run"))
                                    ));
 
-            Assert.That(meter!.Roles, Is.EqualTo(new[] { "viewer", "auditor", "guest", "timekeeper", "systemadmin" }),
+            Assert.That(meter!.Roles, Is.EqualTo(new[] { "viewer", "support", "auditor", "guest", "timekeeper", "systemadmin" }),
                         "before the administrators, as the node orders a role the file adds");
 
             using var administrator = await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, rootPassword);
@@ -1195,13 +1204,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             meter = null;
 
             WriteRolesIntoTheConfiguration(new JObject(
-                                               new JProperty("support", new JArray("registers:edit"))
+                                               new JProperty("helpdesk", new JArray("registers:edit"))
                                            ));
 
             var refused = Assert.Throws<InvalidOperationException>(() => NewMeter());
 
             Assert.That(refused?.Message, Does.Contain("'registers'").
-                                          And.Contain("ssh, log, meter, keys, accounts"));
+                                          And.Contain("ssh, log, node, reset, reset-immediate, state, firmware, signatures, meter, keys, accounts"));
 
         }
 

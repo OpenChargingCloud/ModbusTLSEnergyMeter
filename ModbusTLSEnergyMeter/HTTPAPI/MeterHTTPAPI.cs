@@ -560,14 +560,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
         #endregion
 
-        #region (private static) ReadingsJSON(Registers)
+        #region (internal static) ReadingsJSON(Registers)
 
         /// <summary>
         /// The register block as the numbers it stands for: the scale factors
         /// applied, the strings unpacked, the two energy counters put back
         /// together.
         /// </summary>
-        private static JObject ReadingsJSON(UInt16[] Registers)
+        internal static JObject ReadingsJSON(UInt16[] Registers)
         {
 
             var currentSF    = (Int16) Registers[SunSpecMeterMap.OffMeterA_SF];
