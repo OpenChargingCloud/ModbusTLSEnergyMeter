@@ -51,10 +51,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
     /// signs nothing anyway.
     /// </para>
     /// <para>
-    /// And so it is here that the connections open now are known: the
-    /// Modbus/TLS frontend asks for a backend once the TLS handshake of a
-    /// connection held, with its number and the role in its certificate, and
-    /// lets go of it when the connection is closed.
+    /// And it is here that the connections open now are kept: the Modbus/TLS
+    /// frontend says when the TLS handshake of one held - with where it comes
+    /// from and the certificate its client showed - and when it is over, and
+    /// the meter hands both on.
     /// </para>
     /// </remarks>
     public sealed class MeterBackends : IModbusBackendFactory
@@ -300,15 +300,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         public async Task<IModbusBackend> CreateAsync(Int64              ConnectionId,
                                                       String?            Role,
                                                       CancellationToken  CancellationToken)
-        {
 
-            var backend = await Direct(ConnectionId, Role, CancellationToken);
-
-            connections[ConnectionId] = new ModbusConnection(ConnectionId, Role, Timestamp.Now);
-
-            return new Connected(backend, () => connections.TryRemove(ConnectionId, out _));
-
-        }
+            => await Direct(ConnectionId, Role, CancellationToken);
 
         #endregion
 
@@ -339,22 +332,36 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 
         #endregion
 
-        #region Asked(ConnectionId, Peer, Allowed)
+        #region Opened(Connection) / Closed(Connection) / Asked(ConnectionId, Allowed)
 
         /// <summary>
-        /// A connection made a request: where it comes from is known from
-        /// here on, and what it asked is counted.
+        /// The TLS handshake of a connection held: it is one of those open
+        /// now.
+        /// </summary>
+        /// <param name="Connection">What the Modbus/TLS frontend said of it.</param>
+        public void Opened(ModbusConnectionInfo Connection)
+
+            => connections[Connection.ConnectionId] = new ModbusConnection(Connection);
+
+        /// <summary>
+        /// A connection is over.
+        /// </summary>
+        /// <param name="Connection">What the Modbus/TLS frontend said of it when it began.</param>
+        public void Closed(ModbusConnectionInfo Connection)
+
+            => connections.TryRemove(Connection.ConnectionId, out _);
+
+        /// <summary>
+        /// A connection made a request, which is counted.
         /// </summary>
         /// <param name="ConnectionId">The number of the connection.</param>
-        /// <param name="Peer">Where it comes from.</param>
         /// <param name="Allowed">Whether the policy allowed the request.</param>
         public void Asked(Int64    ConnectionId,
-                          String?  Peer,
                           Boolean  Allowed)
         {
 
             if (connections.TryGetValue(ConnectionId, out var connection))
-                connection.Asked(Peer, Allowed, Timestamp.Now);
+                connection.Asked(Allowed, Timestamp.Now);
 
         }
 
@@ -381,38 +388,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 
         #endregion
 
-
-        #region (class) Connected
-
-        /// <summary>
-        /// The backend of a connection, which says when the connection let
-        /// go of it.
-        /// </summary>
-        private sealed class Connected(IModbusBackend  Backend,
-                                       Action          Closed) : IModbusBackend
-        {
-
-            public Task<Byte[]> ProcessRequestAsync(Byte                  UnitId,
-                                                    ReadOnlyMemory<Byte>  RequestPDU,
-                                                    CancellationToken     CancellationToken)
-
-                => Backend.ProcessRequestAsync(UnitId, RequestPDU, CancellationToken);
-
-            public async ValueTask DisposeAsync()
-            {
-                try
-                {
-                    await Backend.DisposeAsync();
-                }
-                finally
-                {
-                    Closed();
-                }
-            }
-
-        }
-
-        #endregion
 
         #region (class) Addresses
 

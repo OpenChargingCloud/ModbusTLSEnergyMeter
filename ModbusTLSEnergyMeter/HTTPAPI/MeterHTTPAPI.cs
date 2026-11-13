@@ -137,6 +137,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             AddHandler(HTTPPath.Root + "v1/meter",                      GetMeter,            HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/meter/registers",            GetRegisters,        HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/meter/connections",          GetConnections,      HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/meter/mode",                 PutMeterMode,        HTTPMethod.PUT);
             AddHandler(HTTPPath.Root + "v1/meter/energy/reset",         PostResetEnergy,     HTTPMethod.POST);
 
@@ -342,6 +343,36 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
                            new JProperty("count",      count),
                            new JProperty("registers",  new JArray(registers.Select(register => (Int32) register)))
                        ));
+
+        }
+
+        #endregion
+
+        #region (private) GetConnections  (Request)
+
+        /// <summary>
+        /// GET /api/v1/meter/connections: who is connected over Modbus/TLS
+        /// now - each connection with where it comes from, the certificate
+        /// its client showed and the SunSpec role in it, since when, and what
+        /// it has asked so far.
+        /// </summary>
+        /// <remarks>
+        /// Needs what the log needs: who asks this meter what, and from
+        /// where, is what the log is - and is what 'showConnections' says at
+        /// the command line, to the same accounts.
+        /// </remarks>
+        private Task<HTTPResponse> GetConnections(HTTPRequest Request)
+        {
+
+            if (!TryAuthorize(Request, Permission.Read(MeterAccess.Log), false, out _, out var refused))
+                return Task.FromResult(refused);
+
+            return Task.FromResult(
+                       JSONResponse(Request, HTTPStatusCode.OK,
+                           new JObject(
+                               new JProperty("connections",  new JArray(meter.ModbusConnections.Select(connection => connection.ToJSON())))
+                           ))
+                   );
 
         }
 

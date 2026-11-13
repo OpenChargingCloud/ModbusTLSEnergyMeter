@@ -17,6 +17,8 @@
 
 #region Usings
 
+using Newtonsoft.Json.Linq;
+
 using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.CLI;
@@ -341,9 +343,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             });
 
-            Assert.That((await cli.Execute("readRegisters"))          [0],  Does.StartWith("Usage: readRegisters <address> [<count>]"));
-            Assert.That((await cli.Execute("readRegisters forty"))    [0],  Does.Contain("'forty' is no register address"));
-            Assert.That((await cli.Execute("readRegisters 70000"))    [0],  Does.Contain("'70000' is no register address"));
+            Assert.That((await cli.Execute("readRegisters"))          [0],  Does.StartWith("Usage: readRegisters <address or name> [<count>]"));
+            Assert.That((await cli.Execute("readRegisters forty"))    [0],  Does.StartWith("'forty' is neither a register address").And.Contain("nor the name of one"));
+            Assert.That((await cli.Execute("readRegisters 70000"))    [0],  Does.StartWith("'70000' is neither a register address"));
             Assert.That((await cli.Execute("readRegisters 40000 0"))  [0],  Does.Contain("'0' is no count of registers"));
             Assert.That((await cli.Execute("readRegisters 40000 126"))[0],  Does.Contain("'126' is no count of registers"));
             Assert.That((await cli.Execute("readRegisters 65535 2"))  [0],  Does.Contain("ends behind the last register"));
@@ -401,14 +403,103 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             });
 
-            Assert.That((await cli.Execute("writeRegisters"))              [0],  Does.StartWith("Usage: writeRegisters <address> <value> [<value> ...]"));
+            Assert.That((await cli.Execute("writeRegisters"))              [0],  Does.StartWith("Usage: writeRegisters <address or name> <value> [<value> ...]"));
             Assert.That((await cli.Execute($"writeRegisters {mode}"))      [0],  Does.StartWith("Usage: writeRegisters"));
-            Assert.That((await cli.Execute("writeRegisters there 1"))      [0],  Does.Contain("'there' is no register address"));
+            Assert.That((await cli.Execute("writeRegisters there 1"))      [0],  Does.StartWith("'there' is neither a register address"));
             Assert.That((await cli.Execute($"writeRegisters {mode} much")) [0],  Does.Contain("'much' is no value of a register"));
             Assert.That((await cli.Execute($"writeRegisters {mode} 65536"))[0],  Does.Contain("'65536' is no value of a register"));
             Assert.That((await cli.Execute("writeRegisters 65535 1 2"))    [0],  Does.Contain("ends behind the last register"));
 
             Assert.That(meter.Log.Recent(200, Tag: "write").Count(), Is.EqualTo(2), "what was not understood wrote nothing, and is no entry");
+
+        }
+
+        #endregion
+
+        #region ARegister_IsNamedAsSunSpecNamesIt()
+
+        /// <summary>
+        /// A register by the name SunSpec gives its point, in any case, with
+        /// as many registers as the point has - sixteen of the serial number,
+        /// two of an energy counter - unless a count is typed; and written by
+        /// its name as by its address.
+        /// </summary>
+        [Test]
+        public async Task ARegister_IsNamedAsSunSpecNamesIt()
+        {
+
+            using var cli = new MeterCLI(meter!);
+
+            var mode    = SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterMeterMode);
+            var serial  = await cli.Execute("readRegisters SN");
+            var energy  = await cli.Execute("readRegisters totwhimp");
+
+            Assert.Multiple(() => {
+
+                Assert.That(serial,     Has.Length.EqualTo(16));
+                Assert.That(serial[0],  Does.StartWith($"{SunSpecMeterMap.Addr(SunSpecMeterMap.OffCommonSN)}  0x").And.EndWith("\"me\""),
+                            "the serial number begins 'meter-cli-001'");
+
+                Assert.That(energy,     Has.Length.EqualTo(2));
+                Assert.That(energy[0],  Does.StartWith($"{SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterTotWhImp)}  0x"));
+
+            });
+
+            Assert.That(await cli.Execute("readRegisters SN 1"),      Is.EqualTo(new[] { serial[0] }), "a count that was typed wins");
+            Assert.That(await cli.Execute("readRegisters MeterMode"), Is.EqualTo(await cli.Execute($"readRegisters {mode}")));
+
+            Assert.That(await cli.Execute("writeRegisters metermode 2"),
+                        Is.EqualTo(new[] { $"Register {mode} written: 0x0002." }));
+
+            Assert.That(meter!.Device.Mode, Is.EqualTo(SunSpecMeterMode.ExportOnly));
+
+            // Every name is one register map's, once, and where the map says.
+            Assert.Multiple(() => {
+
+                Assert.That(RegisterNames.All.Select(point => point.Name.ToLowerInvariant()),  Is.Unique);
+                Assert.That(RegisterNames.All.Select(point => point.Address),                  Is.Unique.And.Ordered);
+
+                Assert.That(RegisterNames.All,
+                            Has.All.Matches<(String Name, UInt16 Address, UInt16 Count, String Is)>(
+                                point => point.Address >= SunSpecMeterMap.BaseAddress &&
+                                         point.Address + point.Count <= SunSpecMeterMap.BaseAddress + SunSpecMeterMap.RegisterCount &&
+                                         !RegisterNames.TryParseAddress(point.Name, out _)));
+
+            });
+
+        }
+
+        #endregion
+
+        #region TabOffersTheNamesOfTheRegisters()
+
+        /// <summary>
+        /// Tab completes the two register commands, says what the whole
+        /// command takes, and behind it offers the names that begin with what
+        /// was typed - whatever its case.
+        /// </summary>
+        [Test]
+        public async Task TabOffersTheNamesOfTheRegisters()
+        {
+
+            using var cli = new MeterCLI(meter!);
+
+            var command  = (await cli.Suggest("readR")).             Select(suggestion => suggestion.Suggestion).ToArray();
+            var whole    = (await cli.Suggest("readRegisters")).     Select(suggestion => suggestion.Suggestion).ToArray();
+            var named    = (await cli.Suggest("readRegisters s")).   Select(suggestion => suggestion.Suggestion).ToArray();
+            var energies = (await cli.Suggest("readRegisters tot")). Select(suggestion => suggestion.Suggestion).ToArray();
+            var mode     = (await cli.Suggest("writeRegisters Met")).Select(suggestion => suggestion.Suggestion).ToArray();
+            var none     = (await cli.Suggest("readRegisters 400")). Select(suggestion => suggestion.Suggestion).ToArray();
+
+            Assert.Multiple(() => {
+                Assert.That(command,   Is.EqualTo(new[] { "readRegisters" }));
+                Assert.That(whole,     Has.Length.EqualTo(1));
+                Assert.That(whole[0],  Does.Contain("<address or name>").And.Contain("TotWhImp"));
+                Assert.That(named,     Is.EqualTo(new[] { "readRegisters SN" }));
+                Assert.That(energies,  Is.EqualTo(new[] { "readRegisters TotWhExp", "readRegisters TotWhImp" }));
+                Assert.That(mode,      Is.EqualTo(new[] { "writeRegisters MeterMode" }));
+                Assert.That(none,      Is.Empty, "an address is somebody's to type");
+            });
 
         }
 
@@ -496,8 +587,28 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(said,     Has.Length.EqualTo(1));
                 Assert.That(said[0],  Does.StartWith("#1  ").
                                        And.Contain(SunSpecRoles.ReadOnly).
-                                       And.Contain("from a peer that has asked nothing yet").
-                                       And.EndWith("no request"));
+                                       And.Contain("from 127.0.0.1:").
+                                       And.Contain(", no request - ").
+                                       And.Match(@", TLS 1\.[23]$"),
+                            "known with where it comes from before it asked anything");
+
+                using var shown = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificateFromFile(
+                                      Path.Combine(pkiDirectory!, $"client-{SunSpecRoles.ReadOnly}.crt")
+                                  );
+
+                var asJSON = started.ModbusConnections[0].ToJSON();
+
+                Assert.Multiple(() => {
+                    Assert.That(said[0],                                          Does.Contain(shown.Subject));
+                    Assert.That(asJSON["id"]?.               Value<Int64>(),      Is.EqualTo(1));
+                    Assert.That(asJSON["role"]?.             Value<String>(),     Is.EqualTo(SunSpecRoles.ReadOnly));
+                    Assert.That(asJSON["peer"]?.             Value<String>(),     Does.StartWith("127.0.0.1:"));
+                    Assert.That(asJSON["clientSubject"]?.    Value<String>(),     Is.EqualTo(shown.Subject));
+                    Assert.That(asJSON["clientFingerprint"]?.Value<String>(),     Is.EqualTo(shown.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256)));
+                    Assert.That(asJSON["protocol"]?.         Value<String>(),     Does.StartWith("TLS 1."));
+                    Assert.That(asJSON["requests"]?.         Value<Int64>(),      Is.EqualTo(0));
+                    Assert.That(asJSON["lastRequest"]?.Type,                      Is.EqualTo(Newtonsoft.Json.Linq.JTokenType.Null));
+                });
 
                 Assert.That(await reader.Write(SunSpecMeterMap.Addr(SunSpecMeterMap.OffMeterMeterMode), [ 1 ]),
                             Is.EqualTo(ModbusExceptionCode.IllegalFunction), "a role that reads may not write");

@@ -16,6 +16,7 @@ import { sessionsPage }         from './pages/sessions';
 import { accountsPage }         from './pages/accounts';
 import { metrologicalLogPage }  from './pages/metrologicalLog';
 import { upstreamPage }         from './pages/upstream';
+import { connectionsPage }      from './pages/connections';
 
 
 // The certificates had three pages while the meter kept three stores of its
@@ -51,6 +52,9 @@ startNode({
             { path: '/configuration/upstream',   label: 'Upstream',          icon: 'fa-link',            permission: [ 'meter:read' ] }
         ]),
         { path: '/sessions',                     label: 'Sessions',          icon: 'fa-file-signature',  permission: [ 'meter:read' ] },
+        // Who is connected over Modbus/TLS now: what the log says afterwards,
+        // at the moment - and so for whoever may read the log.
+        { path: '/connections',                  label: 'Connections',       icon: 'fa-plug',            permission: [ 'log:read' ] },
         nodeMenu.logs,
         // The log book is the meter's own, and whoever may read the log may
         // read what of it is evidence.
@@ -83,6 +87,7 @@ startNode({
         '/configuration/upstream':       upstreamPage,
         '/configuration/accounts':       accountsPage,
         '/sessions':                     sessionsPage,
+        '/connections':                  connectionsPage,
         '/metrological-log':             metrologicalLogPage
 
     },

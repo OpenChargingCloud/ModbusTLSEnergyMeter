@@ -15,51 +15,65 @@
  * limitations under the License.
  */
 
+#region Usings
+
+using Newtonsoft.Json.Linq;
+
+using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
+
+#endregion
+
 namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 {
 
     /// <summary>
-    /// A Modbus/TLS connection to this meter that is open now: which one, the
-    /// SunSpec role in the certificate its client showed, since when, and what
-    /// it has asked so far.
+    /// A Modbus/TLS connection to this meter that is open now: which one, from
+    /// where, who the certificate its client showed says it is and the SunSpec
+    /// role in it, since when, and what it has asked so far.
     /// </summary>
     /// <remarks>
     /// Known from the moment its TLS handshake held - a connection that showed
     /// no certificate this meter believes never becomes one - until it is
-    /// closed. Where it comes from is known with its first request: the
-    /// Modbus/TLS frontend says the peer with every request and not before.
+    /// closed: the Modbus/TLS frontend says both.
     /// </remarks>
-    /// <param name="Id">The number the Modbus/TLS frontend gave it, as the log has it.</param>
-    /// <param name="Role">The SunSpec role in the client's certificate; null for a certificate without one.</param>
-    /// <param name="Since">When its TLS handshake held.</param>
-    public sealed class ModbusConnection(Int64           Id,
-                                         String?         Role,
-                                         DateTimeOffset  Since)
+    /// <param name="Opened">What the Modbus/TLS frontend said of it when its handshake held.</param>
+    public sealed class ModbusConnection(ModbusConnectionInfo Opened)
     {
 
         #region Data
 
-        private          Int64    requests;
-        private          Int64    refused;
-        private          Int64    lastRequestTicks;
-        private volatile String?  peer;
+        private Int64  requests;
+        private Int64  refused;
+        private Int64  lastRequestTicks;
 
         #endregion
 
         #region Properties
 
         /// <summary>The number the Modbus/TLS frontend gave it, as the log has it.</summary>
-        public Int64            Id        { get; } = Id;
+        public Int64            Id                 { get; } = Opened.ConnectionId;
+
+        /// <summary>Where it comes from.</summary>
+        public String?          Peer               { get; } = Opened.Peer;
 
         /// <summary>The SunSpec role in the client's certificate; null for a certificate without one.</summary>
-        public String?          Role      { get; } = Role;
+        public String?          Role               { get; } = Opened.Role;
+
+        /// <summary>The subject of the client's certificate.</summary>
+        public String           ClientSubject      { get; } = Opened.ClientSubject;
+
+        /// <summary>The SHA-256 fingerprint of the client's certificate, in upper-case hexadecimal.</summary>
+        public String           ClientFingerprint  { get; } = Opened.ClientFingerprint;
+
+        /// <summary>The TLS version its handshake agreed on, as it is written: "TLS 1.3".</summary>
+        public String           Protocol           { get; } = Opened.Protocol switch {
+                                                                  System.Security.Authentication.SslProtocols.Tls13  => "TLS 1.3",
+                                                                  System.Security.Authentication.SslProtocols.Tls12  => "TLS 1.2",
+                                                                  _                                                  => Opened.Protocol.ToString()
+                                                              };
 
         /// <summary>When its TLS handshake held.</summary>
-        public DateTimeOffset   Since     { get; } = Since;
-
-        /// <summary>Where it comes from; null until it has asked something.</summary>
-        public String?          Peer
-            => peer;
+        public DateTimeOffset   Since              { get; } = Opened.Since;
 
         /// <summary>How many requests it has made, the refused ones among them.</summary>
         public Int64            Requests
@@ -78,21 +92,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         #endregion
 
 
-        #region (internal) Asked(Peer, Allowed, When)
+        #region (internal) Asked(Allowed, When)
 
         /// <summary>
         /// It made a request.
         /// </summary>
-        /// <param name="Peer">Where it comes from.</param>
         /// <param name="Allowed">Whether the policy allowed the request.</param>
         /// <param name="When">When.</param>
-        internal void Asked(String?         Peer,
-                            Boolean         Allowed,
+        internal void Asked(Boolean         Allowed,
                             DateTimeOffset  When)
         {
-
-            if (Peer is not null)
-                peer = Peer;
 
             Interlocked.Increment(ref requests);
 
@@ -105,11 +114,33 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 
         #endregion
 
+        #region ToJSON()
+
+        /// <summary>
+        /// As GET /api/v1/meter/connections says it.
+        /// </summary>
+        public JObject ToJSON()
+
+            => new (
+                   new JProperty("id",                 Id),
+                   new JProperty("peer",               Peer),
+                   new JProperty("role",               Role),
+                   new JProperty("clientSubject",      ClientSubject),
+                   new JProperty("clientFingerprint",  ClientFingerprint),
+                   new JProperty("protocol",           Protocol),
+                   new JProperty("since",              Since.ToString("o")),
+                   new JProperty("requests",           Requests),
+                   new JProperty("refused",            Refused),
+                   new JProperty("lastRequest",        LastRequest?.ToString("o"))
+               );
+
+        #endregion
+
         #region (override) ToString()
 
         public override String ToString()
 
-            => $"Modbus/TLS connection {Id} ({Role ?? "no role"}){(Peer is not null ? $" from {Peer}" : "")}";
+            => $"Modbus/TLS connection {Id} ({Role ?? "no role"}) from {Peer ?? "somewhere"}";
 
         #endregion
 

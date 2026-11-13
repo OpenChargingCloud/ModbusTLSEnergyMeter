@@ -350,6 +350,46 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
+        #region WhoIsConnected_IsReadByWhoeverReadsTheLog()
+
+        /// <summary>
+        /// The connections open over Modbus/TLS - none here - are told to an
+        /// account that may read the log, and not to one that may only look
+        /// at the readings: who asks this meter what is what the log is.
+        /// </summary>
+        [Test]
+        public async Task WhoIsConnected_IsReadByWhoeverReadsTheLog()
+        {
+
+            await CreateUserAsync("gwen",  "Correct-Horse-1", MeterAccess.Guest);
+            await CreateUserAsync("sally", "Correct-Horse-2", MeterAccess.Support);
+
+            using var administrator = await SignInAsAdministrator();
+            using var guest         = await SignIn("gwen",  "Correct-Horse-1");
+            using var support       = await SignIn("sally", "Correct-Horse-2");
+
+            var (status,    connections) = await administrator.Call(HttpMethod.Get, "api/v1/meter/connections");
+            var (supported, toSupport)   = await support.      Call(HttpMethod.Get, "api/v1/meter/connections");
+            var (refused,   why)         = await guest.        Call(HttpMethod.Get, "api/v1/meter/connections");
+
+            Assert.Multiple(() => {
+
+                Assert.That(status,                                     Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(connections?["connections"]?.Type,          Is.EqualTo(JTokenType.Array));
+                Assert.That(connections?["connections"],                Is.Empty);
+
+                Assert.That(supported,                                  Is.EqualTo(HttpStatusCode.OK), "what the meter's support is for");
+                Assert.That(toSupport?["connections"],                  Is.Empty);
+
+                Assert.That(refused,                                    Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(why?["error"]?.ToString(),                  Is.EqualTo("This needs the viewer or support or auditor or systemadmin role."));
+
+            });
+
+        }
+
+        #endregion
+
         #region AnAdministrator_CanMakeAReadOnlyAccount()
 
         /// <summary>

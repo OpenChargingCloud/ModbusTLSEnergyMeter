@@ -335,9 +335,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             => backends;
 
         /// <summary>
-        /// The Modbus/TLS connections open now, the oldest first: which, the
-        /// SunSpec role in the certificate its client showed, since when and
-        /// what it has asked so far.
+        /// The Modbus/TLS connections open now, the oldest first: which, from
+        /// where, the certificate its client showed and the SunSpec role in
+        /// it, since when and what it has asked so far.
         /// </summary>
         public IReadOnlyList<ModbusConnection>  ModbusConnections
             => backends.Connections;
@@ -837,6 +837,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // ModbusTLSEnergyMeter.Audit.cs.
             this.frontend.OnModbusRequest += RecordModbusRequest;
 
+            // Who is connected now - see ModbusConnections.
+            this.frontend.OnConnectionOpened += backends.Opened;
+            this.frontend.OnConnectionClosed += backends.Closed;
+
             #endregion
 
             #region The JSON API
@@ -1036,7 +1040,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                     StopTheTimers();
 
-                    frontend.OnModbusRequest -= RecordModbusRequest;
+                    frontend.OnModbusRequest    -= RecordModbusRequest;
+                    frontend.OnConnectionOpened -= backends.Opened;
+                    frontend.OnConnectionClosed -= backends.Closed;
 
                     frontend.          Dispose();
                     device.            Dispose();

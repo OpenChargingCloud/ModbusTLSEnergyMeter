@@ -32,7 +32,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
     /// <summary>
     /// Read holding registers of this meter as a Modbus client reads them:
-    /// "readRegisters 40069 4", or "readRegisters 0x9C85".
+    /// "readRegisters 40069 4", "readRegisters 0x9C85", or by the name SunSpec
+    /// gives a point, "readRegisters TotWhImp" - see <see cref="RegisterNames"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -67,13 +68,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
         #region Suggest(Arguments)
 
+        /// <summary>
+        /// Complete the command; after it, the names of the registers.
+        /// </summary>
         public override IEnumerable<SuggestionResponse> Suggest(String[] Arguments)
 
-            => Arguments.Length == 1 && CommandName.StartsWith(Arguments[0], StringComparison.OrdinalIgnoreCase)
-                   ? [ CommandName.Equals(Arguments[0], StringComparison.OrdinalIgnoreCase)
-                           ? SuggestionResponse.CommandHelp(Help())
-                           : SuggestionResponse.CommandCompleted(CommandName) ]
-                   : [];
+            => RegisterNames.Suggest(cli.Meter, CommandName, Help(), Arguments);
 
         #endregion
 
@@ -87,12 +87,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
                 return [ refused ];
 
             if (Arguments.Length is < 2 or > 3)
-                return [ $"Usage: {CommandName} <address> [<count>] - an address as 40069 or 0x9C85, and up to {MaxCount} registers; one without a count." ];
+                return [ $"Usage: {CommandName} <address or name> [<count>] - an address as 40069 or 0x9C85 or a name as TotWhImp, and up to {MaxCount} registers; without a count one, or as many as the name has." ];
 
-            if (!TryParseRegister(Arguments[1], out var first))
-                return [ $"'{Arguments[1]}' is no register address: 0 to 65535, or 0x0000 to 0xFFFF." ];
-
-            UInt16 count = 1;
+            if (!RegisterNames.TryResolve(cli.Meter, Arguments[1], out var first, out var count, out var noRegister))
+                return [ noRegister! ];
 
             if (Arguments.Length == 3 &&
                 (!UInt16.TryParse(Arguments[2], NumberStyles.None, CultureInfo.InvariantCulture, out count) || count == 0 || count > MaxCount))
@@ -131,18 +129,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
         #endregion
 
-        #region (internal static) TryParseRegister(Text, out Register) / Range(First, Count)
-
-        /// <summary>
-        /// A register address, or the unsigned value of one: decimal, or
-        /// hexadecimal behind "0x".
-        /// </summary>
-        internal static Boolean TryParseRegister(String      Text,
-                                                 out UInt16  Register)
-
-            => Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
-                   ? UInt16.TryParse(Text.AsSpan(2), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out Register)
-                   : UInt16.TryParse(Text,           NumberStyles.None,              CultureInfo.InvariantCulture, out Register);
+        #region (internal static) Range(First, Count)
 
         /// <summary>
         /// Registers as a Modbus person names them: one, or the first and the last.
@@ -184,7 +171,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
         public override String Help()
 
-            => $"{CommandName} <address> [<count>] - read holding registers as a Modbus client would, e.g. '{CommandName} 40069 4' or '{CommandName} 0x9C85'";
+            => $"{CommandName} <address or name> [<count>] - read holding registers as a Modbus client would, e.g. '{CommandName} 40069 4', '{CommandName} 0x9C85' or '{CommandName} TotWhImp'";
 
         #endregion
 

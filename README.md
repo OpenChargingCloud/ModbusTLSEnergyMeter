@@ -371,6 +371,7 @@ mean the group they were moved into.
 | `GET  /api/v1/status` | the version, how long it has run, the sessions and the log - and the meter's serial and both listeners |
 | `GET  /api/v1/meter` | the readings with scale factors applied, the mode, and what the simulated site is doing |
 | `GET  /api/v1/meter/registers?start=&count=` | the raw register block |
+| `GET  /api/v1/meter/connections` | who is connected over Modbus/TLS now, for whoever may read the log |
 | `PUT  /api/v1/meter/mode` | `{"mode": 0\|1\|2}` or `{"mode": "net"\|"import"\|"export"}` |
 | `POST /api/v1/meter/energy/reset` | clear both energy counters |
 | `GET  /api/v1/configuration/upstream` | the meter in front of which it stands, how reaching it goes, the identities it can be shown |
@@ -1086,9 +1087,9 @@ Beside the node's, the meter has commands of its own:
 | Command | says or does | needs |
 |---------|--------------|-------|
 | `showMeterValues` | what the meter is measuring now: who it is, the three phases and their total, the frequency and both energy counters - what `GET /api/v1/meter` answers | `meter:read` |
-| `showConnections` | who is connected over Modbus/TLS now: the connection by the number the log has it under, the SunSpec role in the certificate its client showed, from where, since when, how many requests it made and how many of them were refused | `log:read` |
-| `readRegisters <address> [<count>]` | holding registers as a Modbus client reads them, up to 125 at once: each with its address, in hexadecimal, as a number, as a negative number where its highest bit is set, and as text where it is text | `meter:read` |
-| `writeRegisters <address> <value> [<value> ...]` | holding registers as a Modbus client writes them, the values one behind the other from the address on | `meter:edit` |
+| `showConnections` | who is connected over Modbus/TLS now: the connection by the number the log has it under, the SunSpec role in the certificate its client showed, from where, since when, how many requests it made and how many of them were refused, whose certificate it is and the TLS version | `log:read` |
+| `readRegisters <address or name> [<count>]` | holding registers as a Modbus client reads them, up to 125 at once: each with its address, in hexadecimal, as a number, as a negative number where its highest bit is set, and as text where it is text | `meter:read` |
+| `writeRegisters <address or name> <value> [<value> ...]` | holding registers as a Modbus client writes them, the values one behind the other from the address on | `meter:edit` |
 
 ```
 meter-0001> readRegisters 40000 2
@@ -1097,10 +1098,20 @@ meter-0001> readRegisters 40000 2
 meter-0001> writeRegisters 40094 1
 Register 40094 written: 0x0001.
 meter-0001> showConnections
-#7  GridServiceSunSpec  from 192.168.1.20:51234, since 14:02:11, 312 requests (1 refused), the last at 14:07:23
+#7  GridServiceSunSpec  from 192.168.1.20:51234, since 14:02:11, 312 requests (1 refused), the last at 14:07:23 - CN=station-7, O=Example, TLS 1.3
 ```
 
-An address is written `40094` or `0x9C9E`, a value `1`, `0xFFFF` or `-1`. Both
+An address is written `40094` or `0x9C9E`, a value `1`, `0xFFFF` or `-1`. A
+register of the meter's own simulation can be named instead, as SunSpec names
+its points and in any case - `readRegisters TotWhImp`, `writeRegisters
+MeterMode 1` - and **Tab** completes the name: `Mn`, `Md`, `Opt`, `Vr`, `SN`,
+`DA`, `A`, `AphA` to `AphC`, `PhV`, `PhVphA` to `PhVphC`, `Hz`, `W`, `WphA` to
+`WphC`, `TotWhExp`, `TotWhImp`, their scale factors (`A_SF`, `V_SF`, `Hz_SF`,
+`W_SF`, `Wh_SF`), and the simulation's own `MeterMode` and `ResetEnergy`. A
+name brings as many registers as its point has - sixteen of the serial number,
+two of an energy counter - unless a count is typed. A meter that stands in
+front of another takes addresses only: the names are the simulation's map, and
+that meter's registers are where its own models put them. Both
 register commands ask what every Modbus/TLS connection is handed - the
 simulation or the meter in front of which this one stands, and the session
 model behind its models - so that what is read is what a client would be
@@ -1115,8 +1126,11 @@ the process and may do everything. Every `writeRegisters` is in the log book,
 with who wrote what and what the device answered.
 
 A connection is listed from the moment its TLS handshake held until it is
-closed; where it comes from is known with its first request, because the
-listener says the peer with every request and not before.
+closed, whether it has asked anything or not. The same list is
+`GET /api/v1/meter/connections` - each connection with `id`, `peer`, `role`,
+`clientSubject`, `clientFingerprint` (SHA-256), `protocol`, `since`,
+`requests`, `refused` and `lastRequest` - and the **Connections** page of the
+web interface, both for whoever may read the log.
 
 A command is a class in that folder built from a `MeterCLI` - a new file and
 nothing else, found without being listed - and tested in

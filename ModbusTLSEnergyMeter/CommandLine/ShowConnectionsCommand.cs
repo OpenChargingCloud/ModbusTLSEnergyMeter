@@ -29,14 +29,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
     /// <summary>
     /// Who is connected to this meter over Modbus/TLS now: which connection,
-    /// the SunSpec role in the certificate its client showed, from where,
-    /// since when, and what it has asked so far.
+    /// the SunSpec role in the certificate its client showed and whose
+    /// certificate that is, from where, since when, and what it has asked
+    /// so far.
     /// </summary>
     /// <remarks>
     /// <para>
     /// What 'who' is for SSH, for the door the meter is read through. A
-    /// connection is listed once its TLS handshake held; where it comes from
-    /// is known with its first request.
+    /// connection is listed from the moment its TLS handshake held, whether
+    /// it has asked anything or not - what GET /api/v1/meter/connections
+    /// answers and the Connections page shows.
     /// </para>
     /// <para>
     /// Needs what the log needs, "log:read": who asks this meter what, and
@@ -88,12 +90,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
             return Task.FromResult<String[]>([
                        .. connections.Select(connection =>
                               $"#{connection.Id.ToString().PadRight(ids)}  {RoleOf(connection.Role).PadRight(roles)}  " +
-                              $"from {connection.Peer ?? "a peer that has asked nothing yet"}, since {connection.Since.ToLocalTime():HH:mm:ss}, " +
+                              $"from {connection.Peer ?? "somewhere"}, since {connection.Since.ToLocalTime():HH:mm:ss}, " +
                               (connection.Requests == 0
                                    ? "no request"
                                    : $"{connection.Requests} request{(connection.Requests == 1 ? "" : "s")}" +
                                      (connection.Refused > 0 ? $" ({connection.Refused} refused)" : "") +
-                                     (connection.LastRequest is { } last ? $", the last at {last.ToLocalTime():HH:mm:ss}" : "")))
+                                     (connection.LastRequest is { } last ? $", the last at {last.ToLocalTime():HH:mm:ss}" : "")) +
+                              $" - {connection.ClientSubject}, {connection.Protocol}")
                    ]);
 
         }
@@ -116,7 +119,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
         public override String Help()
 
-            => $"{CommandName} - who is connected over Modbus/TLS now: the connection, its SunSpec role, from where, since when and how much it asked";
+            => $"{CommandName} - who is connected over Modbus/TLS now: the connection, its SunSpec role, from where, since when, how much it asked, and whose certificate it showed";
 
         #endregion
 

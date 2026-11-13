@@ -270,6 +270,28 @@ export interface Simulation {
     dayLength_s:   number;
 }
 
+/**
+ * A Modbus/TLS connection that is open now: known from the moment its TLS
+ * handshake held, whether it has asked anything or not.
+ */
+export interface ModbusConnection {
+    /** The number the listener gave it, as its requests have it in the log. */
+    id:                 number;
+    peer:               string | null;
+    /** The SunSpec role in the client's certificate; null for a certificate without one. */
+    role:               string | null;
+    clientSubject:      string;
+    /** SHA-256, upper-case hexadecimal. */
+    clientFingerprint:  string;
+    /** "TLS 1.3" */
+    protocol:           string;
+    since:              string;
+    /** Refused ones among them. */
+    requests:           number;
+    refused:            number;
+    lastRequest:        string | null;
+}
+
 /** Everything the meter is measuring, as its registers say it. */
 export interface MeterReadings {
     manufacturer:  string;
@@ -547,7 +569,9 @@ export const api = {
         /** The number a Modbus client would write, or the word a person would say. */
         setMode:      (mode: MeterModeName)  => request<MeterMode>    ('PUT',  '/meter/mode', { mode }),
         /** The same register a Modbus client writes, so there is one way of clearing them. */
-        resetEnergy:  ()                     => request<unknown>      ('POST', '/meter/energy/reset', {})
+        resetEnergy:  ()                     => request<unknown>      ('POST', '/meter/energy/reset', {}),
+        /** Who is connected over Modbus/TLS now - for whoever may read the log. */
+        connections:  ()                     => request<{ connections: ModbusConnection[] }>('GET', '/meter/connections')
     },
 
     /** The meter in front of which this one stands. */

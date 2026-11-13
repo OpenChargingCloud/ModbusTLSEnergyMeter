@@ -36,7 +36,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
     /// <summary>
     /// Write holding registers of this meter as a Modbus client writes them:
-    /// "writeRegisters 40094 1", or "writeRegisters 0x9C9E 0x0001".
+    /// "writeRegisters 40094 1", "writeRegisters 0x9C9E 0x0001", or by the
+    /// name of a point, "writeRegisters MeterMode 1" - see <see cref="RegisterNames"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -80,13 +81,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
         #region Suggest(Arguments)
 
+        /// <summary>
+        /// Complete the command; after it, the names of the registers.
+        /// </summary>
         public override IEnumerable<SuggestionResponse> Suggest(String[] Arguments)
 
-            => Arguments.Length == 1 && CommandName.StartsWith(Arguments[0], StringComparison.OrdinalIgnoreCase)
-                   ? [ CommandName.Equals(Arguments[0], StringComparison.OrdinalIgnoreCase)
-                           ? SuggestionResponse.CommandHelp(Help())
-                           : SuggestionResponse.CommandCompleted(CommandName) ]
-                   : [];
+            => RegisterNames.Suggest(cli.Meter, CommandName, Help(), Arguments);
 
         #endregion
 
@@ -100,10 +100,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
                 return [ refused ];
 
             if (Arguments.Length < 3)
-                return [ $"Usage: {CommandName} <address> <value> [<value> ...] - an address as 40094 or 0x9C9E; values as 1, -1 or 0xFFFF, written one behind the other." ];
+                return [ $"Usage: {CommandName} <address or name> <value> [<value> ...] - an address as 40094 or 0x9C9E or a name as MeterMode; values as 1, -1 or 0xFFFF, written one behind the other." ];
 
-            if (!ReadRegistersCommand.TryParseRegister(Arguments[1], out var first))
-                return [ $"'{Arguments[1]}' is no register address: 0 to 65535, or 0x0000 to 0xFFFF." ];
+            if (!RegisterNames.TryResolve(cli.Meter, Arguments[1], out var first, out _, out var noRegister))
+                return [ noRegister! ];
 
             if (Arguments.Length - 2 > MaxCount)
                 return [ $"{Arguments.Length - 2} values are more than one request may write: {MaxCount}." ];
@@ -179,7 +179,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
                                               out UInt16  Value)
         {
 
-            if (ReadRegistersCommand.TryParseRegister(Text, out Value))
+            if (RegisterNames.TryParseAddress(Text, out Value))
                 return true;
 
             if (Int16.TryParse(Text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var signed) && signed < 0)
@@ -198,7 +198,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.CommandLine
 
         public override String Help()
 
-            => $"{CommandName} <address> <value> [<value> ...] - write holding registers as a Modbus client would, e.g. '{CommandName} 40094 1'; into the log book";
+            => $"{CommandName} <address or name> <value> [<value> ...] - write holding registers as a Modbus client would, e.g. '{CommandName} 40094 1' or '{CommandName} MeterMode 1'; into the log book";
 
         #endregion
 
