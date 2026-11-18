@@ -143,7 +143,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             AddHandler(HTTPPath.Root + "v1/configuration/certificates", GetCertificates,     HTTPMethod.GET);
 
-            RegisterCertificateTemplates();
             RegisterAccountTemplates();
             RegisterSignedValueTemplates();
             RegisterUpstreamTemplates();

@@ -9,6 +9,7 @@ import { everyPageIn } from '@node/../test/pages.ts';
 
 
 everyPageIn(new URL('./', import.meta.url), {
-    withForms:      [ 'accounts.ts', 'certificates.ts', 'meter.ts', 'sessions.ts', 'signingKeys.ts', 'upstream.ts' ],
-    heldElsewhere:  { 'certificates.ts': "its forms are sections of the node's certificates page, which holds every form under its content" }
+    // certificates.ts has no form of its own since the node's store makes
+    // the meter's keys: the form a key is made with is the node's.
+    withForms:      [ 'accounts.ts', 'meter.ts', 'sessions.ts', 'signingKeys.ts', 'upstream.ts' ]
 });

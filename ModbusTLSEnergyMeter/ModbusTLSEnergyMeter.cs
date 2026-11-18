@@ -200,7 +200,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         private readonly  ListenerCertificates     modbusCertificates;
         private readonly  ListenerCertificates     webCertificates;
         private readonly  ClientRoots              clientRoots;
-        private readonly  SigningRequests          signingRequests;
         private readonly  MeterKeyStore            signingKeys;
         private readonly  ChargingSessions         sessions;
         private readonly  SessionSigner            signer;
@@ -222,8 +221,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
         /// <summary>
         /// The address the Modbus/TLS frontend listens on.
+        /// Not the node's own WWCPNode.ListenAddress, which is where the web
+        /// interface and the SSH server listen: Modbus/TLS has an address of
+        /// its own, as it has a port of its own.
         /// </summary>
-        public NetIPAddress        ListenAddress       { get; }
+        public new NetIPAddress    ListenAddress       { get; }
 
         /// <summary>
         /// The port the Modbus/TLS frontend listens on.
@@ -282,13 +284,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// </summary>
         public ClientRoots           ClientRoots
             => clientRoots;
-
-        /// <summary>
-        /// The keys made here and the certificate signing requests for them,
-        /// waiting for a CA or answered already.
-        /// </summary>
-        public SigningRequests       SigningRequests
-            => signingRequests;
 
         /// <summary>
         /// The keys this meter puts its name to a reading with.
@@ -606,6 +601,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                    CertificateKinds:                CertificateKinds,
                    CertificateListeners:            ListenerCertificates.All,
 
+                   // The keys of what its listeners show are made here, each
+                   // with a signing request that waits in the node's store for
+                   // its certificate, told which listener it is for - the store
+                   // makes them, and its "New key" tab offers them.
+                   CertificateRequestKinds:         [ CertificateKind.TLSServerIdentity ],
+
                    // What a TLS root may vouch for beside the node's own: the
                    // meter in front of which this one stands.
                    CertificateUsages:               [ UpstreamConfiguration.Usage ],
@@ -658,9 +659,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             // One store for all of them, the node's: what the two listeners
             // show, each identity told which listener it is for, and the CAs
-            // Modbus/TLS clients are issued by. A key made here waits beside it,
+            // Modbus/TLS clients are issued by. A key made here waits in it,
             // with its signing request, until a CA answers.
-            this.signingRequests     = new SigningRequests(Path.Combine(Certificates.Directory, SigningRequests.DirectoryName), this.TimeProvider);
 
             // What its listeners show were TLS identities until a node told
             // who it is as a client from who its servers are: a meter that kept
@@ -688,7 +688,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             // old store kept the certificate it was started with without the
             // intermediates the file brings, and the one that is put in first
             // is the one that stays.
-            OldCertificateStores.MoveInto(Certificates, signingRequests, this.Log, this.TimeProvider.GetUtcNow());
+            OldCertificateStores.MoveInto(Certificates, this.Log, this.TimeProvider.GetUtcNow());
+
+            // The keys this meter made while it kept its signing requests
+            // itself, one directory each below "requests": the ones still
+            // waiting for their certificate wait in the node's store now, and
+            // what was moved is put below "moved" - once, at the first start.
+            OldSigningRequests.MoveInto(Certificates, this.Log, this.TimeProvider.GetUtcNow());
 
             // The web interface has no certificate to inherit - and borrowing
             // the device's would be the very conflation the two listeners are

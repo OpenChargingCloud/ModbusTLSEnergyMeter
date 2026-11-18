@@ -18,7 +18,6 @@
 #region Usings
 
 using System.Net;
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -166,7 +165,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var browser = NewBrowser();
 
             foreach (var path in new[] { "api/v1/meter",              "api/v1/meter/registers",  "api/v1/configuration/certificates",
-                                         "api/v1/accounts",           "api/v1/accounts/roles",   "api/v1/certificates/requests",
+                                         "api/v1/accounts",           "api/v1/accounts/roles",   "api/v1/certificates",
                                          "api/v1/signedMeterValues",  "api/v1/sessions",         "api/v1/keys",
                                          "api/v1/logs/verify" })
             {
@@ -466,7 +465,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 foreach (var path in new[] { "api/v1/meter", "api/v1/meter/registers",
                                              "api/v1/configuration", "api/v1/configuration/dns",
                                              "api/v1/configuration/nts", "api/v1/logs",
-                                             "api/v1/certificates", "api/v1/certificates/requests" })
+                                             "api/v1/certificates" })
                 {
                     Assert.That(await rory.StatusOf(HttpMethod.Get, path),
                                 Is.EqualTo(HttpStatusCode.OK),
@@ -489,7 +488,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                             Is.EqualTo(HttpStatusCode.Forbidden),           "nor ask one time server everything");
 
                 Assert.That(await rory.StatusOf(HttpMethod.Post, "api/v1/certificates/requests",
-                                                new { listener = "web", subject = "CN=whoever" }),
+                                                new { subject = "CN=whoever", usages = new[] { "web" }, reachableAs = new[] { "whoever.lan" } }),
                             Is.EqualTo(HttpStatusCode.Forbidden),           "may not ask for a certificate");
 
                 Assert.That(await rory.StatusOf(HttpMethod.Get, "api/v1/accounts"),
@@ -1306,15 +1305,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         #region ASigningRequestIsAnswered_AndTheNewerCertificateIsShown()
 
         /// <summary>
-        /// The key is made in the meter, the request goes to a CA, and what comes
-        /// back becomes an identity of the listener it was asked for - shown from
-        /// the moment it is the newest valid one, without a restart, and written
-        /// into the log book as the store takes it rather than at the next
-        /// minute's check.
+        /// The key is made in the meter - by the node's store, which makes them
+        /// for what the meter's listeners show -, the request goes to a CA, and
+        /// what comes back becomes an identity of the listener it was asked
+        /// for: shown from the moment it is the newest valid one, without a
+        /// restart, and written into the log book as the store takes it rather
+        /// than at the next minute's check.
         /// </summary>
         /// <remarks>
-        /// Asked without a key type: the meter's own default, which it used to
-        /// refuse under its old spelling.
+        /// Asked without a kind, which is the one the meter makes keys for, and
+        /// without a kind of key, which is the usual one.
         /// </remarks>
         [Test]
         public async Task ASigningRequestIsAnswered_AndTheNewerCertificateIsShown()
@@ -1327,19 +1327,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var startedWith       = before?["certificates"]?["tlsServerIdentity"]?.First(entry => entry["id"]?.ToString() == shownBefore);
             var startedAt         = new DateTimeOffset(DateTime.SpecifyKind(startedWith!["notBefore"]!.Value<DateTime>(), DateTimeKind.Utc));
 
-            var (made, request)   = await administrator.Call(HttpMethod.Post, "api/v1/certificates/requests",
-                                                             new { listener = "modbus", subject = "CN=meter-test-001, O=Test", dnsNames = new[] { "meter-test-001.local" } });
+            var (made, said1)     = await administrator.Call(HttpMethod.Post, "api/v1/certificates/requests",
+                                                             new { subject      = "CN=meter-test-001, O=Test",
+                                                                   usages       = new[] { "modbus" },
+                                                                   reachableAs  = new[] { "meter-test-001.local" },
+                                                                   label        = "the next Modbus/TLS one" });
 
-            Assert.That(made, Is.EqualTo(HttpStatusCode.Created), $"{request}");
+            Assert.That(made, Is.EqualTo(HttpStatusCode.Created), $"{said1}");
 
-            var id                = request!["id"]!.ToString();
-            var (downloaded, csr, disposition) = await administrator.GetFile($"api/v1/certificates/requests/{id}");
-
-            Assert.That(downloaded, Is.EqualTo(HttpStatusCode.OK), csr);
-            Assert.Multiple(() => {
-                Assert.That(disposition?.DispositionType,  Is.EqualTo("attachment"));
-                Assert.That(disposition?.FileName?.Trim('"'), Is.EqualTo($"modbus-{id}.csr"));
-            });
+            var request           = said1!["request"]!;
+            var id                = request["id"]!.ToString();
+            var csr               = request["csr"]!.ToString();
 
             // Signed by the device CA the meter's own certificate came from, and
             // valid from a second after that one, so that it is the newer.
@@ -1358,7 +1356,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var beforeAnswer        = meter!.Log.LastId;
 
-            var (answered, answer)  = await administrator.Call(HttpMethod.Put, $"api/v1/certificates/requests/{id}",
+            var (answered, answer)  = await administrator.Call(HttpMethod.Post, "api/v1/certificates/requests/answer",
                                                                new { pem = issued.ExportCertificatePem() + "\n" + issuer.ExportCertificatePem() });
 
             // Before anything asks what is shown: what is said here was said
@@ -1366,31 +1364,34 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var said              = meter.Log.Recent(50, beforeAnswer, "certificates").Select(entry => entry.Message).ToArray();
 
             var (_, after)        = await administrator.Call(HttpMethod.Get, "api/v1/certificates");
-            var (_, requests)     = await administrator.Call(HttpMethod.Get, "api/v1/certificates/requests");
 
             Assert.Multiple(() => {
 
                 Assert.That(csr,                                                                         Does.StartWith("-----BEGIN CERTIFICATE REQUEST-----"));
-                Assert.That(request["keyType"]?.ToString(),                                              Is.EqualTo("ecdsa-p256"));
+                Assert.That(request["algorithm"]?.ToString(),                                            Is.EqualTo("ecdsa-p256"));
+                Assert.That(request["kind"]?.ToString(),                                                 Is.EqualTo("tlsServerIdentity"));
+                Assert.That(signing.CertificateExtensions.OfType<X509SubjectAlternativeNameExtension>().SingleOrDefault()?.EnumerateDnsNames(),
+                            Is.EqualTo(new[] { "meter-test-001.local" }),                                "the name it is reachable as, in the request");
 
-                // The key stays in the meter: not in the file a CA is sent, and
-                // not in anything the API says about the request.
+                // The key stays in the meter: not in the request a CA is sent,
+                // and not in anything the API says about it.
                 Assert.That(csr,                                                                         Does.Not.Contain("PRIVATE KEY"));
-                Assert.That(request.ToString(),                                                          Does.Not.Contain("PRIVATE KEY"));
-                Assert.That(requests?.ToString(),                                                        Does.Not.Contain("PRIVATE KEY"));
+                Assert.That(said1.ToString(),                                                            Does.Not.Contain("PRIVATE KEY"));
 
                 Assert.That(answered,                                                                    Is.EqualTo(HttpStatusCode.OK), $"{answer}");
-                Assert.That(answer?["certificate"]?["usages"]?.Values<String>(),                         Is.EqualTo(new[] { "modbus" }));
-                Assert.That(answer?["certificate"]?["chainLength"]?.Value<Int32>(),                      Is.EqualTo(1), "the issuing CA came with it");
+                Assert.That(answer?["requestId"]?.ToString(),                                            Is.EqualTo(id));
+                Assert.That(answer?["entry"]?["usages"]?.Values<String>(),                               Is.EqualTo(new[] { "modbus" }));
+                Assert.That(answer?["entry"]?["label"]?.ToString(),                                      Is.EqualTo("the next Modbus/TLS one"));
+                Assert.That(answer?["entry"]?["chainLength"]?.Value<Int32>(),                            Is.EqualTo(1), "the issuing CA came with it");
 
-                Assert.That(after?["shown"]?["modbus"]?["current"]?.ToString(),                          Is.EqualTo(answer?["certificate"]?["id"]?.ToString()),
+                Assert.That(after?["shown"]?["modbus"]?["current"]?.ToString(),                          Is.EqualTo(answer?["entry"]?["id"]?.ToString()),
                             "the newer one is shown from now on");
 
                 Assert.That(said,                                                                        Has.Some.Match("^Modbus/TLS clients are now shown '[^']*CN=meter-test-001[^']*'"),
                             $"and the log book says so as the store takes it - it said: {String.Join(" | ", said)}");
 
-                Assert.That(requests?["requests"]?.First(one => one["id"]?.ToString() == id)?["state"]?.ToString(),
-                            Is.EqualTo("answered"));
+                Assert.That(after?["requests"]?["entries"]?.Select(entry => entry["id"]?.ToString()),   Does.Not.Contain(id),
+                            "and the key waits for nothing any more");
 
             });
 
@@ -1519,49 +1520,37 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         #endregion
 
-        #region AKeyOrARequestTheDiskHoldsOnTo_IsA500()
+        #region AKeyTheDiskHoldsOnTo_IsA500()
 
         /// <summary>
-        /// A signing key or a signing request whose directory the disk will not
-        /// let go of is answered 500 with the reason, as every node answers a
-        /// change its file cannot take - and stays, listed as it was.
+        /// A signing key whose directory the disk will not let go of is
+        /// answered 500 with the reason, as every node answers a change its
+        /// file cannot take - and stays, listed as it was.
         /// </summary>
         /// <remarks>
-        /// Both were 409, as if something had been wrong with the asking. The
-        /// disk refuses here through the stores' seam, as a file held open does
-        /// on Windows, so that this is asked on every platform.
+        /// It was 409, as if something had been wrong with the asking. The
+        /// disk refuses here through the store's seam, as a file held open does
+        /// on Windows, so that this is asked on every platform. A key that
+        /// waits for its certificate is the node's store's, and asked there.
         /// </remarks>
         [Test]
-        public async Task AKeyOrARequestTheDiskHoldsOnTo_IsA500()
+        public async Task AKeyTheDiskHoldsOnTo_IsA500()
         {
 
             using var administrator = await SignInAsAdministrator();
 
             var key = meter!.SigningKeys.Create(Signing.MeterKeyStore.DefaultAlgorithm, "the disk holds on to it");
 
-            Assert.That(meter.SigningRequests.TryCreate(Certificates.ListenerCertificates.Web, "CN=meter7.lan", [ "meter7.lan" ], [], null, "the disk holds on to it",
-                                                        out var request, out var error),
-                        Is.True, error);
+            meter.SigningKeys.BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
 
-            meter.SigningKeys.    BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
-            meter.SigningRequests.BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
+            var (keyStatus, keySaid) = await administrator.Call(HttpMethod.Delete, $"api/v1/keys/{key.Id}");
 
-            var (keyStatus,      keySaid)      = await administrator.Call(HttpMethod.Delete, $"api/v1/keys/{key.Id}");
-            var (requestStatus,  requestSaid)  = await administrator.Call(HttpMethod.Delete, $"api/v1/certificates/requests/{request!.Id}");
-
-            var keys      = await administrator.GetJSON("api/v1/keys");
-            var requests  = await administrator.GetJSON("api/v1/certificates/requests");
+            var keys = await administrator.GetJSON("api/v1/keys");
 
             Assert.Multiple(() => {
-
                 Assert.That(keyStatus,                                                          Is.EqualTo(HttpStatusCode.InternalServerError));
                 Assert.That(keySaid?["error"]?.ToString(),                                      Does.Contain("is held by somebody else"));
                 Assert.That(keys?["keys"]?.Select(entry => entry["id"]?.ToString()),           Does.Contain(key.Id), "the key is still there");
-
-                Assert.That(requestStatus,                                                      Is.EqualTo(HttpStatusCode.InternalServerError));
-                Assert.That(requestSaid?["error"]?.ToString(),                                  Does.Contain("is held by somebody else"));
-                Assert.That(requests?["requests"]?.Select(entry => entry["id"]?.ToString()),   Does.Contain(request.Id), "the request is still there");
-
             });
 
         }
@@ -1586,12 +1575,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.That(meter.SigningKeys.Keys.Count(), Is.EqualTo(1), "the meter starts with its identity alone");
 
-            meter.SigningKeys.    BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
-            meter.SigningRequests.BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
+            meter.SigningKeys.BeforeSettingAside = directory => throw new IOException($"'{directory}' is held by somebody else.");
 
             var (only,     onlySaid)     = await administrator.Call(HttpMethod.Delete, $"api/v1/keys/{identity.Id}");
             var (noKey,    noKeySaid)    = await administrator.Call(HttpMethod.Delete, "api/v1/keys/20000101-000000-000000");
-            var (noRequest, _)           = await administrator.Call(HttpMethod.Delete, "api/v1/certificates/requests/20000101-000000-000000");
+            var (noRequest, _)           = await administrator.Call(HttpMethod.Delete, "api/v1/certificates/requests/no-such-key");
 
             Assert.Multiple(() => {
 
@@ -1873,15 +1861,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             {
                 using var response = await client.GetAsync(Path);
                 return (response.StatusCode, await response.Content.ReadAsStringAsync());
-            }
-
-            /// <summary>
-            /// What a path answers, as text, with the name it says to save it under.
-            /// </summary>
-            public async Task<(HttpStatusCode, String, ContentDispositionHeaderValue?)> GetFile(String Path)
-            {
-                using var response = await client.GetAsync(Path);
-                return (response.StatusCode, await response.Content.ReadAsStringAsync(), response.Content.Headers.ContentDisposition);
             }
 
             public async Task<HttpStatusCode> StatusOf(HttpMethod  Method,

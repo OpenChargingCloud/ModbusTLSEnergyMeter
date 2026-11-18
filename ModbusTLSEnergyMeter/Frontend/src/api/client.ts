@@ -1,5 +1,4 @@
-import { apiURL,
-         extRequest,
+import { extRequest,
          nodeAPI,
          request,
          type Certificate        as NodeCertificate,
@@ -436,81 +435,6 @@ export interface CertificateConfiguration {
 }
 
 
-// Signing requests
-
-/**
- * A key made in this meter, and the request a CA is sent for it: waiting for
- * its certificate, or answered and kept, so that the same key can be
- * certified again.
- */
-export interface SigningRequest {
-    id:           string;
-    /** Which listener the certificate is for. */
-    listener:     TLSListener;
-    createdAt:    string;
-    subject:      string;
-    dnsNames:     string[];
-    ipAddresses:  string[];
-    /** One of the ids of `keyTypes`, e.g. "ecdsa-p256". */
-    keyType:      string;
-    note:         string | null;
-    /** The handles of the identities its answers became, where the store still has them. */
-    answeredBy:   string[];
-    state:        'awaiting a certificate' | 'answered';
-}
-
-/** The signing requests of this meter, newest first, and what a new one may ask for. */
-export interface SigningRequests {
-    requests:        SigningRequest[];
-    listeners:       TLSListener[];
-    /** What a request may ask for, and what each one means. */
-    keyTypes:        KeyAlgorithmInfo[];
-    /** What is asked for when nobody says. */
-    defaultKeyType:  string;
-}
-
-/** What a new signing request asks for. */
-export interface NewSigningRequest {
-    listener:      TLSListener;
-    subject:       string;
-    dnsNames?:     string[];
-    ipAddresses?:  string[];
-    /** One of the ids of `keyTypes`; the default one where it is left out. */
-    keyType?:      string;
-    note?:         string;
-}
-
-/** What putting in the certificate for a request answers with: the request, and the identity it became. */
-export interface AnsweredRequest {
-    request:      SigningRequest;
-    certificate:  Certificate;
-}
-
-/**
- * One kind of key a certificate can be asked for.
- *
- * Hermod's list, served by the meter, so that a kind added there turns up here
- * without this file being touched.
- */
-export interface KeyAlgorithmInfo {
-    /** How it is written in a request, e.g. "ecdsa-p256". */
-    id:           string;
-    /** How it is written on a page, e.g. "ECDSA P-256 (secp256r1)". */
-    name:         string;
-    /** What somebody choosing it should know. */
-    remark:       string;
-    /**
-     * Whether this machine turned out to be able to present such a certificate
-     * in a TLS handshake - absent while nobody has tried.
-     *
-     * Found out by doing it rather than read from a list: whether an Ed25519
-     * certificate can be served depends on the operating system, the runtime
-     * and the year.
-     */
-    presentable?: boolean;
-}
-
-
 // The log on disk
 
 /** One file of the log, and whether it is still what it was. */
@@ -584,7 +508,8 @@ export const api = {
     /**
      * The node's certificate store: what this meter believes, what its two
      * listeners show and the servers it recognises - and the keys made here,
-     * with the requests a CA is sent for them.
+     * which wait in it for their certificate: the store's own routes, which
+     * the meter has it offer for what its listeners show.
      *
      * One store where there were three. What a charging station checks still
      * comes from a device PKI and what a browser checks from wherever the
@@ -599,34 +524,8 @@ export const api = {
 
         ...node.certificates,
 
-        /** The keys made here with their requests, and what a new one may ask for. */
-        requests:       ()                            => request<SigningRequests>         ('GET',    '/certificates/requests'),
-
-        /**
-         * Make a key and write a signing request for it. The key stays here.
-         *
-         * Given three minutes rather than the half of one any other write
-         * gets, as the local controller gives its own: an RSA key is a search
-         * for two primes that takes as long as it takes, and a meter may be a
-         * small board.
-         */
-        createRequest:  (signing: NewSigningRequest)  => request<SigningRequest>          ('POST',   '/certificates/requests', signing, 3 * 60_000),
-
-        /** Where the browser fetches the request itself; it arrives as a file. */
-        requestURL:     (id: string)                  => apiURL(`/certificates/requests/${encodeURIComponent(id)}`),
-
-        /**
-         * The signed certificate coming back, with the intermediates above
-         * it, checked against the key that asked. A second one for the same
-         * request is a renewal for the same key.
-         */
-        answerRequest:  (id: string, pem: string)     => request<AnsweredRequest>         ('PUT',    `/certificates/requests/${encodeURIComponent(id)}`, { pem }),
-
-        /** Throw a request away, and its key with it. What was put into the store from it stays there. */
-        removeRequest:  (id: string)                  => request<SigningRequests>         ('DELETE', `/certificates/requests/${encodeURIComponent(id)}`),
-
         /** What the meter was started with, and the SunSpec roles a client certificate may carry. */
-        configuration:  ()                            => request<CertificateConfiguration>('GET',    '/configuration/certificates')
+        configuration:  ()  => request<CertificateConfiguration>('GET', '/configuration/certificates')
 
     },
 

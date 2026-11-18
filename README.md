@@ -295,7 +295,7 @@ they are named here because a role may name them.
 | `configuration` | what the node is made of | | |
 | `dns` | the name servers | changing them | looking a name up |
 | `nts` | the time servers, and the clock | changing them | asking one: `sync`, `test` |
-| `certificates` | the store and the signing requests | a key and its request, a certificate, a CA | |
+| `certificates` | the store and the keys that wait in it | a certificate, a CA | making a key and its request, bringing its certificate, taking a key that waits away |
 | `ssh` | the SSH server: whether and where it runs, its host key, the sessions, every account's keys | switching it on or off, its port, passwords | |
 | `keys` | the signing keys | making one, choosing the default, throwing one away | |
 | `log` | the log, the log book, the event stream, their files over SFTP | | |
@@ -388,10 +388,9 @@ mean the group they were moved into.
 | `POST /api/v1/certificates` | put one in: `{"kind", "content" (base64), "password", "label", "usages"}` |
 | `POST /api/v1/certificates/reload` | read the store's directory again |
 | `GET/PATCH/DELETE /api/v1/certificates/{id}` | one certificate: rename it, switch it on or off, say what it is for, or take it out - refused while it is the only one a listener could show, or the last CA Modbus/TLS clients may be issued by |
-| `GET/POST /api/v1/certificates/requests` | the keys made here and their signing requests; make one |
-| `GET  /api/v1/certificates/requests/{id}` | that request, as a file |
-| `PUT  /api/v1/certificates/requests/{id}` | `{"pem": ...}`, the signed certificate coming back |
-| `DELETE /api/v1/certificates/requests/{id}` | throw a request and its key away |
+| `POST /api/v1/certificates/requests` | make a key and its signing request: `{"subject", "usages", "reachableAs", "algorithm", "label"}`; the keys that wait are in `GET /api/v1/certificates`, under `requests` |
+| `POST /api/v1/certificates/requests/answer` | `{"pem": ...}`, the signed certificate coming back, found its key by its public key |
+| `DELETE /api/v1/certificates/requests/{id}` | take a key that waits away |
 | `GET  /api/v1/signedMeterValues?format=&key=` | one reading, signed; `ocmf` or `alfen` |
 | `GET  /api/v1/sessions` | the charging session that is running, if one is |
 | `POST /api/v1/sessions/start` | begin one; answers with the time and the public key |
@@ -466,7 +465,7 @@ or below `WWCP_Node/Frontend/src` - the WWCP_Node beside this repository in
 is bundled in as `@node/...` - and `-p:SkipFrontendBuild=true` leaves it alone.
 
 Pages: the meter and what it is measuring, the DNS client, the NTS client with
-the state of the clock, the certificate store with the signing requests, the
+the state of the clock, the certificate store with the keys made here, the
 signing keys, the charging sessions, the accounts,
 the log as it happens, and the metrological log. On the DNS page name servers
 can be added and removed and timeouts changed. The NTS page is the group of time
@@ -528,7 +527,8 @@ or at `POST /api/v1/certificates/reload`; every change of what the store holds
 goes into the log book, tagged `security`. On the pages, what the meter believes
 and recognises - the roots, with the SunSpec roles, and the servers - is under
 Configuration -> Certificates, never with a private key; what its listeners
-show, with the signing requests, is under Configuration -> Server identities.
+show, with the keys made for them on its "New key" tab, is under
+Configuration -> Server identities.
 The meter has no identity of its own as a client, and so no Identities page.
 
 ### From before
@@ -536,9 +536,10 @@ The meter has no identity of its own as a client, and so no Identities page.
 A meter whose certificates were in stores of its own - `certificates/modbus/`,
 `certificates/web/` and `certificates/trust/` - finds them in the node's store
 at its next start: each certificate with its key as an identity for the listener
-it was for, keeping its note as its label; each key that asked for one as a
-signing request, answered by it; and each accepted CA as a client root, switched
-off where it was. What was moved is put below `certificates/moved/` rather than
+it was for, keeping its note as its label; each key that asked for one and is
+still waiting for it as a key that waits in the store, and one whose certificate
+came as that identity, which holds it; and each accepted CA as a client root,
+switched off where it was. What was moved is put below `certificates/moved/` rather than
 deleted. What cannot be moved - a key of a kind this platform cannot hold with
 its certificate, such as Ed448 - stays where it is and is named in the log at
 every start.
@@ -552,38 +553,55 @@ switch and its listeners, and the log says how many.
 ### Asking for one
 
 The private key is made in the meter and never leaves it. What goes out is a
-PKCS#10 request; what comes back is a certificate, which is checked against the
-key that asked for it before it becomes an identity - a certificate this meter
-has no key for is no use to it, and finding that out at the next handshake
-would be finding it out as an outage.
+PKCS#10 request; what comes back is a certificate, which is matched to the key
+that asked for it by its public key before it becomes an identity - a
+certificate this meter has no key for is no use to it, and finding that out at
+the next handshake would be finding it out as an outage.
+
+The keys are the node's certificate store's to make, as for every kind of node
+that makes its own: the meter has it make them for `tlsServerIdentity`, what its
+two listeners show, each told the listener it is for. On the page that is the
+"New key" tab of Configuration -> Server identities; over the API:
 
 ```
 POST /api/v1/certificates/requests
-     {"listener": "web", "subject": "CN=meter7.lan, O=Acme", "dnsNames": ["meter7.lan"]}
-GET  /api/v1/certificates/requests/<id>      -> the .csr, as a file
-PUT  /api/v1/certificates/requests/<id>      {"pem": "-----BEGIN CERTIFICATE-----..."}
+     {"subject": "CN=meter7.lan, O=Acme", "usages": ["web"], "reachableAs": ["meter7.lan"]}
+                                             -> {"request": {"id", "csr", ...}, "store": ...}
+POST /api/v1/certificates/requests/answer    {"pem": "-----BEGIN CERTIFICATE-----..."}
 ```
 
-or the same three steps as three controls on the page. A request is kept once it
-is answered, with its key: a certificate that runs out can be renewed for the
-same key by sending the same request again, and the second answer is a second
-identity that takes over when it becomes valid. Throwing a request away throws
-its key away with it; what was put into the store from it stays there.
+A key that waits stands among what the meter presents, with its request to copy.
+The certificate that comes back - with the intermediates above it - needs no
+id: it is matched by its public key, and becomes an identity of the listener
+the key was made for, with the label it was made with. A certificate that comes
+back later for the same key, a renewal, is put together with the key of the
+identity that holds it. Making a key, bringing its certificate and taking a key
+that waits away are `certificates:run`, which whoever may change the store has
+as well.
+
+### Signing requests from before
+
+Until the store made keys the meter kept its own, one directory each below
+`certificates/requests/` with `key.pem`, `request.pem` and `meta.json`. At the
+next start each one still waiting for its certificate - or whose certificate
+was taken out of the store since - waits in the store instead, as a TLS server
+identity for the listener it was asked for, its note as its label and its names
+as what it is reachable as; one whose certificate is in the store is that
+identity, which holds its key. Either way its directory is put below
+`certificates/moved/requests/`, with the request as it was sent. A key that
+cannot be read, or is not the key of its request, is not taken over: it stays
+where it is and is named in the log at every start.
 
 ### On which key
 
-The kinds of key come from Hermod's `KeyAlgorithm`, and of its list the ones the
-store can keep together with their certificate and a TLS stack can present:
-
-| | |
-|---|---|
-| `ecdsa-p256`, `ecdsa-p384`, `ecdsa-p521` | ECDSA on the NIST curves, `ecdsa-p256` when nobody says. `ecdsa-p521` is secp521r1 - there is no secp521r2 |
-| `rsa-2048`, `rsa-3072`, `rsa-4096` | RSA |
+The kinds of key come from Hermod's `KeyAlgorithm`. ECDSA on the NIST curves,
+`ecdsa-p256` when nobody says, and RSA are what every peer reads and what a TLS
+stack can present; `ecdsa-p521` is secp521r1 - there is no secp521r2.
 
 Hermod can make more - Edwards curves, ML-DSA, SLH-DSA - and a CA could sign
-them. But a certificate for such a key cannot be held together with its key on
-this platform, so it could neither be kept in the store nor shown, and asking for
-one would only lead to a certificate that goes nowhere.
+them. The store makes such a key all the same, and keeps a certificate that
+comes back for it beside the key, shown to nobody, until a runtime can load the
+two together: on this platform today none can.
 
 **Whether a certificate can then be shown is still found out by doing it**, not
 from a list: it depends on the operating system's TLS stack, on the runtime and
@@ -591,8 +609,8 @@ on the year. Hermod does one TLS handshake against itself, once per algorithm,
 and an identity this meter cannot present is kept and never shown.
 
 The old spellings the meter's own store used before Hermod had a list - `ec256`,
-`rsa3072`, `mldsa65` - are still read, so nothing is lost over a rename. Nothing
-writes them any more.
+`rsa3072`, `mldsa65` - are still read when a request from before is taken over,
+so nothing is lost over a rename. Nothing writes them any more.
 
 ### Which one is shown
 

@@ -47,11 +47,11 @@ describe('the meter\'s client', () => {
         const everyNodes  = [ api.auth.me, api.auth.login, api.auth.logout, api.status, api.clock, api.logs,
                               api.dns.get, api.dns.save, api.nts.get, api.nts.save, api.nts.test, api.nts.sync,
                               api.certificates.get, api.certificates.import, api.certificates.update,
-                              api.certificates.remove, api.certificates.reload ];
+                              api.certificates.remove, api.certificates.reload,
+                              api.certificates.requests.create, api.certificates.requests.answer, api.certificates.requests.remove ];
 
         const theMeters   = [ api.auth.changePassword, api.meter.get, api.meter.setMode, api.meter.resetEnergy,
-                              api.certificates.requests, api.certificates.createRequest, api.certificates.requestURL,
-                              api.certificates.answerRequest, api.certificates.removeRequest, api.certificates.configuration,
+                              api.certificates.configuration,
                               api.accounts.list, api.keys.list, api.signing.session, api.verifyLog ];
 
         for (const route of [ ...everyNodes, ...theMeters ])
@@ -66,13 +66,11 @@ describe('the meter\'s client', () => {
         meterAnswers(200, {});
 
         await api.meter.get();
-        await api.certificates.requests();
+        await api.certificates.configuration();
         await api.status();
 
         assert.deepEqual(asked.map(request => `${request.method} ${request.url}`),
-                         [ 'GET /api/v1/meter', 'GET /api/v1/certificates/requests', 'GET /api/v1/status' ]);
-
-        assert.equal(api.certificates.requestURL('ab cd'), '/api/v1/certificates/requests/ab%20cd');
+                         [ 'GET /api/v1/meter', 'GET /api/v1/configuration/certificates', 'GET /api/v1/status' ]);
 
     });
 

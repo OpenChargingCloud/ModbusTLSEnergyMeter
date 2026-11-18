@@ -97,8 +97,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// "modbus" and "web" with a directory per certificate - the one it was
         /// started with as base64 text - and "trust" with a file per accepted CA.
         /// Started again, each is in the node's store, told the listener it was
-        /// for and keeping its note and its switch; the keys that asked for them
-        /// are signing requests; and the old directories are below "moved".
+        /// for and keeping its note and its switch; a key that still waits for
+        /// its certificate waits in the node's store, and one whose certificate
+        /// came is held by that identity alone; and the old directories are below
+        /// "moved".
         /// </summary>
         [Test]
         public async Task AMeterFromBefore_FindsItsCertificatesInTheNodesStore()
@@ -171,8 +173,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var oldModbus         = store.Entries.FirstOrDefault(entry => entry.Label == "the old one it was started with");
             var oldWeb            = store.Entries.FirstOrDefault(entry => entry.Label == "the operator's web certificate");
             var oldCA             = store.Entries.FirstOrDefault(entry => entry.Label == "the old clients CA");
-            var answered          = meter.SigningRequests.Get("20260102-000000-bbbbbb");
-            var waiting           = meter.SigningRequests.Get("20260103-000000-cccccc");
+            var requests          = store.Requests;
+            var waiting           = requests.FirstOrDefault(request => request.Label == "still waiting");
 
             Assert.Multiple(() => {
 
@@ -187,10 +189,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(oldCA?.Kind,                                  Is.EqualTo(CertificateKind.ClientRoot));
                 Assert.That(oldCA?.IsActive,                              Is.False, "switched off where it was");
 
-                Assert.That(answered?.Listener,                           Is.EqualTo(ListenerCertificates.Web));
-                Assert.That(answered?.AnsweredBy,                         Is.EqualTo(new[] { oldWeb?.Id }), "the request that key made, answered by it");
-                Assert.That(waiting?.AnsweredBy,                          Is.Empty, "and one still waiting, still waiting");
-                Assert.That(waiting?.KeyType,                             Is.EqualTo("ecdsa-p256"));
+                Assert.That(requests.Count,                               Is.EqualTo(1), "the key whose certificate came is that identity's, and waits for nothing");
+                Assert.That(waiting?.Kind,                                Is.EqualTo(CertificateKind.TLSServerIdentity));
+                Assert.That(waiting?.Usages,                              Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Web }), "and one still waiting, still waiting - for the web interface");
+                Assert.That(waiting?.AlgorithmId,                         Is.EqualTo("ecdsa-p256"));
+                Assert.That(waiting?.Subject,                             Is.EqualTo("CN=still waiting"));
 
                 Assert.That(Directory.Exists(Path.Combine(certificates, "modbus")),                                   Is.False);
                 Assert.That(Directory.Exists(Path.Combine(certificates, "web")),                                      Is.False);

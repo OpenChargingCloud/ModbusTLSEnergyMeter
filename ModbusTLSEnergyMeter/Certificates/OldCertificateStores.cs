@@ -40,9 +40,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
     /// <para>
     /// A certificate with its key becomes a TLS identity for the listener its
     /// store was for, keeping its note as its label. A key with a signing
-    /// request becomes a request, answered by that identity where there is
-    /// one, so that it can be certified again. An accepted CA becomes a client
-    /// root, switched off where it was.
+    /// request and no certificate yet waits for it in the node's store; one
+    /// that has its certificate is that identity, which holds the key. An
+    /// accepted CA becomes a client root, switched off where it was.
     /// </para>
     /// <para>
     /// What was moved is not deleted but put below "moved", so that nothing is
@@ -69,24 +69,22 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         #endregion
 
 
-        #region MoveInto(Store, Requests, Log, Now)
+        #region MoveInto(Store, Log, Now)
 
         /// <summary>
         /// Move whatever the old stores beside the node's store still hold into
         /// it, and say what was moved and what could not be.
         /// </summary>
         /// <param name="Store">The node's certificate store; the old stores are in its directory.</param>
-        /// <param name="Requests">Where the signing requests go.</param>
         /// <param name="Log">Where to say what was moved.</param>
         /// <param name="Now">What time it is.</param>
         public static void MoveInto(CertificateStore  Store,
-                                    SigningRequests   Requests,
                                     EventLog          Log,
                                     DateTimeOffset    Now)
         {
 
             foreach (var listener in ListenerCertificates.All)
-                MoveIdentities(Store, Requests, Log, Now, listener);
+                MoveIdentities(Store, Log, Now, listener);
 
             MoveClientCAs(Store, Log);
 
@@ -95,10 +93,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         #endregion
 
 
-        #region (private static) MoveIdentities(Store, Requests, Log, Now, Listener)
+        #region (private static) MoveIdentities(Store, Log, Now, Listener)
 
         private static void MoveIdentities(CertificateStore  Store,
-                                           SigningRequests   Requests,
                                            EventLog          Log,
                                            DateTimeOffset    Now,
                                            String            Listener)
@@ -122,7 +119,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                     if (!File.Exists(metaFile))
                         continue;
 
-                    var meta         = SigningRequest.ReadJSON(File.ReadAllText(metaFile));
+                    var meta         = OldSigningRequests.ReadJSON(File.ReadAllText(metaFile));
                     var note         = meta["note"]?.Value<String>();
                     var keyFile      = Path.Combine(directory, "key.pem");
                     var requestFile  = Path.Combine(directory, "request.pem");
@@ -140,12 +137,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                         credential = PKCS12Of(File.ReadAllBytes(pfxFile));
 
                     else if (File.Exists(pemFile) && File.Exists(keyFile) &&
-                             !SigningRequests.TryCredential(File.ReadAllText(pemFile),
-                                                            File.ReadAllText(keyFile),
-                                                            Now,
-                                                            out credential,
-                                                            out error,
-                                                            RefuseExpired: false))
+                             !OldSigningRequests.TryCredential(File.ReadAllText(pemFile),
+                                                               File.ReadAllText(keyFile),
+                                                               Now,
+                                                               out credential,
+                                                               out error,
+                                                               RefuseExpired: false))
                     {
                         Log.Warning($"The {Listener} certificate '{note ?? id}' could not be moved into the certificate store, " +
                                     $"and stays in '{directory}': {error}",
@@ -164,24 +161,26 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
 
                     #endregion
 
-                    #region The key and its signing request, if they were made here
+                    #region The key and its signing request, if they were made here and wait
 
-                    if (File.Exists(keyFile) && File.Exists(requestFile))
-                        Requests.Adopt(
-                            new SigningRequest(
-                                id,
-                                Listener,
-                                SigningRequest.TryParseTimestamp(meta["createdAt"], out var createdAt) ? createdAt : Now,
-                                meta["subject"]?.Value<String>() ?? entry?.Subject ?? "",
-                                [.. meta["dnsNames"]?.   Values<String>().OfType<String>() ?? []],
-                                [.. meta["ipAddresses"]?.Values<String>().OfType<String>() ?? []],
-                                SigningRequests.AlgorithmOf(meta["keyType"]?.Value<String>())?.Id ?? meta["keyType"]?.Value<String>() ?? "unknown",
-                                note,
-                                entry is not null ? [ entry.Id ] : []
-                            ),
-                            File.ReadAllText(keyFile),
-                            File.ReadAllText(requestFile)
-                        );
+                    // A key whose certificate came is that identity, which holds
+                    // it: only one that still waits is taken over as a request.
+                    if (entry is null && File.Exists(keyFile) && File.Exists(requestFile))
+                    {
+                        if (!OldSigningRequests.TryAdopt(Store,
+                                                         Listener,
+                                                         meta,
+                                                         File.ReadAllText(keyFile),
+                                                         File.ReadAllText(requestFile),
+                                                         Now,
+                                                         out error))
+                        {
+                            Log.Warning($"The {Listener} signing request '{note ?? id}' could not be moved into the certificate store, " +
+                                        $"and stays in '{directory}': {error}",
+                                        "certificates", Listener);
+                            continue;
+                        }
+                    }
 
                     else if (entry is null)
                         // Neither a certificate nor a request: nothing to move,
@@ -195,7 +194,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                     Log.Notice(
                         entry is not null
                             ? $"The {Listener} certificate '{entry.Label}' is in the certificate store now, as {entry.Id} for the {Listener} listener."
-                            : $"The {Listener} signing request '{note ?? id}' is kept with the other requests now, still waiting for its certificate.",
+                            : $"The {Listener} signing request '{note ?? id}' waits in the certificate store now for its certificate.",
                         "certificates", Listener
                     );
 
@@ -236,7 +235,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                     if (!File.Exists(pemFile))
                         continue;
 
-                    var meta       = SigningRequest.ReadJSON(File.ReadAllText(jsonFile));
+                    var meta       = OldSigningRequests.ReadJSON(File.ReadAllText(jsonFile));
                     var name       = meta["name"]?.Value<String>() ?? Path.GetFileNameWithoutExtension(jsonFile);
                     var enabled    = meta["enabled"]?.Value<Boolean>() ?? true;
                     var chain      = new X509Certificate2Collection();
@@ -330,14 +329,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
 
         #endregion
 
-        #region (private static) Keep(From, To) / RemoveWhenEmpty(Directory)
+        #region (internal static) Keep(From, To) / RemoveWhenEmpty(Directory)
 
         /// <summary>
         /// Put what was moved below "moved", under another name when something of
         /// that name is there already.
         /// </summary>
-        private static void Keep(String  From,
-                                 String  To)
+        internal static void Keep(String  From,
+                                  String  To)
         {
 
             Directory.CreateDirectory(Path.GetDirectoryName(To)!);
@@ -354,7 +353,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
 
         }
 
-        private static void RemoveWhenEmpty(String Directory)
+        internal static void RemoveWhenEmpty(String Directory)
         {
             try
             {

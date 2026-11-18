@@ -1,11 +1,10 @@
-import { api, type AnsweredRequest, type Certificate, type CertificateKind, type CertificateStore, type NewSigningRequest, type SigningRequest, type SigningRequests, type TLSListener } from '../api/client';
+import { api, type Certificate, type CertificateKind, type CertificateStore } from '../api/client';
 import { auth } from '../auth';
 import { usageName } from '@node/pages/certificateUsages';
 import { certificatesPage as theNodesCertificatesPage, serverIdentitiesPage as theNodesServerIdentitiesPage,
-         type CertificatesOptions, type CertificatesSection, type KindWords, type SectionContext } from '@node/pages/certificates';
+         type CertificatesOptions, type CertificatesSection, type KindWords } from '@node/pages/certificates';
 import type { Page } from '@node/router';
-import { errorMessage, field, whileSaving } from '@node/ui';
-import { html, nothing, repeat, type TemplateResult } from '@node/view';
+import { html, nothing } from '@node/view';
 
 
 /**
@@ -85,28 +84,16 @@ const aboutKind: Record<CertificateKind, KindWords> = {
 
 
 /**
- * What each listener shows, whom to, and what that means for where its
- * certificate comes from - said where one is asked for, and where a listener
- * has none.
+ * What it means that a listener has nothing to show - said at the top of the
+ * page, where a listener has none.
  */
-const aboutListener: Record<string, { icon: string; checkedBy: string; nothing: string }> = {
+const withNothingToShow: Record<string, string> = {
 
-    modbus: {
-        icon:       'fa-plug-circle-bolt',
-        checkedBy:  'Shown to a charging station or a controller, which has pinned the CA that issued it: a ' +
-                    'certificate from anywhere else is refused by the peers, however valid it looks here.',
-        nothing:    'The Modbus/TLS listener has no certificate it could show, so every charging station and ' +
-                    'controller that connects is turned away at the handshake.'
-    },
+    modbus:  'The Modbus/TLS listener has no certificate it could show, so every charging station and ' +
+             'controller that connects is turned away at the handshake.',
 
-    web: {
-        icon:       'fa-globe',
-        checkedBy:  'Shown to a browser, and checked against its own trust store. The one this meter signed for ' +
-                    'itself at the first start works, and a browser will say it does not know who signed it - ' +
-                    'because it does not.',
-        nothing:    'The web interface has no certificate it could show, so every browser that connects anew is ' +
-                    'turned away at the handshake.'
-    }
+    web:     'The web interface has no certificate it could show, so every browser that connects anew is ' +
+             'turned away at the handshake.'
 
 };
 
@@ -114,14 +101,15 @@ const aboutListener: Record<string, { icon: string; checkedBy: string; nothing: 
 /**
  * Everything this meter believes, everything it presents, and the servers it
  * recognises - the node's certificate store, on the node's pages - and the
- * keys made here, with the requests a CA is sent for them.
+ * keys made here, which wait in it for their certificate.
  *
  * Two pages since WWCP_Node told certificates from identities: Certificates
  * keeps what is believed and recognised, without a private key - the roots,
  * with the SunSpec roles below the client roots, and the servers recognised;
  * Server identities keeps who the meter's own servers are, each with its
- * private key - the identities its listeners show, with the signing requests
- * below them. The meter has no client identity, so no Identities page.
+ * private key - the identities its listeners show, and on its "New key" tab
+ * the keys made for them. The meter has no client identity, so no Identities
+ * page.
  *
  * Grouped by what a certificate is to this meter, which is the whole shape of
  * this page. A **root** is what it believes, every one of a kind that is
@@ -136,16 +124,19 @@ const aboutListener: Record<string, { icon: string; checkedBy: string; nothing: 
  *
  * Certificates arrive three ways, and all of them are first class. "Import"
  * uploads a file and copies it in; "Re-read the directory" picks up whatever
- * somebody put there by hand; and a signing request makes the key here, where
- * it stays, and turns the certificate a CA sends back into an identity. Every
- * way, the store ends up the same, because the store is the directory.
+ * somebody put there by hand; and "New key" makes the key here, where it
+ * stays, with a signing request - the store's, which the meter has it make for
+ * its listeners - and the certificate a CA sends back for it becomes an
+ * identity of the listener it was asked for. Every way, the store ends up the
+ * same, because the store is the directory.
  *
  * The page is every node's (WWCP_Node's pages/certificates.ts); what is the
  * meter's is said here: its words for the kinds and the groups, what a
  * listener with nothing to show means, where an identity is shown now and
- * where next, the SunSpec roles below the client roots, and the signing
- * requests below the identities. This was three pages while the meter kept
- * three stores of its own, and then a page of its own of 1258 lines.
+ * where next, and the SunSpec roles below the client roots. This was three
+ * pages while the meter kept three stores of its own, and then a page of its
+ * own of 1258 lines; its signing requests were its own until the store made
+ * keys.
  */
 const options: CertificatesOptions<CertificateStore> = {
 
@@ -176,7 +167,7 @@ const options: CertificatesOptions<CertificateStore> = {
 
         unencrypted:  html`can pose as this meter - to a charging station as much as to a browser.`,
 
-        importing:    html`A certificate for a key this meter made goes in under Signing requests, where its key is.`
+        importing:    html`A certificate that comes back for a key this meter made is put in as it came, without a key: it finds the key that waits for it.`
 
     },
 
@@ -185,8 +176,8 @@ const options: CertificatesOptions<CertificateStore> = {
     notices: store => store.listeners.
                           filter(listener => store.shown[listener]?.used === true && store.shown[listener]?.current === null).
                           map   (listener => html`
-                              ${aboutListener[listener]?.nothing ?? `The ${listener} listener has no certificate it could show.`}
-                              ${auth.can('certificates', 'edit') ? 'Put in a TLS server identity for it under Server identities, or ask for one there.' : nothing}
+                              ${withNothingToShow[listener] ?? `The ${listener} listener has no certificate it could show.`}
+                              ${auth.can('certificates', 'edit') ? 'Put in a TLS server identity for it under Server identities, or make a key for one there.' : nothing}
                           `),
 
     // Where an identity is shown, and where it takes over next and when - the
@@ -197,7 +188,7 @@ const options: CertificatesOptions<CertificateStore> = {
                            map   (listener => html`<span class="chip">next on ${onListener(listener)}${from(store.shown[listener]?.nextAt)}</span>`)
     ],
 
-    sections: context => [ rolesSection(), requestsSection(context) ]
+    sections: () => [ rolesSection() ]
 
 };
 
@@ -248,363 +239,8 @@ function rolesSection(): CertificatesSection<CertificateStore> {
 }
 
 
-/**
- * The keys made in this meter, and the requests a CA is sent for them - below
- * the identities, which is what an answered one becomes.
- */
-function requestsSection(context: SectionContext<CertificateStore>): CertificatesSection<CertificateStore> {
-
-    let requests: SigningRequests | null = null;
-
-    // The listener and the key chosen for a request, once others than the
-    // ones it is drawn with are: what the notes under them say.
-    let listenerChosen: string | undefined;
-    let keyTypeChosen:  string | undefined;
-
-    const mayChange = context.mayChange;
-
-
-    /** One signing request: what it asks for, whether it was answered, and what can be done with it. */
-    function requestView(request: SigningRequest): TemplateResult {
-
-        const answered = request.state === 'answered';
-
-        // The certificate pasted for a request is a form of its own, known by
-        // the request it answers - a draft like the others, which Reload and
-        // the menu ask about before they throw it away, and which the page
-        // keeps when it is drawn anew for something done elsewhere on it.
-        return html`
-            <section class="card section-card signing-request">
-
-                <h3>
-                    <i class="fa-solid ${aboutListener[request.listener]?.icon ?? 'fa-file-signature'}"></i>
-                    ${request.subject}
-                    <span class="chip ${answered ? 'ok' : 'warn'}">${request.state}</span>
-                </h3>
-
-                <div class="table-scroll">
-                    <table class="kv">
-                        <tr><td>For</td><td>${onListener(request.listener)}</td></tr>
-                        ${request.dnsNames.length    > 0 ? html`<tr><td>DNS names</td><td>${request.dnsNames.join(', ')}</td></tr>` : nothing}
-                        ${request.ipAddresses.length > 0 ? html`<tr><td>IP addresses</td><td>${request.ipAddresses.join(', ')}</td></tr>` : nothing}
-                        <tr><td>Key</td><td>${nameOf(request.keyType)}</td></tr>
-                        <tr><td>Asked on</td><td>${new Date(request.createdAt).toLocaleString()}</td></tr>
-                        ${request.note ? html`<tr><td>Note</td><td>${request.note}</td></tr>` : nothing}
-                        ${answered ? html`<tr><td>Put in as</td><td>${request.answeredBy.map(labelOf).join(', ')}</td></tr>` : nothing}
-                    </table>
-                </div>
-
-                <div class="form-actions">
-                    <a class="btn small" href="${api.certificates.requestURL(request.id)}" download>Download the request</a>
-                    ${mayChange
-                          ? html`<button type="button" class="btn small danger" data-remove-request="${request.id}"
-                                         @click=${() => void throwAway(request.id)}>Throw away</button>`
-                          : nothing}
-                </div>
-
-                ${mayChange ? html`
-                    <form class="upload" data-id="${request.id}" @submit=${(event: SubmitEvent) => { event.preventDefault(); void answer(request.id); }}>
-                        <label>The signed certificate, PEM encoded, with the intermediates above it
-                            <textarea class="mono" rows="6" name="pem" data-pem="${request.id}"
-                                      placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-                        </label>
-                        <div class="form-actions">
-                            <button type="button" class="btn primary" data-answer="${request.id}"
-                                    @click=${() => void answer(request.id)}>
-                                ${answered ? 'Renew with the same key' : 'Put the certificate in'}
-                            </button>
-                            <span class="form-notice" data-answer-note="${request.id}"  role="status"></span>
-                            <span class="form-error"  data-answer-error="${request.id}" role="alert"></span>
-                        </div>
-                    </form>
-                ` : nothing}
-
-            </section>
-        `;
-
-    }
-
-
-    /** The card that makes a key here, and the request a CA is sent for it. */
-    function requestCard(asked: SigningRequests): TemplateResult {
-
-        // Drawn as the listener chosen, as the import draws its kind, and for
-        // the same reason: an untouched form is one.
-        const first = asked.listeners[0];
-
-        return html`
-            <section class="card section-card">
-
-                <h3><i class="fa-solid fa-file-signature"></i> Ask for a new certificate</h3>
-
-                <form id="request-form" class="form-stack" @submit=${(event: SubmitEvent) => { event.preventDefault(); void ask(event.currentTarget as HTMLFormElement); }}>
-
-                    <label>Which listener it is for
-                        <select name="listener" id="request-listener"
-                                @change=${(event: Event) => { listenerChosen = (event.target as HTMLSelectElement).value; context.draw(); }}>
-                            ${asked.listeners.map(listener => html`
-                                <option value="${listener}" ?selected=${listener === first}>${usageName(listener, listenerNames)}</option>
-                            `)}
-                        </select>
-                    </label>
-
-                    <p class="hint" id="request-listener-note">${aboutListener[listenerChosen ?? first ?? '']?.checkedBy ?? ''}</p>
-
-                    <label>Subject
-                        <input type="text" name="subject" required placeholder="CN=meter7.lan, O=Acme" />
-                    </label>
-
-                    <label>DNS names, separated by commas
-                        <input type="text" name="dnsNames" placeholder="meter7.lan, meter7" />
-                    </label>
-
-                    <label>IP addresses, separated by commas
-                        <input type="text" name="ipAddresses" placeholder="192.168.7.20" />
-                    </label>
-
-                    <label>Key
-                        <select name="keyType" id="request-key-type"
-                                @change=${(event: Event) => { keyTypeChosen = (event.target as HTMLSelectElement).value; context.draw(); }}>
-                            ${asked.keyTypes.map(keyType => html`
-                                <option value="${keyType.id}" ?selected=${keyType.id === asked.defaultKeyType}>
-                                    ${keyType.name}
-                                </option>
-                            `)}
-                        </select>
-                    </label>
-
-                    <p class="hint" id="request-key-type-note">${remarkOf(keyTypeChosen ?? asked.defaultKeyType)}</p>
-
-                    <label>Note
-                        <input type="text" name="note" placeholder="what this is for" />
-                    </label>
-
-                    <div class="form-actions">
-                        <button type="submit" class="btn primary">Make a key and a request</button>
-                        <span id="request-note"  class="form-notice" role="status"></span>
-                        <span id="request-error" class="form-error"  role="alert"></span>
-                    </div>
-
-                    <span class="hint">
-                        The key is made here and stays here. What you get is the request to hand to whoever signs
-                        it; bring the certificate back to this page, to the request it answers.
-                    </span>
-
-                </form>
-
-            </section>
-        `;
-
-    }
-
-
-    /** What a kind of key is called, or its id where it is one no longer offered. */
-    function nameOf(id: string): string {
-        return requests?.keyTypes.find(keyType => keyType.id === id)?.name ?? id;
-    }
-
-    /** What somebody choosing a kind of key should know, as the meter says it. */
-    function remarkOf(id: string): string {
-
-        const keyType = requests?.keyTypes.find(one => one.id === id);
-
-        if (keyType === undefined)
-            return '';
-
-        return keyType.presentable === false
-                   ? `${keyType.remark} This machine turned out not to be able to present such a certificate.`
-                   : keyType.remark;
-
-    }
-
-    /** What a certificate of the store is called, or its handle where the store no longer has it. */
-    function labelOf(id: string): string {
-        return Object.values(context.store().certificates).flat().find(one => one.id === id)?.label ?? id;
-    }
-
-
-    /**
-     * Make a key and a request, and hand the request over at once: it is the
-     * whole point of having pressed the button, so it is offered rather than
-     * left to be found in the list.
-     */
-    async function ask(form: HTMLFormElement): Promise<void> {
-
-        const page   = context.page;
-        const note   = page.querySelector<HTMLElement>('#request-note')!;
-        const error  = page.querySelector<HTMLElement>('#request-error')!;
-
-        note.textContent   = '';
-        error.textContent  = '';
-
-        const remark = field(form, 'note');
-
-        const request: NewSigningRequest = {
-            listener:     field(form, 'listener') as TLSListener,
-            subject:      field(form, 'subject'),
-            dnsNames:     list(field(form, 'dnsNames')),
-            ipAddresses:  list(field(form, 'ipAddresses')),
-            keyType:      field(form, 'keyType'),
-            note:         remark.length > 0 ? remark : undefined
-        };
-
-        let made: SigningRequest;
-
-        try
-        {
-            made = await whileSaving(page, note, () => api.certificates.createRequest(request));
-        }
-        catch (problem)
-        {
-            error.textContent = errorMessage(problem);
-            return;
-        }
-
-        // Asked: the form goes back to what it starts with.
-        listenerChosen = undefined;
-        keyTypeChosen  = undefined;
-
-        await context.reload();
-
-        form.reset();
-
-        sayAfterwards('#request-note', 'Made. The request is on its way to your downloads.');
-
-        window.location.href = api.certificates.requestURL(made.id);
-
-    }
-
-
-    /**
-     * Put in the certificate a CA signed for a request - checked by the meter
-     * against the key that asked, and from then on an identity of the listener
-     * it was asked for. A second one for the same request is a renewal:
-     * another identity with the same key, which takes over when it becomes
-     * valid.
-     */
-    async function answer(id: string): Promise<void> {
-
-        const page   = context.page;
-        const error  = page.querySelector<HTMLElement>(`[data-answer-error="${id}"]`)!;
-        const area   = page.querySelector<HTMLTextAreaElement>(`[data-pem="${id}"]`)!;
-        const pem    = area.value;
-
-        error.textContent = '';
-
-        if (pem.trim().length === 0) {
-            error.textContent = 'Paste the signed certificate first.';
-            return;
-        }
-
-        let answered: AnsweredRequest;
-
-        try
-        {
-            answered = await whileSaving(page, null, () => api.certificates.answerRequest(id, pem));
-        }
-        catch (problem)
-        {
-            error.textContent = errorMessage(problem);
-            return;
-        }
-
-        await context.reload();
-
-        // Put in: this request's form is emptied, and every other one keeps
-        // what is pasted into it.
-        area.closest('form')?.reset();
-
-        sayAfterwards(`[data-answer-note="${id}"]`, `Put in as ${answered.certificate.label}.`);
-
-    }
-
-
-    /** Throw a request away, and its key with it - a refusal said on its own card. */
-    async function throwAway(id: string): Promise<void> {
-
-        if (!confirm('Throw this request away, and its key with it?\n\nWhat was put into the store from it ' +
-                     'stays there, but can no longer be renewed with the same key. That cannot be undone.'))
-            return;
-
-        const error = context.page.querySelector<HTMLElement>(`[data-answer-error="${id}"]`);
-
-        if (error !== null)
-            error.textContent = '';
-
-        try
-        {
-            await whileSaving(context.page, null, () => api.certificates.removeRequest(id));
-        }
-        catch (problem)
-        {
-            if (error !== null) {
-                error.textContent = errorMessage(problem);
-                error.scrollIntoView({ block: 'nearest' });
-            }
-            return;
-        }
-
-        await context.reload();
-
-    }
-
-
-    /**
-     * Say something once the page has been drawn again - which is why it is
-     * looked for again, and why it is not said at all where the page could
-     * not be loaded.
-     */
-    function sayAfterwards(selector: string, text: string): void {
-
-        const where = context.page.querySelector<HTMLElement>(selector);
-
-        if (where !== null)
-            where.textContent = text;
-
-    }
-
-
-    return {
-
-        below:  'presents',
-        page:   'serverIdentities',
-
-        load:   async () => { requests = await api.certificates.requests(); },
-
-        // Reload: the notes under the selects go back with the forms.
-        reset:  () => { listenerChosen = undefined; keyTypeChosen = undefined; },
-
-        draw:   () => html`
-
-            <h2>Signing requests</h2>
-            <p class="hint">
-                A key made in this meter, and the request a CA is sent for it. The key never leaves the meter: what
-                goes out is the request, and what comes back is a certificate, checked against the key that asked
-                for it before it becomes an identity of the listener it was asked for. A request is kept once it is
-                answered, with its key, so that a certificate that runs out can be renewed by sending the same
-                request again.
-            </p>
-
-            ${requests === null || requests.requests.length === 0
-                  ? html`<p class="muted small">None.</p>`
-                  : repeat(requests.requests, request => request.id, requestView)}
-
-            ${mayChange && requests !== null ? requestCard(requests) : nothing}
-
-        `
-
-    };
-
-}
-
-
 /** When the one that is next on a listener takes over, after its name - or nothing, where that is not known. */
 function from(nextAt: string | null | undefined): string {
     return nextAt ? `, from ${new Date(nextAt).toLocaleString()}` : '';
 }
 
-
-/** A comma-separated field as the list it stands for. */
-function list(text: string): string[] {
-    return text.split(',').map(part => part.trim()).filter(part => part.length > 0);
-}
