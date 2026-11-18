@@ -704,8 +704,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             //
             // Which identity each listener shows is the node's to choose, as it
             // chooses for every node's listeners - see WWCPNode.ListenerCertificates:
-            // it says in the log book when a listener shows another one. What
-            // is handed to the TLS stacks is read by the meter - see Shown().
+            // it says in the log book when a listener shows another one, reads
+            // each certificate once and keeps it while it is in the store - so
+            // the TLS stacks may keep what they were handed.
             this.webCertificates     = ListenerCertificates.For(MeterListeners.Web,    "the web interface");
 
             if (HTTPS && webCertificates.Entry is null)
@@ -714,7 +715,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             this.modbusCertificates  = ListenerCertificates.For(MeterListeners.Modbus, "Modbus/TLS");
             this.clientRoots         = new ClientRoots(Certificates);
 
-            Setup.Web.Shown          = () => Shown(webCertificates);
+            Setup.Web.Shown          = () => webCertificates.Current;
 
             // Beside the certificates rather than among them: these are not
             // certificates, nobody issues them, and they outlive every
@@ -800,7 +801,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                            IdleTimeout:        IdleTimeout      ?? DefaultIdleTimeout,
                                            WriteTimeout:       WriteTimeout     ?? DefaultWriteTimeout,
 
-                                           ServerCertificateSelector:  serverName => Shown(modbusCertificates)
+                                           ServerCertificateSelector:  serverName => modbusCertificates.Current
                                                                                          ?? throw new InvalidOperationException("This meter has no valid Modbus/TLS certificate to show."),
                                            ClientTrustAnchors:         clientRoots.Anchors
                                        ),

@@ -398,8 +398,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// The certificate Modbus/TLS shows outlives changes of the store that
         /// do not touch it. The Modbus/TLS frontend keeps the TLS context it
         /// built of a certificate for as long as it runs; a certificate let go
-        /// of under it - as the node's ListenerCertificate does with what it
-        /// read, two changes of the store later - fails every handshake after.
+        /// of under it - as the node's ListenerCertificate once did with what
+        /// it read, two changes of the store later - failed every handshake
+        /// after.
         /// </summary>
         [Test]
         public async Task ModbusTLS_StillShakesHands_AfterTheStoreChanged()

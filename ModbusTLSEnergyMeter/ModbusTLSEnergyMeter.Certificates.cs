@@ -24,8 +24,6 @@ using System.Security.Cryptography.X509Certificates;
 
 using Newtonsoft.Json.Linq;
 
-using ServerCertificateChain = org.GraphDefined.Vanaheimr.Hermod.ServerCertificateChain;
-
 using cloud.charging.open.protocols.WWCP.Node.Certificates;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
@@ -62,85 +60,6 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// </summary>
         public static readonly TimeSpan CertificateExpiryWarning     = TimeSpan.FromDays(21);
 
-        private readonly Lock                                        shownLock  = new ();
-        private readonly Dictionary<String, ServerCertificateChain>  presented  = [];
-
-        #endregion
-
-        #region (private) Shown(Listener)
-
-        /// <summary>
-        /// What a listener hands its TLS stack now: the identity the node
-        /// chooses for it, read by this meter - once per certificate, and never
-        /// let go of - or null when there is none.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// Read here rather than taken from the node's ListenerCertificate,
-        /// which lets go of what it read two changes of the store later. The
-        /// Modbus/TLS frontend keeps the TLS context it builds of a certificate
-        /// in a cache of the whole process, by the certificate, that is never
-        /// emptied - and builds the first one on a thread of its own while the
-        /// meter is still starting. A certificate let go of under it failed
-        /// every handshake after, in this meter and in any other of the process
-        /// showing the same certificate, and one let go of while the first
-        /// context was built left Modbus/TLS with its port open and nobody
-        /// serving it.
-        /// </para>
-        /// <para>
-        /// So not even when the meter is let go of. One certificate each, as
-        /// the meter has always kept them: a handful over a meter's life.
-        /// </para>
-        /// </remarks>
-        private ServerCertificateChain? Shown(ListenerCertificate Listener)
-        {
-
-            if (Listener.Entry is not CertificateEntry entry)
-                return null;
-
-            lock (shownLock)
-                if (presented.TryGetValue(entry.Thumbprint, out var known))
-                    return known;
-
-            ServerCertificateChain chain;
-
-            try
-            {
-                var path  = Certificates.FullPath(entry);
-                chain     = ServerCertificateChain.FromPkcs12(File.ReadAllBytes(path), null, path);
-            }
-            catch (Exception e)
-            {
-                Log.Warning($"The TLS server identity '{entry.Label}' cannot be shown on the {Listener.Listener} listener: {e.Message}",
-                            "certificates", Listener.Listener);
-                return null;
-            }
-
-            lock (shownLock)
-            {
-
-                // Read twice at once: the first one read is the one kept, and
-                // the other, handed to nobody, let go of.
-                if (presented.TryGetValue(entry.Thumbprint, out var meanwhile))
-                {
-
-                    chain.Certificate.Dispose();
-
-                    foreach (var intermediate in chain.Intermediates)
-                        intermediate.Dispose();
-
-                    return meanwhile;
-
-                }
-
-                presented[entry.Thumbprint] = chain;
-
-            }
-
-            return chain;
-
-        }
-
         #endregion
 
         #region (private) StartWatchingTheCertificates()
@@ -165,7 +84,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             {
 
                 String listener = shownBy.Listener;
-                var    chain    = Shown(shownBy);
+                var    chain    = shownBy.Current;
 
                 if (chain is not null)
                     Log.Info(

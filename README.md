@@ -607,10 +607,9 @@ two together: on this platform today none can.
 from a list: it depends on the operating system's TLS stack, on the runtime and
 on the year. Hermod does one TLS handshake against itself, once per algorithm,
 and a server key of a kind this machine cannot present is not made. An identity
-put in for a listener is not asked that yet: what the node chooses among them
-only passes over one whose file cannot be read with its key, so a P-521
-certificate on Windows - SChannel has `NistP521` switched off - would be shown,
-and its handshakes fail. Put another kind in for that listener there.
+put in for a listener is asked the same when it is first read: a P-521
+certificate on Windows - SChannel has `NistP521` switched off - is passed over,
+said once in the log, and the listener shows the next one it can.
 
 The old spellings the meter's own store used before Hermod had a list - `ec256`,
 `rsa3072`, `mldsa65` - are still read when a request from before is taken over,
@@ -626,7 +625,8 @@ pressed:
 
 * Both listeners ask **at every handshake**. A certificate that is valid now is
   shown to the next peer that connects - no restart, and existing connections
-  are not disturbed. What was read from disk is kept until the store changes.
+  are not disturbed. What was read from disk is kept for as long as it is in
+  the store.
 * A certificate put in today that becomes valid in two days is simply not the
   answer until then, and is the answer from the second it is. The page says
   which one is next and when it takes over.
