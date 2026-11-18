@@ -143,7 +143,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 
-            OldRequest("20260105-000000-aaaaaa", ListenerCertificates.Modbus, key, "CN=meter7.lan", "ec256", "the next Modbus/TLS one",
+            OldRequest("20260105-000000-aaaaaa", MeterListeners.Modbus, key, "CN=meter7.lan", "ec256", "the next Modbus/TLS one",
                        DNSNames: [ "meter7.lan" ], IPAddresses: [ "192.0.2.7" ]);
 
             String requestId;
@@ -156,7 +156,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.Multiple(() => {
 
                     Assert.That(waiting?.Kind,                   Is.EqualTo(CertificateKind.TLSServerIdentity));
-                    Assert.That(waiting?.Usages,                 Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
+                    Assert.That(waiting?.Usages,                 Is.EqualTo(new CertificateUsage[] { MeterListeners.Modbus }));
                     Assert.That(waiting?.Label,                  Is.EqualTo("the next Modbus/TLS one"));
                     Assert.That(waiting?.Subject,                Is.EqualTo("CN=meter7.lan"));
                     Assert.That(waiting?.AlgorithmId,            Is.EqualTo("ecdsa-p256"), "the old spelling, under the name used now");
@@ -187,10 +187,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
                 Assert.That(answered,                                   Is.EqualTo(requestId));
                 Assert.That(entry?.Kind,                                Is.EqualTo(CertificateKind.TLSServerIdentity));
-                Assert.That(entry?.Usages,                              Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
+                Assert.That(entry?.Usages,                              Is.EqualTo(new CertificateUsage[] { MeterListeners.Modbus }));
                 Assert.That(entry?.Label,                               Is.EqualTo("the next Modbus/TLS one"));
                 Assert.That(again.Certificates.Requests,                Is.Empty, "the key waits for nothing any more");
-                Assert.That(again.ModbusCertificates.Current?.Entry.Id, Is.EqualTo(entry?.Id), "Modbus/TLS shows another one");
+                Assert.That(again.ModbusCertificates.Entry?.Id, Is.EqualTo(entry?.Id), "Modbus/TLS shows another one");
             });
 
         }
@@ -215,15 +215,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             using var answer       = new CertificateRequest("CN=answered.lan", answeredKey, HashAlgorithmName.SHA256).
                                          CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(365));
 
-            var before = new CertificateStore(Certificates, new EventLog(), [ CertificateKind.TLSServerIdentity ], Listeners: ListenerCertificates.All);
+            var before = new CertificateStore(Certificates, new EventLog(), [ CertificateKind.TLSServerIdentity ], Listeners: MeterListeners.All);
 
             Assert.That(before.Import(answer.Export(X509ContentType.Pkcs12), CertificateKind.TLSServerIdentity, null,
-                                      "the answered one", [ ListenerCertificates.Web ], out var identity, out var error), Is.True, error);
+                                      "the answered one", [ MeterListeners.Web ], out var identity, out var error), Is.True, error);
 
-            OldRequest("20260106-000000-bbbbbb", ListenerCertificates.Web, answeredKey, "CN=answered.lan", "ecdsa-p256", "the answered one",
+            OldRequest("20260106-000000-bbbbbb", MeterListeners.Web, answeredKey, "CN=answered.lan", "ecdsa-p256", "the answered one",
                        AnsweredBy: [ identity!.Id ]);
 
-            OldRequest("20260107-000000-cccccc", ListenerCertificates.Web, goneKey,     "CN=gone.lan",     "ecdsa-p256", "its answer is gone",
+            OldRequest("20260107-000000-cccccc", MeterListeners.Web, goneKey,     "CN=gone.lan",     "ecdsa-p256", "its answer is gone",
                        DNSNames: [ "gone.lan" ], AnsweredBy: [ "20260101-000000-ffffff" ]);
 
             await using var meter = NewMeter();
@@ -260,14 +260,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 
-            var broken = OldRequest("20260108-000000-dddddd", ListenerCertificates.Modbus, key, "CN=broken.lan", "ecdsa-p256", "a broken one");
+            var broken = OldRequest("20260108-000000-dddddd", MeterListeners.Modbus, key, "CN=broken.lan", "ecdsa-p256", "a broken one");
 
             File.WriteAllText(Path.Combine(broken, "key.pem"), "-----BEGIN PRIVATE KEY-----\nbm90IGEga2V5\n-----END PRIVATE KEY-----\n");
 
             // And one whose key can be read, and is another request's.
             using var other = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 
-            var mixedUp = OldRequest("20260109-000000-eeeeee", ListenerCertificates.Web, key, "CN=mixed-up.lan", "ecdsa-p256", "a mixed-up one");
+            var mixedUp = OldRequest("20260109-000000-eeeeee", MeterListeners.Web, key, "CN=mixed-up.lan", "ecdsa-p256", "a mixed-up one");
 
             File.WriteAllText(Path.Combine(mixedUp, "key.pem"), other.ExportPkcs8PrivateKeyPem());
 

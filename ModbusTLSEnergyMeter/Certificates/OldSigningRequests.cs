@@ -145,7 +145,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                         continue;
 
                     var meta      = ReadJSON(File.ReadAllText(metaFile));
-                    var listener  = meta["listener"]?.Value<String>() ?? ListenerCertificates.Modbus;
+                    var listener  = meta["listener"]?.Value<String>() ?? MeterListeners.Modbus;
                     var note      = meta["note"]?.    Value<String>();
                     var answers   = (meta["answeredBy"]?.Values<String>().OfType<String>() ?? []).
                                         Select(answer => Store.Get(answer)).

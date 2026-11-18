@@ -83,7 +83,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
                                     DateTimeOffset    Now)
         {
 
-            foreach (var listener in ListenerCertificates.All)
+            foreach (var listener in MeterListeners.All)
                 MoveIdentities(Store, Log, Now, listener);
 
             MoveClientCAs(Store, Log);

@@ -18,6 +18,7 @@
 #region Usings
 
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
 using NUnit.Framework;
@@ -26,6 +27,7 @@ using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.PKI;
 
+using cloud.charging.open.protocols.WWCP.Node.Certificates;
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
 using cloud.charging.open.protocols.WWCP.Node.Logging;
 using cloud.charging.open.protocols.WWCP.Node.TestKit;
@@ -385,6 +387,40 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(quiet.Log.Count,        Is.GreaterThan(0), "and still keeps a log in memory");
                 Assert.That(Directory.Exists(Path.Combine(workingDirectory!, "quiet", "logs")), Is.False);
             });
+
+        }
+
+        #endregion
+
+        #region ModbusTLS_StillShakesHands_AfterTheStoreChanged()
+
+        /// <summary>
+        /// The certificate Modbus/TLS shows outlives changes of the store that
+        /// do not touch it. The Modbus/TLS frontend keeps the TLS context it
+        /// built of a certificate for as long as it runs; a certificate let go
+        /// of under it - as the node's ListenerCertificate does with what it
+        /// read, two changes of the store later - fails every handshake after.
+        /// </summary>
+        [Test]
+        public async Task ModbusTLS_StillShakesHands_AfterTheStoreChanged()
+        {
+
+            await ReadAsAsync(SunSpecRoles.ReadOnly);
+
+            for (var i = 0; i < 3; i++)
+            {
+
+                using var key   = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+                using var root  = new CertificateRequest($"CN=a root of nobody's {i}", key, HashAlgorithmName.SHA256).
+                                      CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30));
+
+                Assert.That(meter!.Certificates.Import(root.Export(X509ContentType.Cert), CertificateKind.TLSRoot, null, $"change {i}", out _, out var error),
+                            Is.True, error);
+
+            }
+
+            Assert.That(async () => await ReadAsAsync(SunSpecRoles.ReadOnly), Throws.Nothing,
+                        "Modbus/TLS refuses every handshake once the store changed twice");
 
         }
 

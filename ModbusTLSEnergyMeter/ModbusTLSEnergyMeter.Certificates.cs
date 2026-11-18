@@ -24,6 +24,8 @@ using System.Security.Cryptography.X509Certificates;
 
 using Newtonsoft.Json.Linq;
 
+using ServerCertificateChain = org.GraphDefined.Vanaheimr.Hermod.ServerCertificateChain;
+
 using cloud.charging.open.protocols.WWCP.Node.Certificates;
 
 using cloud.charging.open.EnergyMeters.ModbusTLS.Certificates;
@@ -42,16 +44,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         #region Data
 
         /// <summary>
-        /// How often the certificate stores are asked whether what they would
-        /// hand out has changed.
+        /// How often this meter looks whether what its listeners show is about
+        /// to run out with nothing to follow it.
         /// </summary>
         /// <remarks>
         /// The rollover itself does not depend on this: both listeners ask the
-        /// store at every handshake, so a certificate that becomes valid at
-        /// 03:00 is shown to the first peer that connects at 03:00. This is so
-        /// that it also gets written down at 03:00 rather than whenever the
-        /// next peer happens to turn up, which on a quiet meter could be the
-        /// following afternoon.
+        /// node at every handshake, so a certificate that becomes valid at
+        /// 03:00 is shown to the first peer that connects at 03:00, and the
+        /// node says so in the log book by its own clock - see
+        /// WWCPNode.ListenerCertificates.
         /// </remarks>
         public static readonly TimeSpan DefaultCertificateCheckEvery = TimeSpan.FromMinutes(1);
 
@@ -60,6 +61,85 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// starts saying so.
         /// </summary>
         public static readonly TimeSpan CertificateExpiryWarning     = TimeSpan.FromDays(21);
+
+        private readonly Lock                                        shownLock  = new ();
+        private readonly Dictionary<String, ServerCertificateChain>  presented  = [];
+
+        #endregion
+
+        #region (private) Shown(Listener)
+
+        /// <summary>
+        /// What a listener hands its TLS stack now: the identity the node
+        /// chooses for it, read by this meter - once per certificate, and never
+        /// let go of - or null when there is none.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Read here rather than taken from the node's ListenerCertificate,
+        /// which lets go of what it read two changes of the store later. The
+        /// Modbus/TLS frontend keeps the TLS context it builds of a certificate
+        /// in a cache of the whole process, by the certificate, that is never
+        /// emptied - and builds the first one on a thread of its own while the
+        /// meter is still starting. A certificate let go of under it failed
+        /// every handshake after, in this meter and in any other of the process
+        /// showing the same certificate, and one let go of while the first
+        /// context was built left Modbus/TLS with its port open and nobody
+        /// serving it.
+        /// </para>
+        /// <para>
+        /// So not even when the meter is let go of. One certificate each, as
+        /// the meter has always kept them: a handful over a meter's life.
+        /// </para>
+        /// </remarks>
+        private ServerCertificateChain? Shown(ListenerCertificate Listener)
+        {
+
+            if (Listener.Entry is not CertificateEntry entry)
+                return null;
+
+            lock (shownLock)
+                if (presented.TryGetValue(entry.Thumbprint, out var known))
+                    return known;
+
+            ServerCertificateChain chain;
+
+            try
+            {
+                var path  = Certificates.FullPath(entry);
+                chain     = ServerCertificateChain.FromPkcs12(File.ReadAllBytes(path), null, path);
+            }
+            catch (Exception e)
+            {
+                Log.Warning($"The TLS server identity '{entry.Label}' cannot be shown on the {Listener.Listener} listener: {e.Message}",
+                            "certificates", Listener.Listener);
+                return null;
+            }
+
+            lock (shownLock)
+            {
+
+                // Read twice at once: the first one read is the one kept, and
+                // the other, handed to nobody, let go of.
+                if (presented.TryGetValue(entry.Thumbprint, out var meanwhile))
+                {
+
+                    chain.Certificate.Dispose();
+
+                    foreach (var intermediate in chain.Intermediates)
+                        intermediate.Dispose();
+
+                    return meanwhile;
+
+                }
+
+                presented[entry.Thumbprint] = chain;
+
+            }
+
+            return chain;
+
+        }
 
         #endregion
 
@@ -81,46 +161,45 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                    DefaultCertificateCheckEvery
                                );
 
-            foreach (var store in new[] { modbusCertificates, webCertificates })
+            foreach (var shownBy in new[] { modbusCertificates, webCertificates })
             {
 
-                var current = store.Current;
+                String listener = shownBy.Listener;
+                var    chain    = Shown(shownBy);
 
-                if (current is not null)
+                if (chain is not null)
                     Log.Info(
-                        $"The {store.Listener} listener shows '{current.Certificate.Subject}', valid until {current.Certificate.NotAfter:yyyy-MM-dd}.",
-                        "certificates", store.Listener
+                        $"The {listener} listener shows '{chain.Certificate.Subject}', valid until {chain.Certificate.NotAfter:yyyy-MM-dd}.",
+                        "certificates", listener
                     );
 
-                else if (store.Listener == ListenerCertificates.Modbus || HTTPS)
+                else if (listener == MeterListeners.Modbus || HTTPS)
                     Log.Warning(
-                        $"There is no valid {store.Listener} certificate: every handshake on that listener will fail.",
-                        "certificates", store.Listener
+                        $"There is no valid {listener} certificate: every handshake on that listener will fail.",
+                        "certificates", listener
                     );
 
-                if (store.Next is CertificateEntry next)
+                if (MeterListeners.NextFor(Certificates, listener, TimeProvider.GetUtcNow()) is CertificateEntry next)
                     Log.Info(
-                        $"A newer {store.Listener} certificate takes over on {next.NotBefore.UtcDateTime:yyyy-MM-dd HH:mm}.",
-                        "certificates", store.Listener
+                        $"A newer {listener} certificate takes over on {next.NotBefore.UtcDateTime:yyyy-MM-dd HH:mm}.",
+                        "certificates", listener
                     );
 
                 // Said out loud rather than left to be discovered as a
                 // handshake that fails for no visible reason: the chain is
                 // handed to the TLS stack either way, and on Windows the TLS
                 // stack does not send it.
-                var chain = store.ChainFor(null);
-
                 if (chain is not null && chain.HasIntermediates)
                     Log.Log(
                         RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                             ? MeterLogLevel.Warning
                             : MeterLogLevel.Info,
                         RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                            ? $"The {store.Listener} certificate came with {chain.Intermediates.Count} intermediate(s), and Windows will not put them on the wire: " +
+                            ? $"The {listener} certificate came with {chain.Intermediates.Count} intermediate(s), and Windows will not put them on the wire: " +
                                "SChannel builds the chain it sends from this machine's certificate stores and ignores what a program hands it. " +
                                "Install them in the local computer's intermediate CA store, or run this meter on Linux, where they are sent."
-                            : $"The {store.Listener} listener sends {chain.Intermediates.Count} intermediate(s) with its certificate.",
-                        "certificates", store.Listener
+                            : $"The {listener} listener sends {chain.Intermediates.Count} intermediate(s) with its certificate.",
+                        "certificates", listener
                     );
 
             }
@@ -132,43 +211,44 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         #region (private) CheckTheCertificates()
 
         /// <summary>
-        /// Let each store work out again what it would hand out - which is
-        /// what raises the line about a rollover - and grumble about anything
-        /// that is running out.
+        /// Grumble about what a listener shows when it is running out and
+        /// nothing is lined up to follow it.
         /// </summary>
         private void CheckTheCertificates()
         {
 
             var now = TimeProvider.GetUtcNow();
 
-            foreach (var store in new[] { modbusCertificates, webCertificates })
+            foreach (var shownBy in new[] { modbusCertificates, webCertificates })
             {
+
+                String listener = shownBy.Listener;
 
                 try
                 {
 
-                    store.CheckRollover();
-
-                    var current = store.Current;
+                    var shown = shownBy.Choose();
 
                     // Only worth saying when nothing else is lined up to take
                     // over: a certificate running out next week with its
                     // successor already in the store is not a problem, it is
-                    // the arrangement working.
-                    if (current is not null &&
-                        store.Next is null &&
-                        current.Certificate.NotAfter - now < CertificateExpiryWarning)
+                    // the arrangement working. Nor for the carrier of a server
+                    // key, which is dated to the year 9999.
+                    if (shown is not null &&
+                        !shown.IsCarrier  &&
+                        MeterListeners.NextFor(Certificates, listener, now) is null &&
+                        shown.Chain.Certificate.NotAfter - now < CertificateExpiryWarning)
                     {
                         Log.Warning(
-                            $"The {store.Listener} certificate runs out on {current.Certificate.NotAfter:yyyy-MM-dd} and nothing has been put in to follow it.",
-                            "certificates", store.Listener
+                            $"The {listener} certificate runs out on {shown.Chain.Certificate.NotAfter:yyyy-MM-dd} and nothing has been put in to follow it.",
+                            "certificates", listener
                         );
                     }
 
                 }
                 catch (Exception e)
                 {
-                    Log.Warning($"The {store.Listener} certificates could not be checked: {e.Message}", "certificates", store.Listener);
+                    Log.Warning($"The {listener} certificates could not be checked: {e.Message}", "certificates", listener);
                 }
 
             }
@@ -245,15 +325,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         #region ListenerCertificatesFor(Listener)
 
         /// <summary>
-        /// The certificates of the listener a request names, or null when it
-        /// names neither.
+        /// What the listener a request names shows, or null when it names
+        /// neither.
         /// </summary>
-        public ListenerCertificates? ListenerCertificatesFor(String? Listener)
+        public ListenerCertificate? ListenerCertificatesFor(String? Listener)
 
             => Listener?.Trim().ToLowerInvariant() switch {
-                   ListenerCertificates.Modbus  => modbusCertificates,
-                   ListenerCertificates.Web     => webCertificates,
-                   _                            => null
+                   MeterListeners.Modbus  => modbusCertificates,
+                   MeterListeners.Web     => webCertificates,
+                   _                      => null
                };
 
         #endregion
@@ -265,8 +345,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// </summary>
         public IEnumerable<String> ShownOn(String? Id)
 
-            => ListenerCertificates.All.Where(listener => Id is not null &&
-                                                          ListenerCertificatesFor(listener)?.Current?.Entry.Id == Id);
+            => MeterListeners.All.Where(listener => Id is not null &&
+                                                    ListenerCertificatesFor(listener)?.Entry?.Id == Id);
 
         #endregion
 
@@ -289,17 +369,18 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             var shown = new JObject();
 
-            foreach (var listener in ListenerCertificates.All)
+            var now = TimeProvider.GetUtcNow();
+
+            foreach (var listener in MeterListeners.All)
             {
 
-                var certificatesOf  = ListenerCertificatesFor(listener);
-                var next            = certificatesOf?.Next;
+                var next = MeterListeners.NextFor(Certificates, listener, now);
 
                 shown.Add(listener, new JObject(
-                                        new JProperty("current",  certificatesOf?.Current?.Entry.Id),
+                                        new JProperty("current",  ListenerCertificatesFor(listener)?.Entry?.Id),
                                         new JProperty("next",     next?.Id),
                                         new JProperty("nextAt",   next?.NotBefore.UtcDateTime),
-                                        new JProperty("used",     listener == ListenerCertificates.Modbus || HTTPS)
+                                        new JProperty("used",     listener == MeterListeners.Modbus || HTTPS)
                                     ));
 
             }
@@ -336,12 +417,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             if (Entry.Kind == CertificateKind.TLSServerIdentity)
             {
 
-                foreach (var listener in ListenerCertificates.All)
+                foreach (var listener in MeterListeners.All)
                 {
 
                     // The web interface shows nothing without HTTPS, and so
                     // cannot be left with nothing either.
-                    if (listener == ListenerCertificates.Web && !HTTPS)
+                    if (listener == MeterListeners.Web && !HTTPS)
                         continue;
 
                     var candidates     = ListenerCertificatesFor(listener)?.Candidates ?? [];
@@ -443,11 +524,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                      CertificateKind.TLSServerIdentity,
                                      null,
                                      "made by this meter at the first start",
-                                     [ ListenerCertificates.Web ],
+                                     [ MeterListeners.Web ],
                                      out _,
                                      out var error))
             {
-                Log.Warning($"The web interface could not be given a certificate of its own: {error}", "certificates", ListenerCertificates.Web);
+                Log.Warning($"The web interface could not be given a certificate of its own: {error}", "certificates", MeterListeners.Web);
             }
 
         }

@@ -606,7 +606,11 @@ two together: on this platform today none can.
 **Whether a certificate can then be shown is still found out by doing it**, not
 from a list: it depends on the operating system's TLS stack, on the runtime and
 on the year. Hermod does one TLS handshake against itself, once per algorithm,
-and an identity this meter cannot present is kept and never shown.
+and a server key of a kind this machine cannot present is not made. An identity
+put in for a listener is not asked that yet: what the node chooses among them
+only passes over one whose file cannot be read with its key, so a P-521
+certificate on Windows - SChannel has `NistP521` switched off - would be shown,
+and its handshakes fail. Put another kind in for that listener there.
 
 The old spellings the meter's own store used before Hermod had a list - `ec256`,
 `rsa3072`, `mldsa65` - are still read when a request from before is taken over,
@@ -614,21 +618,32 @@ so nothing is lost over a rename. Nothing writes them any more.
 
 ### Which one is shown
 
-Of the identities for a listener that are switched on and valid at this moment,
-the one whose validity began last. Nothing else decides it, and nothing has to be
+The node chooses, as it does for the listeners of every WWCP node
+(`WWCPNode.ListenerCertificates`); the meter only names its two listeners. Of
+the identities for a listener that are switched on and valid at this moment, the
+one whose validity began last. Nothing else decides it, and nothing has to be
 pressed:
 
-* Both listeners ask the store **at every handshake**. A certificate that is
-  valid now is shown to the next peer that connects - no restart, and existing
-  connections are not disturbed.
+* Both listeners ask **at every handshake**. A certificate that is valid now is
+  shown to the next peer that connects - no restart, and existing connections
+  are not disturbed. What was read from disk is kept until the store changes.
 * A certificate put in today that becomes valid in two days is simply not the
   answer until then, and is the answer from the second it is. The page says
   which one is next and when it takes over.
 * "Newest" is by `notBefore` and not by when it was put in, because what a
   certificate says about itself is the thing both ends of a handshake can check.
-* An expired one stops being shown. Once a minute the meter looks again, so that
-  a rollover is written down when it happens rather than whenever the next peer
-  turns up - on a quiet meter that could be the following afternoon.
+* An expired one stops being shown. The node looks every half minute, and at
+  once when the store changes, so that a rollover is written into the log book
+  when it happens ("Certificates: the listener 'modbus' shows ... from now on")
+  rather than whenever the next peer turns up. Once a minute the meter says
+  when what a listener shows runs out within three weeks with nothing to follow
+  it.
+* A listener may be given a **server key** of its own - Server identities, at
+  `/api/v1/certificates/serverKeys` - for clients that pin a key rather than
+  check a chain. Then what was issued for that key is shown, and where nothing
+  is valid, the key's carrier, a certificate of its own dated 1970 to 9999. A
+  next key is announced before it is switched to.
+* One whose file cannot be read with its key is passed over for the next.
 
 A certificate is kept with its key until it is taken out, so the one this meter
 was running under last month can still be pointed at. The one being shown cannot

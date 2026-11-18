@@ -34,7 +34,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
     /// <summary>
     /// Which certificate a listener shows: of the identities for it that are
-    /// switched on, valid now and presentable by this machine, the one whose
+    /// switched on, valid now and readable with their key, the one whose
     /// validity began last - so that one put in before the old one runs out
     /// takes over by itself.
     /// </summary>
@@ -43,7 +43,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
     /// valid, so a certificate that becomes valid here does so in real
     /// seconds, and a few of them are waited for.
     /// </remarks>
-    public class ListenerCertificatesTests
+    public class MeterListenersTests
     {
 
         #region Data
@@ -86,38 +86,39 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// <summary>
         /// The whole point: put tomorrow's certificate in today, and have
         /// nothing to do tomorrow. Until it is valid it is what comes next and
-        /// the old one is shown; then it is shown, and the listener says so
-        /// once - which is what the log book hears.
+        /// the old one is shown; then it is shown, and the node says so once -
+        /// which is what the log book hears.
         /// </summary>
         [Test]
         public async Task ACertificateThatIsNotValidYet_IsNext_AndTakesOverWhenItIs()
         {
 
-            var store    = NewStore();
-            var now      = DateTimeOffset.UtcNow;
-            var today    = Put(store, ListenerCertificates.Modbus, "CN=today", now.AddDays(-30), now.AddDays(10));
+            var store      = NewStore();
+            var now        = DateTimeOffset.UtcNow;
+            var today      = Put(store, MeterListeners.Modbus, "CN=today", now.AddDays(-30), now.AddDays(10));
 
-            var modbus   = new ListenerCertificates(store, ListenerCertificates.Modbus);
-            var changes  = new List<String?>();
+            using var all  = new ListenerCertificates(store, TimeProvider.System, new EventLog());
+            var modbus     = all.For(MeterListeners.Modbus, "Modbus/TLS");
+            var changes    = new List<String?>();
 
-            modbus.OnCurrentChanged += shown => changes.Add(shown?.Entry.Id);
+            all.OnShownChanged += (listener, before, after) => changes.Add($"{listener}:{after?.Id}");
 
             // Asked once before the clock matters, so that the seconds below are
-            // not spent finding out what this machine can present.
-            Assert.That(modbus.Current?.Entry.Id, Is.EqualTo(today.Id));
+            // not spent reading the certificate.
+            Assert.That(modbus.Entry?.Id, Is.EqualTo(today.Id));
 
             // Valid in a few seconds - and one for the web interface, valid even
             // sooner, which is none of this listener's business.
-            var soon     = Put(store, ListenerCertificates.Modbus, "CN=soon",     DateTimeOffset.UtcNow.AddSeconds(3), now.AddDays(400));
-            var webSoon  = Put(store, ListenerCertificates.Web,    "CN=web soon", DateTimeOffset.UtcNow.AddSeconds(2), now.AddDays(400));
+            var soon       = Put(store, MeterListeners.Modbus, "CN=soon",     DateTimeOffset.UtcNow.AddSeconds(3), now.AddDays(400));
+            var webSoon    = Put(store, MeterListeners.Web,    "CN=web soon", DateTimeOffset.UtcNow.AddSeconds(2), now.AddDays(400));
 
-            modbus.CheckRollover();
+            all.Check();
 
             Assert.Multiple(() => {
-                Assert.That(modbus.Current?.Entry.Id,                   Is.EqualTo(today.Id), "not valid yet, so not shown yet");
-                Assert.That(modbus.Candidates.Select(entry => entry.Id), Does.Not.Contain(soon.Id));
-                Assert.That(modbus.Next?.Id,                            Is.EqualTo(soon.Id),  "but lined up to take over");
-                Assert.That(changes,                                    Is.Empty);
+                Assert.That(modbus.Entry?.Id,                                                         Is.EqualTo(today.Id), "not valid yet, so not shown yet");
+                Assert.That(modbus.Candidates.Select(entry => entry.Id),                              Does.Not.Contain(soon.Id));
+                Assert.That(MeterListeners.NextFor(store, MeterListeners.Modbus, DateTimeOffset.UtcNow)?.Id, Is.EqualTo(soon.Id),  "but lined up to take over");
+                Assert.That(changes,                                                                  Is.Empty);
             });
 
             var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
@@ -125,14 +126,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             while (DateTimeOffset.UtcNow <= soon.NotBefore.AddSeconds(1) && DateTimeOffset.UtcNow < deadline)
                 await Task.Delay(100);
 
-            modbus.CheckRollover();
+            all.Check();
 
             Assert.Multiple(() => {
-                Assert.That(modbus.Current?.Entry.Id,                   Is.EqualTo(soon.Id),  "the newer one takes over by itself");
-                Assert.That(modbus.Current?.Certificate.HasPrivateKey,  Is.True);
-                Assert.That(modbus.Next,                                Is.Null);
-                Assert.That(changes,                                    Is.EqualTo(new[] { soon.Id }), "said once, when it happened");
-                Assert.That(modbus.Candidates.Select(entry => entry.Id), Does.Not.Contain(webSoon.Id),  "the web interface's, valid by now as well, is not this listener's");
+                Assert.That(modbus.Entry?.Id,                                                         Is.EqualTo(soon.Id),  "the newer one takes over by itself");
+                Assert.That(modbus.Current?.Certificate.HasPrivateKey,                                Is.True);
+                Assert.That(MeterListeners.NextFor(store, MeterListeners.Modbus, DateTimeOffset.UtcNow),     Is.Null);
+                Assert.That(changes,                                                                  Is.EqualTo(new[] { $"modbus:{soon.Id}" }), "said once, when it happened");
+                Assert.That(modbus.Candidates.Select(entry => entry.Id),                              Does.Not.Contain(webSoon.Id),  "the web interface's, valid by now as well, is not this listener's");
             });
 
         }
@@ -143,15 +144,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         /// <summary>
         /// A certificate that has run out is not shown, however late its
-        /// validity began; and one this machine cannot present is passed over
-        /// for the next, rather than handed to the TLS stack to fail every
+        /// validity began; and one that cannot be read with its key is passed
+        /// over for the next, rather than handed to the TLS stack to fail every
         /// handshake with. Both stay in the store.
         /// </summary>
         /// <remarks>
-        /// Which kinds of key a TLS stack refuses depends on the machine and
-        /// the year, and a test that picked one would be wrong on somebody's.
-        /// A file whose key is gone stands in for it here: the store still
-        /// holds it as an identity, and no TLS stack can present it.
+        /// A file whose key is gone stands in for what cannot be presented:
+        /// the store still holds it as an identity, and no TLS stack can
+        /// present it.
         /// </remarks>
         [Test]
         public void WhatCannotBeShown_IsPassedOver_AndKept()
@@ -160,9 +160,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var store    = NewStore();
             var now      = DateTimeOffset.UtcNow;
 
-            var shown    = Put(store, ListenerCertificates.Modbus, "CN=shown",   now.AddDays(-30), now.AddDays(300));
-            var expired  = Put(store, ListenerCertificates.Modbus, "CN=expired", now.AddDays(-3),  now.AddDays(-1));
-            var keyless  = Put(store, ListenerCertificates.Modbus, "CN=keyless", now.AddDays(-2),  now.AddDays(300));
+            var shown    = Put(store, MeterListeners.Modbus, "CN=shown",   now.AddDays(-30), now.AddDays(300));
+            var expired  = Put(store, MeterListeners.Modbus, "CN=expired", now.AddDays(-3),  now.AddDays(-1));
+            var keyless  = Put(store, MeterListeners.Modbus, "CN=keyless", now.AddDays(-2),  now.AddDays(300));
 
             Assert.That(store.TryLoad(keyless, out var loaded, out var error), Is.True, error);
 
@@ -172,14 +172,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 File.WriteAllBytes(store.FullPath(keyless), withoutKey.Export(X509ContentType.Pkcs12));
             }
 
-            var modbus   = new ListenerCertificates(store, ListenerCertificates.Modbus);
+            using var modbus = new ListenerCertificate(store, MeterListeners.Modbus, new EventLog(), "Modbus/TLS");
 
             Assert.Multiple(() => {
 
                 Assert.That(modbus.Candidates.Select(entry => entry.Id), Does.Not.Contain(expired.Id), "run out");
                 Assert.That(modbus.Candidates.First().Id,                Is.EqualTo(keyless.Id),       "the newest valid one is asked first");
-                Assert.That(modbus.Current?.Entry.Id,                    Is.EqualTo(shown.Id),         "and passed over, as it cannot be presented");
-                Assert.That(modbus.ChainFor(null)?.Certificate.Subject,  Is.EqualTo("CN=shown"));
+                Assert.That(modbus.Entry?.Id,                            Is.EqualTo(shown.Id),         "and passed over, as it cannot be presented");
+                Assert.That(modbus.Current?.Certificate.Subject,         Is.EqualTo("CN=shown"));
 
                 Assert.That(store.Get(expired.Id),                       Is.Not.Null, "kept all the same");
                 Assert.That(store.Get(keyless.Id),                       Is.Not.Null, "kept all the same");
@@ -201,7 +201,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             => new (Path.Combine(directory!, "certificates"),
                     new EventLog(),
                     ModbusTLSEnergyMeter.CertificateKinds,
-                    Listeners: ListenerCertificates.All);
+                    Listeners: MeterListeners.All);
 
         /// <summary>
         /// Put an identity for the given listener into the store, valid for the

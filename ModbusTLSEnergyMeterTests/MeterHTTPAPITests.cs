@@ -1387,7 +1387,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(after?["shown"]?["modbus"]?["current"]?.ToString(),                          Is.EqualTo(answer?["entry"]?["id"]?.ToString()),
                             "the newer one is shown from now on");
 
-                Assert.That(said,                                                                        Has.Some.Match("^Modbus/TLS clients are now shown '[^']*CN=meter-test-001[^']*'"),
+                Assert.That(said,                                                                        Has.Some.Match("^Certificates: the listener 'modbus' shows 'the next Modbus/TLS one' \\("),
                             $"and the log book says so as the store takes it - it said: {String.Join(" | ", said)}");
 
                 Assert.That(after?["requests"]?["entries"]?.Select(entry => entry["id"]?.ToString()),   Does.Not.Contain(id),

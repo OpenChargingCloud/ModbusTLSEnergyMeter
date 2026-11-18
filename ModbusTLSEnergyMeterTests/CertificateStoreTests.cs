@@ -179,11 +179,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
 
                 Assert.That(oldModbus?.Kind,                              Is.EqualTo(CertificateKind.TLSServerIdentity));
-                Assert.That(oldModbus?.Usages,                            Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
+                Assert.That(oldModbus?.Usages,                            Is.EqualTo(new CertificateUsage[] { MeterListeners.Modbus }));
                 Assert.That(oldModbus?.HasPrivateKey,                     Is.True, "the base64 text was read as the PKCS#12 it is");
 
                 Assert.That(oldWeb?.Kind,                                 Is.EqualTo(CertificateKind.TLSServerIdentity));
-                Assert.That(oldWeb?.Usages,                               Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Web }));
+                Assert.That(oldWeb?.Usages,                               Is.EqualTo(new CertificateUsage[] { MeterListeners.Web }));
                 Assert.That(oldWeb?.HasPrivateKey,                        Is.True, "paired with the key that asked for it");
 
                 Assert.That(oldCA?.Kind,                                  Is.EqualTo(CertificateKind.ClientRoot));
@@ -191,7 +191,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(requests.Count,                               Is.EqualTo(1), "the key whose certificate came is that identity's, and waits for nothing");
                 Assert.That(waiting?.Kind,                                Is.EqualTo(CertificateKind.TLSServerIdentity));
-                Assert.That(waiting?.Usages,                              Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Web }), "and one still waiting, still waiting - for the web interface");
+                Assert.That(waiting?.Usages,                              Is.EqualTo(new CertificateUsage[] { MeterListeners.Web }), "and one still waiting, still waiting - for the web interface");
                 Assert.That(waiting?.AlgorithmId,                         Is.EqualTo("ecdsa-p256"));
                 Assert.That(waiting?.Subject,                             Is.EqualTo("CN=still waiting"));
 
@@ -237,7 +237,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(identities.Count,           Is.EqualTo(1), "one certificate, found twice");
                 Assert.That(identities[0].Thumbprint,   Is.EqualTo(CertificateEntry.ThumbprintOf(startedWith)));
                 Assert.That(identities[0].ChainLength,  Is.GreaterThan(0), "with the intermediates of the file it came in");
-                Assert.That(identities[0].Usages,       Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Modbus }));
+                Assert.That(identities[0].Usages,       Is.EqualTo(new CertificateUsage[] { MeterListeners.Modbus }));
             });
 
         }
@@ -276,7 +276,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(identities. Select(entry => entry.Id),       Is.EqualTo(new[] { identityId }), "found again, not put in again");
                 Assert.That(identities[0].Label,                          Is.EqualTo("renamed since"),       "and what was done with it stands");
                 Assert.That(clientRoots.Count,                            Is.EqualTo(1));
-                Assert.That(second.ModbusCertificates.Current?.Entry.Id,  Is.EqualTo(identityId));
+                Assert.That(second.ModbusCertificates.Entry?.Id,  Is.EqualTo(identityId));
             });
 
         }
@@ -299,12 +299,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         {
 
             var before  = new CertificateStore(Path.Combine(directory!, "data", "certificates"), new EventLog(),
-                                               [ CertificateKind.TLSIdentity ], Listeners: ListenerCertificates.All);
+                                               [ CertificateKind.TLSIdentity ], Listeners: MeterListeners.All);
 
             Assert.That(before.Import(File.ReadAllBytes(Path.Combine(directory!, "pki", "server.pfx")), CertificateKind.TLSIdentity, "demo",
-                                      "the one it was started with, from before", [ ListenerCertificates.Modbus ], out var startedWith, out var error),  Is.True, error);
+                                      "the one it was started with, from before", [ MeterListeners.Modbus ], out var startedWith, out var error),  Is.True, error);
             Assert.That(before.Import(AnIdentity("meter-test-002 web interface"), CertificateKind.TLSIdentity, null,
-                                      "the web interface's, from before",          [ ListenerCertificates.Web ],    out var web,         out var error2), Is.True, error2);
+                                      "the web interface's, from before",          [ MeterListeners.Web ],    out var web,         out var error2), Is.True, error2);
             Assert.That(before.Import(AnIdentity("meter-test-002 spare"),         CertificateKind.TLSIdentity, null,
                                       "a spare, switched off",                     null,                            out var spare,       out var error3), Is.True, error3);
             Assert.That(before.SetActive(spare!.Id, false, out _, out var error4), Is.True, error4);
@@ -322,11 +322,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                     Assert.That(store.ByKind(CertificateKind.TLSIdentity),                                        Is.Empty);
 
                     Assert.That(store.Get(startedWith.Id, CertificateKind.TLSServerIdentity)?.Label,               Is.EqualTo("the one it was started with, from before"), "its name");
-                    Assert.That(store.Get(web.Id,         CertificateKind.TLSServerIdentity)?.Usages,              Is.EqualTo(new CertificateUsage[] { ListenerCertificates.Web }), "its listener");
+                    Assert.That(store.Get(web.Id,         CertificateKind.TLSServerIdentity)?.Usages,              Is.EqualTo(new CertificateUsage[] { MeterListeners.Web }), "its listener");
                     Assert.That(store.Get(spare.Id,       CertificateKind.TLSServerIdentity)?.IsActive,            Is.False, "its switch");
 
-                    Assert.That(meter.ListenerCertificatesFor(ListenerCertificates.Modbus)?.Current?.Entry.Id,     Is.EqualTo(startedWith.Id), "Modbus/TLS shows another one");
-                    Assert.That(meter.ListenerCertificatesFor(ListenerCertificates.Web)?.Current?.Entry.Id,        Is.EqualTo(web.Id),         "the web interface shows another one");
+                    Assert.That(meter.ListenerCertificatesFor(MeterListeners.Modbus)?.Entry?.Id,     Is.EqualTo(startedWith.Id), "Modbus/TLS shows another one");
+                    Assert.That(meter.ListenerCertificatesFor(MeterListeners.Web)?.Entry?.Id,        Is.EqualTo(web.Id),         "the web interface shows another one");
 
                 });
 
