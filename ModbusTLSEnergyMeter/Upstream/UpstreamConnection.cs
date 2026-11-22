@@ -22,6 +22,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 
+using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
 #endregion
@@ -96,7 +97,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         /// certificate as given.
         /// </summary>
         public static async Task<UpstreamConnection> Open(String                                  Host,
-                                                          UInt16                                  Port,
+                                                          IPPort                                  Port,
                                                           X509Certificate2?                       Identity,
                                                           IReadOnlyCollection<X509Certificate2>?  Intermediates,
                                                           RemoteCertificateValidationCallback?    Judge,
@@ -113,7 +114,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
                 using (var connecting = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken))
                 {
                     connecting.CancelAfter(Timeout);
-                    await tcp.ConnectAsync(Host, Port, connecting.Token);
+                    await tcp.ConnectAsync(Host, Port.ToInt32(), connecting.Token);
                 }
 
                 if (!TLS)

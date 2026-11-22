@@ -301,7 +301,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    ListenAddress:      NetIPAddress.Loopback,
                    ListenPort:         TestPorts.Free(),
                    HTTPHostname:       IPv4Address.Localhost,
-                   HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                   HTTPPort:           TestPorts.Free(),
                    DataPath:           Path.Combine(directory!, "data"),
                    ConfigFile:         new WWCPConfigFile(Path.Combine(directory!, "configuration.json")),
                    LogToConsole:       false

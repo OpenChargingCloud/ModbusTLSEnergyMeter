@@ -251,7 +251,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
             var created   = TryParseTimestamp(Meta["createdAt"], out var createdAt) ? createdAt : Now;
 
             // What the request asked for, as far as the meter wrote it down:
-            // the names a peer dials it by. Its key usages were not written
+            // the names a peer connects to it by. Its key usages were not written
             // down, and are read from the request where the node shows it.
             var asked     = new NodeSigningRequest("", kind, "", "", created, subject, RequestPEM) {
                                 Template           = template.Id,

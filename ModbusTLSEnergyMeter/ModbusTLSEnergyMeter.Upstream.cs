@@ -416,7 +416,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
                        new JProperty("upstream",    upstream is not null),
                        new JProperty("host",        upstream?.Host),
-                       new JProperty("port",        upstream?.Port),
+                       new JProperty("port",        upstream?.Port.ToUInt16()),
                        new JProperty("unit",        upstream?.Unit),
                        new JProperty("tls",         upstream?.TLS ?? false),
                        new JProperty("identity",    upstream?.Identity),
@@ -435,8 +435,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                        new JProperty("identities",  UpstreamIdentitiesJSON()),
                        new JProperty("usage",       UpstreamConfiguration.Usage),
                        new JProperty("defaults",    new JObject(
-                                                        new JProperty("tcpPort",  UpstreamConfiguration.DefaultTCPPort),
-                                                        new JProperty("tlsPort",  UpstreamConfiguration.DefaultTLSPort),
+                                                        new JProperty("tcpPort",  UpstreamConfiguration.DefaultTCPPort.ToUInt16()),
+                                                        new JProperty("tlsPort",  UpstreamConfiguration.DefaultTLSPort.ToUInt16()),
                                                         new JProperty("unit",     UpstreamConfiguration.DefaultUnit)
                                                     )),
                        new JProperty("file",        ConfigFile.Path)

@@ -547,7 +547,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                         ListenAddress:      NetIPAddress.Loopback,
                                         ListenPort:         TestPorts.Free(),
                                         HTTPHostname:       IPv4Address.Localhost,
-                                        HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                                        HTTPPort:           TestPorts.Free(),
                                         DataPath:           Path.Combine(workingDirectory!, "data"),
                                         ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                                         LogToConsole:       false
@@ -822,7 +822,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 tls = TLS;
             }
 
-            public static async Task<TLSConnection> Open(Int32 Port, String PKI, String Role)
+            public static async Task<TLSConnection> Open(IPPort Port, String PKI, String Role)
             {
 
                 using var pem   = X509Certificate2.CreateFromPemFile(Path.Combine(PKI, $"client-{Role}.crt"),
@@ -836,7 +836,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 chain.ImportFromPemFile(Path.Combine(PKI, $"client-{Role}.chain.crt"));
 
                 var tcp   = new TcpClient();
-                await tcp.ConnectAsync(NetIPAddress.Loopback, Port);
+                await tcp.ConnectAsync(NetIPAddress.Loopback, Port.ToInt32());
 
                 var tls   = new SslStream(tcp.GetStream(), false, (_, _, _, _) => true);
 

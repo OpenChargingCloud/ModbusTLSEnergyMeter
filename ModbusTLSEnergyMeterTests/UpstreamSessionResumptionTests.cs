@@ -116,12 +116,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             var identity = ImportIdentity(meter, SunSpecRoles.ReadOnly);
             ImportRoot(meter);
 
-            async Task<String?> SerialBehind(Int32 Port)
+            async Task<String?> SerialBehind(IPPort Port)
             {
 
                 var (success, error, _) = await meter.UpdateUpstream(new JObject(
                                               new JProperty("host",      "localhost"),
-                                              new JProperty("port",      Port),
+                                              new JProperty("port",      Port.ToUInt16()),
                                               new JProperty("tls",       true),
                                               new JProperty("identity",  identity)
                                           ));
@@ -175,7 +175,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                        ListenAddress:      NetIPAddress.Loopback,
                        ListenPort:         TestPorts.Free(),
                        HTTPHostname:       IPv4Address.Localhost,
-                       HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                       HTTPPort:           TestPorts.Free(),
                        DataPath:           Path.Combine(directory!, "data"),
                        ConfigFile:         new WWCPConfigFile(configuration),
                        LogToConsole:       false
@@ -249,9 +249,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             private readonly CancellationTokenSource  stopping;
             private readonly Task                     running;
 
-            public Int32 Port { get; }
+            public IPPort Port { get; }
 
-            private TLSServer(ModbusTlsFrontend Frontend, CancellationTokenSource Stopping, Task Running, Int32 Port)
+            private TLSServer(ModbusTlsFrontend Frontend, CancellationTokenSource Stopping, Task Running, IPPort Port)
             {
                 frontend   = Frontend;
                 stopping   = Stopping;
@@ -267,7 +267,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 var frontend = new ModbusTlsFrontend(
                                    new ModbusTlsFrontendOptions(
-                                       NetIPAddress.Loopback, 0,
+                                       NetIPAddress.Loopback, IPPort.Zero,
                                        ServerPfxPath:              null,
                                        ServerPfxPassword:          null,
                                        CaCertPath:                 null,
@@ -285,7 +285,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 var running  = Task.Run(() => frontend.RunAsync(stopping.Token));
                 var bound    = await frontend.BoundEndPoint;
 
-                return new TLSServer(frontend, stopping, running, bound.Port);
+                return new TLSServer(frontend, stopping, running, IPPort.Parse(bound.Port));
 
             }
 

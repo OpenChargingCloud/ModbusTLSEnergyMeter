@@ -86,7 +86,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                         ListenAddress:      NetIPAddress.Loopback,
                         ListenPort:         TestPorts.Free(),
                         HTTPHostname:       IPv4Address.Localhost,
-                        HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                        HTTPPort:           TestPorts.Free(),
                         DataPath:           Path.Combine(workingDirectory, "data"),
                         ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory, "configuration.json")),
                         LogToConsole:       false
@@ -320,7 +320,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                 ListenAddress:      NetIPAddress.Loopback,
                                 ListenPort:         TestPorts.Free(),
                                 HTTPHostname:       IPv4Address.Localhost,
-                                HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                                HTTPPort:           TestPorts.Free(),
                                 DataPath:           Path.Combine(workingDirectory!, "data"),
                                 ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                                 LogToConsole:       false
@@ -374,7 +374,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                   ListenAddress:      NetIPAddress.Loopback,
                                   ListenPort:         TestPorts.Free(),
                                   HTTPHostname:       IPv4Address.Localhost,
-                                  HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                                  HTTPPort:           TestPorts.Free(),
                                   DataPath:           Path.Combine(workingDirectory!, "quiet"),
                                   ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "quiet.json")),
                                   LogKeepDays:        0,
@@ -516,7 +516,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var client       = new HermodModbusTCPClient(
                                    IPv4Address.Localhost,
-                                   IPPort.Parse(meter!.ListenPort),
+                                   meter!.ListenPort,
                                    UnitAddress:                 1,
                                    StartingAddressOffset:       1,
                                    RemoteCertificateValidator:  (a, b, c, d, e) => TLSValidationResult.Success(),

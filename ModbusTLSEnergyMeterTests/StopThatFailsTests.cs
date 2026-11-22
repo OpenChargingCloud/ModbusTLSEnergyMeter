@@ -128,7 +128,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                            ServerPfxPath:     Path.Combine(pkiDirectory!, "server.pfx"),
                            ClientCACertPath:  Path.Combine(pkiDirectory!, "issuing-clients-ca.crt"),
                            ListenPort:        TestPorts.Free(),
-                           HTTPPort:          IPPort.Parse(TestPorts.Free()),
+                           HTTPPort:          TestPorts.Free(),
                            DataPath:          Path.Combine(here, "data"),
                            ConfigFile:        new WWCPConfigFile(Path.Combine(here, WWCPConfigFile.DefaultFileName)),
                            Clock:             new CountedTimers()
@@ -149,14 +149,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// <summary>
         /// Whether nothing listens on the given port of the loopback address.
         /// </summary>
-        private static Boolean Refused(UInt16 Port)
+        private static Boolean Refused(IPPort Port)
         {
 
             using var client = new TcpClient();
 
             try
             {
-                client.Connect(NetIPAddress.Loopback, Port);
+                client.Connect(NetIPAddress.Loopback, Port.ToInt32());
                 return false;
             }
             catch (SocketException e) when (e.SocketErrorCode == SocketError.ConnectionRefused)
@@ -197,8 +197,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         {
 
             var meter  = await Started();
-            var modbus = (UInt16) meter.ListenPort;
-            var web    = meter.HTTPPort.ToUInt16();
+            var modbus = meter.ListenPort;
+            var web    = meter.HTTPPort;
 
             Assert.That(Refused(modbus), Is.False, "the meter did not listen for Modbus/TLS in the first place");
 
@@ -346,7 +346,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// </summary>
         private sealed class FailingToStop(String          ServerPfxPath,
                                            String          ClientCACertPath,
-                                           Int32           ListenPort,
+                                           IPPort           ListenPort,
                                            IPPort          HTTPPort,
                                            String          DataPath,
                                            WWCPConfigFile  ConfigFile,

@@ -196,7 +196,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.HTTPAPI
 
             yield return new JProperty("modbus",        new JObject(
                              new JProperty("address",        meter.ListenAddress.ToString()),
-                             new JProperty("port",           meter.ListenPort),
+                             new JProperty("port",           meter.ListenPort.ToUInt16()),
                              new JProperty("running",        meter.IsRunning),
                              new JProperty("baseAddress",    meter.Upstream is null ? meter.Device.BaseAddress   : null),
                              new JProperty("registerCount",  meter.Upstream is null ? meter.Device.RegisterCount : null)

@@ -97,7 +97,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                         ListenAddress:      NetIPAddress.Loopback,
                         ListenPort:         TestPorts.Free(),
                         HTTPHostname:       IPv4Address.Localhost,
-                        HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                        HTTPPort:           TestPorts.Free(),
                         DataPath:           Path.Combine(workingDirectory, "data"),
                         ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory, "configuration.json")),
                         LogKeepDays:        0,
@@ -562,7 +562,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                           ListenAddress:      NetIPAddress.Loopback,
                                           ListenPort:         TestPorts.Free(),
                                           HTTPHostname:       IPv4Address.Localhost,
-                                          HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                                          HTTPPort:           TestPorts.Free(),
                                           DataPath:           Path.Combine(workingDirectory!, "data-connections"),
                                           ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration-connections.json")),
                                           LogKeepDays:        0,
@@ -663,7 +663,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                                           ListenAddress:      NetIPAddress.Loopback,
                                           ListenPort:         TestPorts.Free(),
                                           HTTPHostname:       IPv4Address.Localhost,
-                                          HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                                          HTTPPort:           TestPorts.Free(),
                                           DataPath:           Path.Combine(workingDirectory!, "data-roles"),
                                           ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration-roles.json")),
                                           LogKeepDays:        0,
@@ -675,9 +675,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             await using var terminal = new VT100Terminal((bytes, cancellationToken) => ValueTask.CompletedTask);
 
-            using var guest   = new MeterCLI(meter, terminal, await OverSSHAs(meter, "gwen", MeterAccess.Guest));
-            using var viewer  = new MeterCLI(meter, terminal, await OverSSHAs(meter, "vera", MeterAccess.Viewer));
-            using var support = new MeterCLI(meter, terminal, await OverSSHAs(meter, "sally", MeterAccess.Support));
+            using var guest   = new MeterCLI(meter, terminal, await OverSSHAs(meter, User_Id.Parse("gwen"), MeterAccess.Guest));
+            using var viewer  = new MeterCLI(meter, terminal, await OverSSHAs(meter, User_Id.Parse("vera"), MeterAccess.Viewer));
+            using var support = new MeterCLI(meter, terminal, await OverSSHAs(meter, User_Id.Parse("sally"), MeterAccess.Support));
 
             Assert.That((await guest. Execute("showMeterValues"))          [0],  Does.Contain("serial number meter-cli-roles"));
             Assert.That((await guest. Execute($"readRegisters {mode}"))    [0],  Does.StartWith($"{mode}  0x0000"));
@@ -709,14 +709,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         /// An account in the group of a role, as it types at the meter's
         /// command line over SSH.
         /// </summary>
-        private static async Task<CLICaller> OverSSHAs(ModbusTLSEnergyMeter Meter, String UserId, Role Role)
+        private static async Task<CLICaller> OverSSHAs(ModbusTLSEnergyMeter Meter, User_Id UserId, Role Role)
         {
 
             var api   = Meter.ExtAPI;
 
             var user  = new User(
-                            User_Id.Parse(UserId),
-                            I18NString.Create(UserId),
+                            UserId,
+                            I18NString.Create(UserId.ToString()),
                             SimpleEMailAddress.Parse($"{UserId}@example.test"),
                             IsAuthenticated:  true,
                             DataSource:       "test"

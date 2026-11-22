@@ -218,7 +218,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// were groups, strongest first.
         /// </summary>
         private static readonly (User2OrganizationEdgeLabel Was, String Role)[]  organizationRoles  = [
-                                                                                                          (User2OrganizationEdgeLabel.IsAdmin,          WWCPNode.AdminRole),
+                                                                                                          (User2OrganizationEdgeLabel.IsAdmin,          WWCPNode.AdminRole.ToString()),
                                                                                                           (User2OrganizationEdgeLabel.IsAdminReadOnly,  "auditor"),
                                                                                                           (User2OrganizationEdgeLabel.IsMember,         "viewer"),
                                                                                                           (User2OrganizationEdgeLabel.IsGuest,          "guest")
@@ -289,7 +289,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         public static String TitleOf(Role Role)
 
             => Role.Name.ToLowerInvariant() switch {
-                   WWCPNode.AdminRole  => "Administrator",
+                   var admin when admin == WWCPNode.AdminRole.ToString() => "Administrator",
                    "auditor"           => "Auditor",
                    "support"           => "Support",
                    "viewer"            => "Viewer",

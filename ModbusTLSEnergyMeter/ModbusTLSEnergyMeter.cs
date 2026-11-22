@@ -22,6 +22,7 @@ using System.Security.Cryptography.X509Certificates;
 
 using Microsoft.Extensions.Logging;
 
+using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
@@ -107,7 +108,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <summary>
         /// The port IANA registered for Modbus/TLS ("mbaps").
         /// </summary>
-        public static readonly Int32      DefaultModbusTLSPort     = 802;
+        public static readonly IPPort     DefaultModbusTLSPort     = IPPort.ModbusTLS;
 
         /// <summary>
         /// The TCP port the web interface listens on, unless another is given.
@@ -230,7 +231,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <summary>
         /// The port the Modbus/TLS frontend listens on.
         /// </summary>
-        public Int32               ListenPort          { get; }
+        public IPPort               ListenPort          { get; }
 
         /// <summary>
         /// The serial number in SunSpec Common Model 1.
@@ -366,7 +367,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <summary>
         /// The account a first start made up, when it made one.
         /// </summary>
-        public String?             GeneratedUserId
+        public User_Id?            GeneratedLogin
             => GeneratedPassword is not null
                    ? DefaultAdminUser
                    : null;
@@ -503,14 +504,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                     String?                ServerPfxPassword,
                                     String                 ClientCACertPath,
                                     NetIPAddress?          ListenAddress        = null,
-                                    Int32?                 ListenPort           = null,
+                                    IPPort?                 ListenPort           = null,
                                     TimeSpan?              HandshakeTimeout     = null,
                                     TimeSpan?              IdleTimeout          = null,
                                     TimeSpan?              WriteTimeout         = null,
                                     SunSpecMeterMode?      MeterMode            = null,
                                     TimeSpan?              SimulatedDayLength   = null,
 
-                                    IIPAddress?            HTTPHostname         = null,
+                                    IPAddress?            HTTPHostname         = null,
                                     IPPort?                HTTPPort             = null,
                                     HTTPPath?              MeterAPIPath         = null,
                                     IStaticContentSource?  Frontend             = null,
@@ -542,14 +543,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                      String?                ServerPfxPassword,
                                      String                 ClientCACertPath,
                                      NetIPAddress?          ListenAddress,
-                                     Int32?                 ListenPort,
+                                     IPPort?                 ListenPort,
                                      TimeSpan?              HandshakeTimeout,
                                      TimeSpan?              IdleTimeout,
                                      TimeSpan?              WriteTimeout,
                                      SunSpecMeterMode?      MeterMode,
                                      TimeSpan?              SimulatedDayLength,
 
-                                     IIPAddress?            HTTPHostname,
+                                     IPAddress?            HTTPHostname,
                                      IPPort?                HTTPPort,
                                      HTTPPath?              MeterAPIPath,
                                      IStaticContentSource?  Frontend,
@@ -896,7 +897,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 var problem = runTask.Exception!.GetBaseException();
 
                 if (problem is SocketException socketProblem)
-                    throw new PortUnavailableException(IPPort.Parse((UInt16) ListenPort), socketProblem, ModbusTLSPort);
+                    throw new PortUnavailableException(ListenPort, socketProblem, ModbusTLSPort);
 
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(problem).Throw();
 

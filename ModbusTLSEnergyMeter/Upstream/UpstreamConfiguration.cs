@@ -17,6 +17,7 @@
 
 #region Usings
 
+using org.GraphDefined.Vanaheimr.Hermod;
 using System.Diagnostics.CodeAnalysis;
 
 using Newtonsoft.Json.Linq;
@@ -56,7 +57,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
     /// <param name="Identity">Over TLS, the id of the TLS identity it is shown; null for none.</param>
     /// <param name="Pins">Over TLS, what its certificate is held to beyond what every server's is; null for nothing.</param>
     public sealed record UpstreamConfiguration(String       Host,
-                                               UInt16       Port,
+                                               IPPort       Port,
                                                Byte         Unit,
                                                Boolean      TLS,
                                                String?      Identity  = null,
@@ -72,10 +73,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         public const String  Usage           = "upstream";
 
         /// <summary>Modbus/TCP's port.</summary>
-        public const UInt16  DefaultTCPPort  = 502;
+        public static readonly IPPort  DefaultTCPPort  = IPPort.ModbusTCP;
 
         /// <summary>Modbus/TLS's port, mbaps.</summary>
-        public const UInt16  DefaultTLSPort  = 802;
+        public static readonly IPPort  DefaultTLSPort  = IPPort.ModbusTLS;
 
         public const Byte    DefaultUnit     = 1;
 
@@ -156,7 +157,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
                     Error = $"'{Path}.port' must be a whole number between 1 and 65535.";
                     return false;
                 }
-                port = (UInt16) portToken.Value<Int64>();
+                port = IPPort.Parse((UInt16) portToken.Value<Int64>());
             }
 
             var unit = DefaultUnit;
@@ -229,7 +230,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 
             var json = new JObject(
                            new JProperty("host",  Host),
-                           new JProperty("port",  Port),
+                           new JProperty("port",  Port.ToUInt16()),
                            new JProperty("unit",  Unit),
                            new JProperty("tls",   TLS)
                        );

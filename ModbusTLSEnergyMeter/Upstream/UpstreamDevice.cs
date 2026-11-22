@@ -86,7 +86,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
     /// What cannot be passed on is answered as a gateway answers it: 0x0A
     /// where the meter cannot be reached or not believed, 0x0B where it was
     /// reached and did not answer. Connecting again is tried at most every few
-    /// seconds, so that a meter that is gone is not dialled once for every
+    /// seconds, so that a meter that is gone is not connected to once for every
     /// request of every client.
     /// </para>
     /// </remarks>

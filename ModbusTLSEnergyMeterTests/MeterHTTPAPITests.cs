@@ -123,7 +123,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
 
-                Assert.That(me?["username"]?.ToString(),      Is.EqualTo(ModbusTLSEnergyMeter.DefaultAdminUser));
+                Assert.That(me?["username"]?.ToString(),      Is.EqualTo(ModbusTLSEnergyMeter.DefaultAdminUser.ToString()));
                 Assert.That(me?["organization"]?.ToString(),  Is.EqualTo(ModbusTLSEnergyMeter.MeterKind.Organization));
                 Assert.That(me?["role"]?.ToString(),          Is.EqualTo("systemadmin"));
                 Assert.That(me?["roles"]?.Values<String>(),   Is.EqualTo(new[] { "systemadmin" }));
@@ -959,7 +959,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(File.Exists(Path.Combine(accounts, HTTPExtAPI.DefaultHTTPExtAPI_DatabaseFileName)),     Is.False);
             });
 
-            using var administrator = await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, password);
+            using var administrator = await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser.ToString(), password);
 
             Assert.That((await administrator.GetJSON("api/v1/auth/me"))?["role"]?.ToString(), Is.EqualTo("systemadmin"));
 
@@ -1186,7 +1186,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.That(meter!.Roles, Is.EqualTo(new[] { "viewer", "support", "auditor", "guest", "timekeeper", "systemadmin" }),
                         "before the administrators, as the node orders a role the file adds");
 
-            using var administrator = await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, rootPassword);
+            using var administrator = await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser.ToString(), rootPassword);
 
             var (made, created) = await administrator.Call(HttpMethod.Post, "api/v1/accounts",
                                                            new { userId = "tess", role = "timekeeper" });
@@ -1648,7 +1648,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                    ListenAddress:      NetIPAddress.Loopback,
                    ListenPort:         TestPorts.Free(),
                    HTTPHostname:       IPv4Address.Localhost,
-                   HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                   HTTPPort:           TestPorts.Free(),
                    DataPath:           Path.Combine(workingDirectory!, "data"),
                    ConfigFile:         new WWCPConfigFile(Path.Combine(workingDirectory!, "configuration.json")),
                    LogToConsole:       false
@@ -1715,7 +1715,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         {
 
             var api  = meter!.ExtAPI;
-            var user = NewUser(UserId);
+            var user = NewUser(User_Id.Parse(UserId));
 
             await api.AddUser(user,
                               SkipNewUserEMail: true, SkipNewUserNotifications: true);
@@ -1754,7 +1754,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                         Is.True,
                         "The meter has no organization to hold a role in.");
 
-            var user = NewUser(UserId);
+            var user = NewUser(User_Id.Parse(UserId));
 
             await api.AddUser(user, Roles[0], organization!,
                               SkipNewUserEMail: true, SkipNewUserNotifications: true);
@@ -1767,11 +1767,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         }
 
-        private static User NewUser(String UserId)
+        private static User NewUser(User_Id UserId)
 
             => new (
-                   User_Id.Parse(UserId),
-                   I18NString.Create(UserId),
+                   UserId,
+                   I18NString.Create(UserId.ToString()),
                    SimpleEMailAddress.Parse($"{UserId}@example.test"),
                    IsAuthenticated:  true,
                    DataSource:       "test"
@@ -1781,7 +1781,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             => new ($"http://127.0.0.1:{meter!.HTTPPort}/", Cookies);
 
         private async Task<Browser> SignInAsAdministrator()
-            => await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser, meter!.GeneratedPassword!);
+            => await SignIn(ModbusTLSEnergyMeter.DefaultAdminUser.ToString(), meter!.GeneratedPassword!);
 
         private async Task<Browser> SignIn(String UserId, String Password)
         {

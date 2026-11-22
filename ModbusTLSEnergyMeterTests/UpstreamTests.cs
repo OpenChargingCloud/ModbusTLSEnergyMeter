@@ -127,7 +127,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         {
 
             await using var server = await PlainServer.Serving(new SunSpecBackendFactory(behind!));
-            await using var meter  = await Gateway(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", server.Port)));
+            await using var meter  = await Gateway(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", server.Port.ToUInt16())));
 
             using var client = await TLSClient.Open(meter.ListenPort, pki, SunSpecRoles.ReadOnly);
 
@@ -151,7 +151,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         {
 
             await using var server = await PlainServer.Serving(new SunSpecBackendFactory(behind!));
-            await using var meter  = await Gateway(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", server.Port)));
+            await using var meter  = await Gateway(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", server.Port.ToUInt16())));
 
             await meter.Backends.Locate();
 
@@ -187,7 +187,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         public async Task AMeterBehindThatCannotBeReachedIsAnsweredAsAGatewayAnswersIt()
         {
 
-            await using var meter  = await Gateway(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", TestPorts.Free())));
+            await using var meter  = await Gateway(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", TestPorts.Free().ToUInt16())));
 
             using var client = await TLSClient.Open(meter.ListenPort, pki, SunSpecRoles.ReadOnly);
 
@@ -201,15 +201,15 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
         /// <summary>
         /// A meter behind that cannot be reached is answered 0x0A where the
-        /// connection fails, and again without dialling while it was tried a
+        /// connection fails, and again without connecting while it was tried a
         /// moment ago.
         /// </summary>
         [Test]
-        public async Task AMeterBehindThatCannotBeReachedIsDialledOnlyEverySoOften()
+        public async Task AMeterBehindThatCannotBeReachedIsConnectedOnlyEverySoOften()
         {
 
             var said     = new List<String>();
-            var upstream = new UpstreamDevice(new UpstreamConfiguration("127.0.0.1", (UInt16) TestPorts.Free(), 1, false),
+            var upstream = new UpstreamDevice(new UpstreamConfiguration("127.0.0.1", TestPorts.Free(), 1, false),
                                               () => (null, null),
                                               (_, _, _) => new UpstreamJudgement(false, "refused", null),
                                               Said: (news, _) => said.Add(news)) {
@@ -223,7 +223,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
                 Assert.That(ModbusPDU.TryGetException(first),   Is.EqualTo(ModbusExceptionCode.GatewayPathUnavailable), "where the connection failed");
                 Assert.That(ModbusPDU.TryGetException(second),  Is.EqualTo(ModbusExceptionCode.GatewayPathUnavailable), "while it was tried a moment ago");
-                Assert.That(said,                               Has.Count.EqualTo(1), "it was dialled, or said, twice");
+                Assert.That(said,                               Has.Count.EqualTo(1), "it was connected to, or said, twice");
                 Assert.That(upstream.State,                     Is.EqualTo("unreachable"));
             });
 
@@ -250,7 +250,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var (success, error, _) = await meter.UpdateUpstream(new JObject(
                                           new JProperty("host",             "127.0.0.1"),
-                                          new JProperty("port",             server.Port),
+                                          new JProperty("port",             server.Port.ToUInt16()),
                                           new JProperty("tls",              true),
                                           new JProperty("identity",         identity),
                                           new JProperty("trustOnFirstUse",  "certificate")
@@ -289,7 +289,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             var (success, error, _) = await meter.UpdateUpstream(new JObject(
                                           new JProperty("host",                    "127.0.0.1"),
-                                          new JProperty("port",                    server.Port),
+                                          new JProperty("port",                    server.Port.ToUInt16()),
                                           new JProperty("tls",                     true),
                                           new JProperty("identity",                identity),
                                           new JProperty("certificateFingerprint",  new String('a', 64))
@@ -324,7 +324,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.That(meter.Backends.Upstream, Is.Null, "a meter told nothing stands in front of something");
 
-            var (success, error, _) = await meter.UpdateUpstream(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", server.Port)));
+            var (success, error, _) = await meter.UpdateUpstream(new JObject(new JProperty("host", "127.0.0.1"), new JProperty("port", server.Port.ToUInt16())));
             Assert.That(success, Is.True, error);
 
             var throughIt = await (await SunSpecChain.Walk(meter.Backends.Read)).Common(meter.Backends.Read);
@@ -362,10 +362,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
 
                 Assert.That(UpstreamConfiguration.TryParse(new JObject(new JProperty("host", "10.0.0.7")), "upstream", out var plain, out _), Is.True);
-                Assert.That(plain,  Is.EqualTo(new UpstreamConfiguration("10.0.0.7", 502, 1, false)), "Modbus/TCP is on 502 by default");
+                Assert.That(plain,  Is.EqualTo(new UpstreamConfiguration("10.0.0.7", IPPort.Parse(502), 1, false)), "Modbus/TCP is on 502 by default");
 
                 Assert.That(UpstreamConfiguration.TryParse(new JObject(new JProperty("host", "10.0.0.7"), new JProperty("tls", true)), "upstream", out var tls, out _), Is.True);
-                Assert.That(tls!.Port,  Is.EqualTo(802), "Modbus/TLS is on 802 by default");
+                Assert.That(tls!.Port,  Is.EqualTo(IPPort.Parse(802)), "Modbus/TLS is on 802 by default");
 
                 Assert.That(RefusalOf(new JProperty("host", "http://meter/")),                                     Does.Contain("no host"));
                 Assert.That(RefusalOf(new JProperty("host", "meter"), new JProperty("port", 0)),                   Does.Contain("'upstream.port'"));
@@ -412,7 +412,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                        ListenAddress:      NetIPAddress.Loopback,
                        ListenPort:         TestPorts.Free(),
                        HTTPHostname:       IPv4Address.Localhost,
-                       HTTPPort:           IPPort.Parse(TestPorts.Free()),
+                       HTTPPort:           TestPorts.Free(),
                        DataPath:           Path.Combine(directory!, "data"),
                        ConfigFile:         new WWCPConfigFile(configuration),
                        LogToConsole:       false
@@ -499,12 +499,12 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             private readonly CancellationTokenSource  stopping = new ();
             private readonly Task                     serving;
 
-            public Int32 Port { get; }
+            public IPPort Port { get; }
 
             private PlainServer(TcpListener Listener, IModbusBackendFactory Backend)
             {
                 listener = Listener;
-                Port     = ((IPEndPoint) Listener.LocalEndpoint).Port;
+                Port     = IPPort.Parse(((IPEndPoint) Listener.LocalEndpoint).Port);
                 serving  = Serve(Backend);
             }
 
@@ -563,9 +563,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             private readonly CancellationTokenSource  stopping;
             private readonly Task                     running;
 
-            public Int32 Port { get; }
+            public IPPort Port { get; }
 
-            private TLSServer(ModbusTlsFrontend Frontend, CancellationTokenSource Stopping, Task Running, Int32 Port)
+            private TLSServer(ModbusTlsFrontend Frontend, CancellationTokenSource Stopping, Task Running, IPPort Port)
             {
                 frontend   = Frontend;
                 stopping   = Stopping;
@@ -581,7 +581,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 var frontend = new ModbusTlsFrontend(
                                    new ModbusTlsFrontendOptions(
-                                       NetIPAddress.Loopback, 0,
+                                       NetIPAddress.Loopback, IPPort.Zero,
                                        ServerPfxPath:              null,
                                        ServerPfxPassword:          null,
                                        CaCertPath:                 null,
@@ -599,7 +599,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 var running  = Task.Run(() => frontend.RunAsync(stopping.Token));
                 var bound    = await frontend.BoundEndPoint;
 
-                return new TLSServer(frontend, stopping, running, bound.Port);
+                return new TLSServer(frontend, stopping, running, IPPort.Parse(bound.Port));
 
             }
 
@@ -631,7 +631,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 tls = TLS;
             }
 
-            public static async Task<TLSClient> Open(Int32 Port, String PKI, String Role)
+            public static async Task<TLSClient> Open(IPPort Port, String PKI, String Role)
             {
 
                 using var pem   = X509Certificate2.CreateFromPemFile(Path.Combine(PKI, $"client-{Role}.crt"), Path.Combine(PKI, $"client-{Role}.key"));
@@ -644,7 +644,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 chain.ImportFromPemFile(Path.Combine(PKI, $"client-{Role}.chain.crt"));
 
                 var tcp   = new TcpClient();
-                await tcp.ConnectAsync(NetIPAddress.Loopback, Port);
+                await tcp.ConnectAsync(NetIPAddress.Loopback, Port.ToInt32());
 
                 var tls   = new SslStream(tcp.GetStream(), false, (_, _, _, _) => true);
 
