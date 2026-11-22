@@ -59,9 +59,16 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Certificates
         public const String  Web     = "web";
 
         /// <summary>
+        /// The WebSocket port of Modbus, which a charging station or a local
+        /// controller reads this meter over: what it shows them, from a device
+        /// PKI as for Modbus/TLS.
+        /// </summary>
+        public const String  WebSocket  = "websocket";
+
+        /// <summary>
         /// Every listener of this meter, as the node's store names them.
         /// </summary>
-        public static readonly IReadOnlyList<String>  All  = [ Modbus, Web ];
+        public static readonly IReadOnlyList<String>  All  = [ Modbus, Web, WebSocket ];
 
 
         #region NextFor(Store, Listener, Now)

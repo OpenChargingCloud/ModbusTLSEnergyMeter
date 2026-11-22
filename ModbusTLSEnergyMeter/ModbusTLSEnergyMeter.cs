@@ -845,6 +845,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             #endregion
 
+            #region What reads this meter over a WebSocket or over SSH
+
+            // Nothing listens yet - OnListening does. See
+            // ModbusTLSEnergyMeter.MeterReaders.cs.
+            BuildMeterReaderServer();
+
+            #endregion
+
             #region What somebody signed in over SSH gets
 
             // The meter's command line, with its commands beside the node's -
@@ -905,7 +913,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             Log.Notice($"Modbus/TLS is listening on {ListenAddress}:{ListenPort}.", "meter", "modbus");
 
-            return Task.CompletedTask;
+            return StartMeterReaderServer();
 
         }
 
@@ -945,6 +953,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             // Once more on the way out, so an orderly stop loses nothing at all.
             SaveTheEnergyCounters();
+
+            // What reads this meter over a WebSocket or over SSH is let go of
+            // before Modbus/TLS stops.
+            await StopMeterReaderServer();
 
             await cts.CancelAsync();
 

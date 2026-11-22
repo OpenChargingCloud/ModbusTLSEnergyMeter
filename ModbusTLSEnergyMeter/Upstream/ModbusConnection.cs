@@ -35,6 +35,11 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
     /// Known from the moment its TLS handshake held - a connection that showed
     /// no certificate this meter believes never becomes one - until it is
     /// closed: the Modbus/TLS frontend says both.
+    ///
+    /// Or one of Modbus over SSH or over a WebSocket, said by its transport and
+    /// its login: its role is the one of the group the login is in, and is the
+    /// one of its last request, as a login may be put into another group while
+    /// it is connected.
     /// </remarks>
     /// <param name="Opened">What the Modbus/TLS frontend said of it when its handshake held.</param>
     public sealed class ModbusConnection(ModbusConnectionInfo Opened)
@@ -56,8 +61,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         /// <summary>Where it comes from.</summary>
         public String?          Peer               { get; } = Opened.Peer;
 
-        /// <summary>The SunSpec role in the client's certificate; null for a certificate without one.</summary>
-        public String?          Role               { get; } = Opened.Role;
+        /// <summary>The SunSpec role in the client's certificate - or of the group of its login, as of its last request; null for none.</summary>
+        public String?          Role               { get; private set; } = Opened.Role;
+
+        /// <summary>What it goes over: "Modbus/TLS", "SSH", "WebSocket".</summary>
+        public String           Transport          { get; } = Opened.Transport;
+
+        /// <summary>The login it signed in with, where it is no Modbus/TLS.</summary>
+        public String?          Login              { get; } = Opened.Login;
 
         /// <summary>The subject of the client's certificate.</summary>
         public String           ClientSubject      { get; } = Opened.ClientSubject;
@@ -69,6 +80,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         public String           Protocol           { get; } = Opened.Protocol switch {
                                                                   System.Security.Authentication.SslProtocols.Tls13  => "TLS 1.3",
                                                                   System.Security.Authentication.SslProtocols.Tls12  => "TLS 1.2",
+                                                                  System.Security.Authentication.SslProtocols.None   => Opened.Transport,
                                                                   _                                                  => Opened.Protocol.ToString()
                                                               };
 
@@ -99,9 +111,13 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         /// </summary>
         /// <param name="Allowed">Whether the policy allowed the request.</param>
         /// <param name="When">When.</param>
+        /// <param name="Role">The role it was decided by.</param>
         internal void Asked(Boolean         Allowed,
-                            DateTimeOffset  When)
+                            DateTimeOffset  When,
+                            String?         Role)
         {
+
+            this.Role = Role;
 
             Interlocked.Increment(ref requests);
 
@@ -125,6 +141,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
                    new JProperty("id",                 Id),
                    new JProperty("peer",               Peer),
                    new JProperty("role",               Role),
+                   new JProperty("transport",          Transport),
+                   new JProperty("login",              Login),
                    new JProperty("clientSubject",      ClientSubject),
                    new JProperty("clientFingerprint",  ClientFingerprint),
                    new JProperty("protocol",           Protocol),
@@ -140,7 +158,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
 
         public override String ToString()
 
-            => $"Modbus/TLS connection {Id} ({Role ?? "no role"}) from {Peer ?? "somewhere"}";
+            => $"{Transport} connection {Id} ({Role ?? "no role"}) from {(Login is not null ? $"'{Login}' at " : "")}{Peer ?? "somewhere"}";
 
         #endregion
 

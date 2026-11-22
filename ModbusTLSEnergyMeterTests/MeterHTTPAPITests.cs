@@ -1279,8 +1279,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
                 Assert.That(status,                                                               Is.EqualTo(HttpStatusCode.OK));
                 Assert.That(store?["kinds"]?.Children<JProperty>().Select(kind => kind.Name),     Is.EqualTo(new[] { "tlsRoot", "clientRoot", "tlsServer", "tlsIdentity", "tlsServerIdentity" }));
-                Assert.That(store?["listeners"]?.Values<String>(),                                Is.EqualTo(new[] { "modbus", "web" }));
-                Assert.That(store?["kinds"]?["tlsServerIdentity"]?["usages"]?.Values<String>(),         Is.EqualTo(new[] { "modbus", "web" }), "an identity is told a listener");
+                Assert.That(store?["listeners"]?.Values<String>(),                                Is.EqualTo(new[] { "modbus", "web", "websocket" }));
+                Assert.That(store?["kinds"]?["tlsServerIdentity"]?["usages"]?.Values<String>(),         Is.EqualTo(new[] { "modbus", "web", "websocket" }), "an identity is told a listener");
                 Assert.That(store?["kinds"]?["tlsRoot"]?["usages"]?.Values<String>(),             Is.EqualTo(new[] { "dns", "nts", "upstream" }), "a root a service - or the meter in front of which this one stands");
                 Assert.That(store?["kinds"]?["clientRoot"]?["hasUsages"]?.Value<Boolean>(),       Is.True,                               "every kind may be marked");
                 Assert.That(store?["kinds"]?["clientRoot"]?["usages"]?.Values<String>(),          Is.EqualTo(Array.Empty<String>()),     "a client root is offered no uses, the identities' listeners not among them");

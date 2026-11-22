@@ -356,12 +356,14 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Upstream
         /// </summary>
         /// <param name="ConnectionId">The number of the connection.</param>
         /// <param name="Allowed">Whether the policy allowed the request.</param>
+        /// <param name="Role">The role it was decided by.</param>
         public void Asked(Int64    ConnectionId,
-                          Boolean  Allowed)
+                          Boolean  Allowed,
+                          String?  Role)
         {
 
             if (connections.TryGetValue(ConnectionId, out var connection))
-                connection.Asked(Allowed, Timestamp.Now);
+                connection.Asked(Allowed, Timestamp.Now, Role);
 
         }
 
