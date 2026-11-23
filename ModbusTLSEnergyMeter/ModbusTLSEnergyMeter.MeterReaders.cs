@@ -32,6 +32,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
 using cloud.charging.open.protocols.WWCP.Node;
 using cloud.charging.open.protocols.WWCP.Node.Modbus;
+using cloud.charging.open.protocols.WWCP.Node.Streams;
 using cloud.charging.open.protocols.WWCP.Node.Logins;
 using cloud.charging.open.protocols.WWCP.Node.Certificates;
 using cloud.charging.open.protocols.WWCP.Node.Connections;
@@ -107,7 +108,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                                                               };
 
         private MeterReaderServerConfiguration                    readerServerSettings   = new MeterReaderServerConfiguration().Effective();
-        private ModbusWebSocketServer?                            readerServer;
+        private StreamWebSocketServer?                            readerServer;
         private LoginSSHSignIns?                                  readerSSHSignIns;
 
         private volatile Boolean                                  readerServerStarted;
@@ -162,7 +163,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// <summary>
         /// The WebSocket server of Modbus, once it is built.
         /// </summary>
-        public ModbusWebSocketServer?          MeterReaderServer
+        public StreamWebSocketServer?          MeterReaderServer
             => readerServer;
 
         /// <summary>
@@ -361,9 +362,10 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
 
             #region The server
 
-            readerServer = new ModbusWebSocketServer(
+            readerServer = new StreamWebSocketServer(
                                readerServerSettings.Address,
                                readerServerSettings.TCPPort ?? MeterReaderServerConfiguration.DefaultTCPPort,
+                               [ ModbusWireNames.Subprotocol ],
                                $"OpenChargingCloud {Kind.Product} v{Version}",
                                I18NString.Create($"What reads this {NodeNoun} over Modbus"),
                                null,
@@ -378,7 +380,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             readerServer.OnValidateWebSocketConnection += MeterReaderSignIns.Validate;
             MeterReaderSignIns.ApplyLogins(readerServer);
 
-            readerServer.OnModbusConnection += (connection, stream) => _ = ServeOverWebSocket(connection, stream);
+            readerServer.OnStreamConnection += (connection, stream) => _ = ServeOverWebSocket(connection, stream);
 
             #endregion
 

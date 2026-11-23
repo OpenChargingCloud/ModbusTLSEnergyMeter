@@ -31,6 +31,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
 using org.GraphDefined.Vanaheimr.Hermod.SunSpecModbusTLS.Common;
 
 using cloud.charging.open.protocols.WWCP.Node.Modbus;
+using cloud.charging.open.protocols.WWCP.Node.Streams;
 using cloud.charging.open.protocols.WWCP.Node.TestKit;
 using cloud.charging.open.protocols.WWCP.Node.Connections;
 using cloud.charging.open.protocols.WWCP.Node.Configuration;
@@ -227,8 +228,9 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             }
 
-            var webSocket = new ModbusWebSocketClient(
+            var webSocket = new StreamWebSocketClient(
                                 URL.Parse($"ws://127.0.0.1:{meter!.MeterReaderSettings.TCPPort!.Value.ToUInt16()}/{Login}"),
+                                ModbusWireNames.Subprotocol,
                                 HTTPBasicAuthentication.Create(Login.ToString(), Password),
                                 null,
                                 null,
