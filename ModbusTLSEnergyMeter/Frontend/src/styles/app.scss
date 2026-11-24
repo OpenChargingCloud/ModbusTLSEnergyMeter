@@ -8,6 +8,11 @@
 );
 @use '@node/styles/cards';
 
+// What reads this meter over a WebSocket or SSH - the connections, logins and
+// accepted chains - is drawn by the pages every node with a WebSocket server
+// shares, and looks as it does there.
+@use '@node/connecting/styles/connections';
+
 
 // The meter: one number that matters, and the three phases behind it.
 

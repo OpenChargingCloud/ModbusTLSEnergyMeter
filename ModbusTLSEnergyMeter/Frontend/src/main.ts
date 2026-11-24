@@ -17,6 +17,44 @@ import { accountsPage }         from './pages/accounts';
 import { metrologicalLogPage }  from './pages/metrologicalLog';
 import { upstreamPage }         from './pages/upstream';
 import { connectionsPage }      from './pages/connections';
+import { readerServerPage }     from './pages/readerServer';
+
+import { connectionsPage as readerConnectionsPage } from '@node/connecting/pages/connections';
+import { clientTrustPage }      from '@node/connecting/pages/clientTrust';
+import { webSocketLoginsPage }  from '@node/connecting/pages/webSocketLogins';
+import { setConnectionsResource, setLoginServer, setNodeNoun, setNodeTraits, setStationsResource } from '@node/connecting/settings';
+
+// What reads this meter without Modbus/TLS - a charging station, a local
+// controller - connects over a WebSocket or SSH. Each is written down twice,
+// as everybody who connects to a node is: as a connection of the type
+// "MeterReader", which lets it in, and as a login, which says what it signs
+// in with and, by its group, as which SunSpec role it reads. Both are drawn by
+// the pages every node with a WebSocket server draws them with - WWCP_Node's
+// connecting/ -, told here that they are a meter's: below
+// "/configuration/reader-server", at the resource "meterReaders" - spelt in
+// small letters in a permission, as the meter sends them -, and of meter
+// readers, which speak Modbus and know nothing of OCPP's security profiles.
+setConnectionsResource('meterreaders');
+setStationsResource('meterreaders');
+setNodeNoun('meter', 'energy meter');
+setNodeTraits({ oneNodePerOCPPVersion: false, isConnectedTo: true, connectsDown: false,
+                examples: { description: 'Ladepunkt 1, reading this meter', url: 'wss://meter.example.org:2357/reader-01' } });
+setLoginServer({
+    root:              '/configuration/reader-server',
+    page:              '/configuration/reader-server',
+    loginsPage:        '/configuration/reader-server/logins',
+    trustPage:         '/configuration/reader-server/trust',
+    login:             'meter reader',
+    logins:            'meter readers',
+    who:               'a charging station, a local controller, or whatever else reads this meter',
+    example:           'reader-01',
+    describedAs:       'Ladepunkt 1',
+    protocol:          'Modbus',
+    icon:              'fa-gauge',
+    securityProfiles:  false,
+    sshChannels:       false,
+    allowedOf:         Server => (Server as { configuration?: { clientAuthentication?: ('httpAuthWithoutTLS' | 'httpAuthOverTLS' | 'tlsClientCertificate')[] } }).configuration?.clientAuthentication ?? []
+});
 
 
 // The certificates had three pages while the meter kept three stores of its
@@ -49,7 +87,12 @@ startNode({
             { path: '/configuration/keys',       label: 'Signing keys',      icon: 'fa-key',             permission: [ 'keys:read' ] },
             // What it measures with: its own simulation, or the meter in front
             // of which it stands.
-            { path: '/configuration/upstream',   label: 'Upstream',          icon: 'fa-link',            permission: [ 'meter:read' ] }
+            { path: '/configuration/upstream',   label: 'Upstream',          icon: 'fa-link',            permission: [ 'meter:read' ] },
+            // What reads this meter over a WebSocket or SSH, and as which role.
+            { path: '/configuration/reader-server',         label: 'Meter readers',     icon: 'fa-gauge',         permission: [ 'meterreaders:read' ] },
+            { path: '/configuration/reader-server/logins',  label: 'WebSocket logins',  icon: 'fa-users-gear',    permission: [ 'meterreaders:read' ] },
+            { path: '/configuration/reader-server/trust',   label: 'Accepted chains',   icon: 'fa-user-shield',   permission: [ 'certificates:read' ] },
+            { path: '/configuration/connections',           label: 'Reader connections', icon: 'fa-network-wired', permission: [ 'meterreaders:read' ] }
         ]),
         { path: '/sessions',                     label: 'Sessions',          icon: 'fa-file-signature',  permission: [ 'meter:read' ] },
         // Who is connected over Modbus/TLS now: what the log says afterwards,
@@ -85,6 +128,10 @@ startNode({
         '/configuration/server-identities':  serverIdentitiesPage,
         '/configuration/keys':           signingKeysPage,
         '/configuration/upstream':       upstreamPage,
+        '/configuration/reader-server':         readerServerPage,
+        '/configuration/reader-server/logins':  webSocketLoginsPage,
+        '/configuration/reader-server/trust':   clientTrustPage,
+        '/configuration/connections':           readerConnectionsPage,
         '/configuration/accounts':       accountsPage,
         '/sessions':                     sessionsPage,
         '/connections':                  connectionsPage,

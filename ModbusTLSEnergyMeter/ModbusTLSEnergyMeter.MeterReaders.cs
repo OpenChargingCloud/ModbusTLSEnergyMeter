@@ -293,6 +293,17 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
             Connections.OnConnectionsChanged += SayWhoIsWaitedFor;
             Connections.OnNotice             += (level, message) => Log.Log(level, message, "modbus", "connections");
 
+            // What every node that keeps connections has, though this one makes
+            // none: the key its connections would sign in over SSH with - which
+            // the page of the connections names.
+            SshKey = new SshClientKey(
+                         Path.Combine(Connections.Path, SshClientKey.DirectoryName),
+                         $"meter@{Environment.MachineName}",
+                         NodeNoun:  NodeNoun
+                     );
+
+            SshKey.OnNotice += (level, message) => Log.Log(level, message, "modbus", "connections", "ssh", "security");
+
             #endregion
 
             #region What it presents, out of the node's store
@@ -330,6 +341,19 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                 Log.Error(problem, "modbus", "reader", "auth");
 
             WebSocketLogins.OnChanged += () => {
+
+                // A group of a role is refused at the JSON API (WhyGroupStays);
+                // one removed another way is made again at once: the four
+                // roles are what a login is put into to read this meter at all.
+                if (SunSpecRoles.AllMandatory.Any(role => WebSocketLogins.GetGroup(SunSpecLoginGroups.GroupOf(role)) is null))
+                {
+
+                    Log.Notice("A login group of a SunSpec role was removed, and is made again: the four roles are always there.", "modbus", "reader", "auth");
+
+                    foreach (var problem in SunSpecLoginGroups.EnsureIn(WebSocketLogins))
+                        Log.Error(problem, "modbus", "reader", "auth");
+
+                }
 
                 if (readerServer is not null)
                     MeterReaderSignIns.ApplyLogins(readerServer);

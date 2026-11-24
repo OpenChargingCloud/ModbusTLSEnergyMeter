@@ -81,7 +81,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(access.Resources,
                             Is.EqualTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "log",
                                                "node", "reset", "reset-immediate", "state", "firmware", "signatures",
-                                               "meter", "keys", "accounts" }));
+                                               "meter", "keys", "accounts", "meterreaders" }));
 
                 Assert.That(access.Roles.Select(role => role.Name),
                             Is.EqualTo(new[] { "viewer", "support", "auditor", "guest", "systemadmin" }));
@@ -121,6 +121,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("viewer",       "certificates:edit",   false)]
         [TestCase("viewer",       "keys:edit",           false)]
         [TestCase("viewer",       "accounts:edit",       false)]
+        [TestCase("viewer",       "meterReaders:read",   true)]
+        [TestCase("viewer",       "meterReaders:edit",   false)]
 
         // The meter's own: what the node's support may, and the readings and
         // the log - what is going on at a meter - and nothing of how it is
@@ -139,6 +141,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("support",      "keys:read",           false)]
         [TestCase("support",      "accounts:read",       false)]
         [TestCase("support",      "ssh:read",            false)]
+        [TestCase("support",      "meterReaders:read",   false)]
 
         [TestCase("auditor",      "meter:read",          true)]
         [TestCase("auditor",      "certificates:read",   true)]
@@ -152,6 +155,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("auditor",      "meter:run",           false)]
         [TestCase("auditor",      "certificates:edit",   false)]
         [TestCase("auditor",      "keys:edit",           false)]
+        [TestCase("auditor",      "meterReaders:read",   true)]
+        [TestCase("auditor",      "meterReaders:edit",   false)]
 
         [TestCase("guest",        "meter:read",          true)]
         [TestCase("guest",        "configuration:read",  false)]
@@ -161,6 +166,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("guest",        "keys:read",           false)]
         [TestCase("guest",        "log:read",            false)]
         [TestCase("guest",        "meter:run",           false)]
+        [TestCase("guest",        "meterReaders:read",   false)]
 
         [TestCase("systemadmin",  "meter:edit",          true)]
         [TestCase("systemadmin",  "meter:run",           true)]
@@ -169,6 +175,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
         [TestCase("systemadmin",  "certificates:edit",   true)]
         [TestCase("systemadmin",  "keys:edit",           true)]
         [TestCase("systemadmin",  "accounts:edit",       true)]
+        [TestCase("systemadmin",  "meterReaders:edit",   true)]
         public void EachRoleMayDoWhatItAlwaysMayDo(String   RoleName,
                                                    String   Asked,
                                                    Boolean  Allowed)

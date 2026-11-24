@@ -112,6 +112,20 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         public const String  Log       = NodeResources.Log;
 
         /// <summary>
+        /// What reads this meter over a WebSocket or SSH, without Modbus/TLS.
+        /// Read: who may connect, with what and as which SunSpec role, and who
+        /// is connected. Edit: a reader let in, changed or shut out - its
+        /// connection, its login, its group and the chains its certificate
+        /// may lead to.
+        /// </summary>
+        /// <remarks>
+        /// The administrators' alone to change: whoever lets a reader in, and
+        /// puts it into a group, decides who reads this meter and who writes
+        /// its registers.
+        /// </remarks>
+        public const String  MeterReaders  = "meterReaders";
+
+        /// <summary>
         /// What this meter adds to the node's resources - configuration, dns,
         /// nts, certificates, ssh and log, and the six every node can be
         /// asked over OCPP by somebody who signs for it: node, reset,
@@ -121,7 +135,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
         /// lists every account's keys and sessions, which is the accounts by
         /// another name, and so is the administrators' alone.
         /// </summary>
-        public static readonly IReadOnlyList<String>  Resources  = [ Meter, Keys, Accounts ];
+        public static readonly IReadOnlyList<String>  Resources  = [ Meter, Keys, Accounts, MeterReaders ];
 
         #endregion
 
@@ -137,7 +151,8 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS
                                                                                           Permission.Read(NodeResources.NTS),
                                                                                           Permission.Read(NodeResources.Certificates),
                                                                                           Permission.Read(Keys),
-                                                                                          Permission.Read(Log)
+                                                                                          Permission.Read(Log),
+                                                                                          Permission.Read(MeterReaders)
                                                                                       ];
 
         /// <summary>

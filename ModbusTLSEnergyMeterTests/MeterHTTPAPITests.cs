@@ -139,7 +139,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(me?["permissions"]?.Values<String>(),
                             Is.EquivalentTo(new[] { "configuration", "dns", "nts", "certificates", "ssh", "log",
                                                     "node", "reset", "reset-immediate", "state", "firmware", "signatures",
-                                                    "meter", "keys", "accounts" }.
+                                                    "meter", "keys", "accounts", "meterreaders" }.
                                                 SelectMany(resource => new[] { "read", "edit", "run" }.Select(operation => $"{resource}:{operation}"))));
 
             });
@@ -334,7 +334,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 // What the table promises has to be what the meter enforces,
                 // otherwise it is a sentence somebody reads and believes.
                 Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "viewer")?["permissions"]?.Values<String>(),
-                            Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read" }));
+                            Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read", "meterreaders:read" }));
 
                 Assert.That(roles?["roles"]?.First(role => role["role"]?.ToString() == "viewer")?["title"]?.ToString(),
                             Is.EqualTo("Viewer"));
@@ -432,7 +432,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
             Assert.Multiple(() => {
                 Assert.That(me?["username"]?.ToString(),            Is.EqualTo("rory"));
                 Assert.That(me?["role"]?.ToString(),                Is.EqualTo("viewer"));
-                Assert.That(me?["permissions"]?.Values<String>(),   Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read" }));
+                Assert.That(me?["permissions"]?.Values<String>(),   Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read", "meterreaders:read" }));
             });
 
         }
@@ -887,7 +887,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
 
             Assert.Multiple(() => {
                 Assert.That(me?["role"]?.ToString(),               Is.EqualTo("auditor"));
-                Assert.That(me?["permissions"]?.Values<String>(),  Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read", "nts:run" }));
+                Assert.That(me?["permissions"]?.Values<String>(),  Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read", "meterreaders:read", "nts:run" }));
             });
 
         }
@@ -1119,7 +1119,7 @@ namespace cloud.charging.open.EnergyMeters.ModbusTLS.Tests
                 Assert.That(me?["role"]?.ToString(),               Is.EqualTo("auditor"));
                 Assert.That(me?["roleTitle"]?.ToString(),          Is.EqualTo("Auditor"));
                 Assert.That(me?["roles"]?.Values<String>(),        Is.EqualTo(new[] { "auditor", "guest" }));
-                Assert.That(me?["permissions"]?.Values<String>(),  Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read", "nts:run" }));
+                Assert.That(me?["permissions"]?.Values<String>(),  Is.EquivalentTo(new[] { "configuration:read", "dns:read", "nts:read", "certificates:read", "meter:read", "keys:read", "log:read", "meterreaders:read", "nts:run" }));
             });
 
         }

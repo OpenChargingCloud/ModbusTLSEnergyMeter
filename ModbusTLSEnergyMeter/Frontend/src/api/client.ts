@@ -27,9 +27,13 @@ export * from '@node/api/client';
 /**
  * What there is to be allowed to do something with: the node's resources -
  * configuration, dns, nts, certificates, ssh, log and the six every node can
- * be asked over OCPP - and the meter's.
+ * be asked over OCPP - and the meter's, what reads it over a WebSocket or SSH
+ * among them.
+ *
+ * As the meter spells them in a permission: in small letters, so that
+ * "meterReaders" arrives as "meterreaders".
  */
-export type Resource = NodeResource | 'meter' | 'keys' | 'accounts';
+export type Resource = NodeResource | 'meter' | 'keys' | 'accounts' | 'meterreaders';
 
 /**
  * What somebody signed in to this meter may do: an operation on a resource,
@@ -594,4 +598,42 @@ export const api = {
      */
     verifyLog: () => request<LogVerification>('GET', '/logs/verify', undefined, 3 * 60_000)
 
+};
+
+
+/**
+ * The WebSocket server what reads this meter without Modbus/TLS connects to,
+ * over a WebSocket or SSH, as the meter answers at
+ * "/configuration/reader-server". Its logins, their groups - the SunSpec
+ * roles - and the chains a client certificate may lead to are every WebSocket
+ * server's, below it: see WWCP_Node's connecting/api/webSocketLogins.
+ */
+export interface ReaderServer {
+    /** The "webSocketServer" section, every field filled in: "enabled", "port", "clientAuthentication", "ssh", ... */
+    configuration:  {
+        enabled?:               boolean;
+        address?:               string;
+        port?:                  number;
+        clientAuthentication?:  ('httpAuthWithoutTLS' | 'httpAuthOverTLS' | 'tlsClientCertificate')[];
+        checkCertificateRevocation?: boolean;
+        ssh?:                   { enabled: boolean };
+    };
+    state: {
+        /** Whether the WebSocket server is listening. */
+        running:  boolean;
+        /** Whether its port speaks TLS. */
+        tls:      boolean;
+        /** Whether Modbus is served over SSH, on the meter's SSH server. */
+        ssh:      boolean;
+        sshPort:  number | null;
+    };
+    /** The logins connected now, over a WebSocket or SSH. */
+    connected:  string[];
+    /** The SunSpec role each login reads as - null for none: switched off, or in a group that is no role. */
+    roles:      Record<string, string | null>;
+}
+
+/** How the server of the readers is asked. Changed in the file, and nowhere else. */
+export const readerServerAPI = {
+    get: () => request<ReaderServer>('GET', '/configuration/reader-server')
 };
