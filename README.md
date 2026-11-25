@@ -1,5 +1,7 @@
 # ModbusTLSEnergyMeter
 
+![The EV charging test environment, the energy meter (EM) highlighted](docs/EVChargingTestEnvironment.svg)
+
 A simulated three-phase energy meter that speaks **Modbus/TLS** (*mbaps*, the
 registered port 802) and nothing else: there is no plaintext listener, every
 peer must present a client certificate, and what that peer may do is decided by
